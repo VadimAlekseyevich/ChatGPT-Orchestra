@@ -8,6 +8,8 @@
     CONTENT_HEARTBEAT: "orchestra/content-heartbeat",
     CHAT_STATE: "orchestra/chat-state",
     ASSISTANT_RESPONSE_COMPLETED: "orchestra/assistant-response-completed",
+    ORCHESTRA_EVENT: "orchestra/protocol-event",
+    PROTOCOL_ERROR: "orchestra/protocol-error",
 
     SEND_PROMPT: "orchestra/send-prompt",
     STOP_GENERATION: "orchestra/stop-generation",
@@ -15,6 +17,7 @@
     PONG: "orchestra/pong",
 
     ORCHESTRATOR_GET_STATE: "orchestra/orchestrator-get-state",
+    ORCHESTRATOR_GET_EVENTS: "orchestra/orchestrator-get-events",
     ORCHESTRATOR_REGISTER_ACTIVE_LEAD: "orchestra/orchestrator-register-active-lead",
     ORCHESTRATOR_CREATE_WORKERS: "orchestra/orchestrator-create-workers",
     ORCHESTRATOR_SEND_AGENT_PROMPT: "orchestra/orchestrator-send-agent-prompt",
