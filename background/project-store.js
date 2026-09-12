@@ -125,8 +125,14 @@
     async completeStage(projectId, { stage, artifact }) {
       const project = this.state.projects[projectId];
       if (!project) return null;
+      const runId = project.currentRunId;
+      const alreadyCompleted = project.stageHistory.some((entry) => (
+        entry.stage === stage && entry.runId === runId && entry.status === "completed"
+      ));
       project.artifacts[stage] = clone(artifact);
-      project.stageHistory.push({ stage, runId: project.currentRunId, status: "completed", at: this.clock() });
+      if (!alreadyCompleted) {
+        project.stageHistory.push({ stage, runId, status: "completed", at: this.clock() });
+      }
       project.updatedAt = this.clock();
       await this.persist();
       return this.getProject(projectId);
