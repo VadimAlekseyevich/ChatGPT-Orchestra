@@ -2,6 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
+  const GLOBAL_SCOPE = "*";
 
   function list(value) {
     return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : [];
@@ -11,14 +12,17 @@
     return list(task?.scope?.allow).map((pattern) => {
       const normalized = pattern.replace(/\\/g, "/").replace(/^\.\//, "");
       const wildcard = normalized.search(/[?*\[]/);
-      return (wildcard >= 0 ? normalized.slice(0, wildcard) : normalized).replace(/\/+$/g, "");
-    }).filter(Boolean);
+      if (wildcard === 0) return GLOBAL_SCOPE;
+      const prefix = (wildcard > 0 ? normalized.slice(0, wildcard) : normalized).replace(/\/+$/g, "");
+      return prefix || GLOBAL_SCOPE;
+    });
   }
 
   function prefixesOverlap(left, right) {
     const a = String(left || "").replace(/\/+$/g, "");
     const b = String(right || "").replace(/\/+$/g, "");
     if (!a || !b) return false;
+    if (a === GLOBAL_SCOPE || b === GLOBAL_SCOPE) return true;
     return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
   }
 
@@ -80,6 +84,7 @@
   }
 
   root.SchedulerConflictPolicy = Object.freeze({
+    GLOBAL_SCOPE,
     scopePrefixes,
     prefixesOverlap,
     fileScopeOverlap,
