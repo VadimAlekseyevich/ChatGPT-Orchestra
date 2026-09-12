@@ -4,12 +4,16 @@ importScripts(
   "../content/message-types.js",
   "../protocol/orchestra-protocol.js",
   "../prompts/planning-prompts.js",
+  "../prompts/worker-prompts.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
   "project-store.js",
   "dag-validator.js",
   "planning-engine.js",
+  "conflict-policy.js",
+  "scheduler-store.js",
+  "scheduler-engine.js",
   "orchestrator.js"
 );
 
@@ -18,6 +22,7 @@ const registry = new root.TabRegistry();
 const eventStore = new root.EventStore();
 const eventBus = new root.EventBus({ registry, store: eventStore });
 const projectStore = new root.ProjectStore();
+const schedulerStore = new root.SchedulerStore();
 
 let orchestrator = null;
 const planningEngine = new root.PlanningEngine({
@@ -26,7 +31,14 @@ const planningEngine = new root.PlanningEngine({
   eventBus,
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
-orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine });
+const schedulerEngine = new root.SchedulerEngine({
+  store: schedulerStore,
+  projectStore,
+  registry,
+  eventBus,
+  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+});
+orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });
 let readyPromise = orchestrator.init();
 
 function withReady(callback) {
@@ -61,3 +73,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     console.warn("[ChatGPT Orchestra] tab_updated_handler_failed", error);
   });
 });
+
+const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
+if (chrome.alarms?.create) chrome.alarms.create(SCHEDULER_WATCHDOG_ALARM, { periodInMinutes: 1 });
+if (chrome.alarms?.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm?.name !== SCHEDULER_WATCHDOG_ALARM) return;
+    withReady(() => schedulerEngine.tick({ reason: "watchdog_alarm" })).catch((error) => {
+      console.warn("[ChatGPT Orchestra] scheduler_watchdog_failed", error);
+    });
+  });
+}

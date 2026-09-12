@@ -7,11 +7,12 @@
   function asError(error) { return error?.message || String(error || "unknown_error"); }
 
   class ServiceWorkerOrchestrator {
-    constructor({ chromeApi = globalThis.chrome, registry, eventBus = null, planningEngine = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
+    constructor({ chromeApi = globalThis.chrome, registry, eventBus = null, planningEngine = null, schedulerEngine = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
       this.chrome = chromeApi;
       this.registry = registry;
       this.eventBus = eventBus;
       this.planningEngine = planningEngine;
+      this.schedulerEngine = schedulerEngine;
       this.logger = logger;
       this.workerUrl = workerUrl;
       this.initialized = false;
@@ -23,6 +24,7 @@
       if (this.eventBus) await this.eventBus.load();
       await this.reconcileRegisteredTabs();
       if (this.planningEngine) await this.planningEngine.init();
+      if (this.schedulerEngine) await this.schedulerEngine.init();
       this.initialized = true;
       return this.getPublicState();
     }
@@ -37,7 +39,8 @@
         lead: agents.find((agent) => agent.role === "lead") || null,
         workers: agents.filter((agent) => agent.role === "worker"),
         protocol: this.eventBus?.summary?.() || null,
-        project: this.planningEngine?.getPublicState?.() || null
+        project: this.planningEngine?.getPublicState?.() || null,
+        scheduler: this.schedulerEngine?.getPublicState?.() || null
       };
     }
 
@@ -104,12 +107,30 @@
       return { ok: true, created, state: this.getPublicState() };
     }
 
+    async startExecution(payload = {}) {
+      if (!this.schedulerEngine) return { ok: false, reason: "scheduler_unavailable" };
+      const project = this.planningEngine?.getPublicState?.();
+      if (!project || project.status !== "READY") {
+        return { ok: false, reason: "project_not_ready_for_execution", status: project?.status || null };
+      }
+      const maxWorkers = Math.max(1, Math.min(MAX_WORKERS, Number(payload.maxWorkers) || 3));
+      const workers = await this.createWorkers(maxWorkers);
+      if (!workers.ok) return workers;
+      const result = await this.schedulerEngine.start({
+        maxWorkers,
+        maxRetries: payload.maxRetries ?? 2,
+        runTimeoutMs: payload.runTimeoutMs || undefined
+      });
+      return { ...result, state: this.getPublicState() };
+    }
+
     async refreshAgentFromContent(agentId) {
       const agent = this.registry.getAgent(agentId);
       if (!agent || !Number.isInteger(agent.tabId)) return { ok: false, reason: "agent_offline" };
       try {
         const response = await this.chrome.tabs.sendMessage(agent.tabId, { type: root.MESSAGE_TYPES.PING, payload: { agentId } });
-        await this.registry.updateHeartbeat(agent.tabId, response?.payload || response || {}, agent.chatUrl);
+        const updated = await this.registry.updateHeartbeat(agent.tabId, response?.payload || response || {}, agent.chatUrl);
+        await this.schedulerEngine?.handleAgentStateChanged?.(updated);
         return { ok: true, agent: this.registry.getAgent(agentId) };
       } catch (error) {
         return { ok: false, reason: "content_not_ready", message: asError(error) };
@@ -161,6 +182,7 @@
         return { ok: false, reason: "registered_tab_outside_chatgpt" };
       }
       const updated = await this.registry.updateHeartbeat(tabId, message?.payload || {}, tabUrl);
+      await this.schedulerEngine?.handleAgentStateChanged?.(updated);
       return { ok: true, agent: updated };
     }
 
@@ -171,7 +193,8 @@
         responseFingerprint: payload.responseFingerprint || "",
         pathname: payload.pathname || "",
         messageCount: payload.messageCount || 0,
-        planningArtifact: payload.planningArtifact || null
+        planningArtifact: payload.planningArtifact || null,
+        planningArtifactSignature: payload.planningArtifactSignature || ""
       });
     }
 
@@ -198,9 +221,16 @@
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_EVENTS) return { ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_PROJECT) return { ok: true, project: this.planningEngine?.getPublicState?.() || null };
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_SCHEDULER) return { ok: true, scheduler: this.schedulerEngine?.getPublicState?.() || null };
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_SCHEDULER_DECISIONS) return { ok: true, decisions: this.schedulerEngine?.getRecentDecisions?.(payload.limit) || [] };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT) {
         if (!this.planningEngine) return { ok: false, reason: "planning_engine_unavailable" };
         return this.planningEngine.startProject({ goal: payload.goal, repositoryUrl: payload.repositoryUrl });
+      }
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_EXECUTION) return this.startExecution(payload);
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_SCHEDULER_TICK) {
+        if (!this.schedulerEngine) return { ok: false, reason: "scheduler_unavailable" };
+        return this.schedulerEngine.tick({ reason: payload.reason || "runtime_tick" });
       }
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD) return this.registerActiveLead();
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS) return this.createWorkers(payload.count);
@@ -212,8 +242,10 @@
     }
 
     async handleTabRemoved(tabId) {
-      if (!this.registry.getAgentByTabId(tabId)) return;
+      const agent = this.registry.getAgentByTabId(tabId);
+      if (!agent) return;
       await this.registry.markOfflineByTabId(tabId, "tab_closed");
+      await this.schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "tab_closed");
     }
 
     async handleTabUpdated(tabId, changeInfo, tab) {

@@ -10,7 +10,7 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Project planning · protocol · agent pool</p>
+      <p>Project planning · scheduler · agent pool</p>
     </header>
 
     <section class="orchestra-section" aria-labelledby="projectTitle">
@@ -32,7 +32,7 @@
       </label>
 
       <button id="startProject" type="button">Start Planning</button>
-      <p class="hint">Нужен зарегистрированный Lead. Phase 4 строит Discovery → Plan → Critique → Task DAG, но ещё не запускает worker-задачи.</p>
+      <p class="hint">Нужен зарегистрированный Lead. Planning строит и валидирует DAG; выполнение Worker'ами запускается отдельно.</p>
     </section>
 
     <section class="orchestra-section" aria-labelledby="orchestraTitle">
@@ -52,7 +52,7 @@
       <div id="agentsList" class="agents-list"></div>
 
       <label>
-        <span>Количество worker-вкладок</span>
+        <span>Worker slots / maxWorkers</span>
         <input id="workerCount" type="number" min="1" max="4" step="1" value="3" />
       </label>
 
@@ -61,7 +61,18 @@
         <button id="createWorkers" class="secondary" type="button">Создать Workers</button>
       </div>
 
-      <p class="hint">Lead привязывается только явным действием. Worker-вкладки создаёт само расширение. Остальные вкладки ChatGPT не становятся агентами автоматически.</p>
+      <p class="hint">Lead привязывается только явно. Worker-вкладки создаёт расширение; обычные ChatGPT tabs не становятся агентами автоматически.</p>
+    </section>
+
+    <section class="orchestra-section" aria-labelledby="executionTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="executionTitle">Execution</h2>
+          <p id="executionStatus">Execution: not started</p>
+        </div>
+      </div>
+      <button id="startExecution" type="button">Start Execution</button>
+      <p class="hint">Phase 5 назначает только runnable tasks и использует conflict-aware locks. Worker `DONE` сохраняется как `DONE_UNVERIFIED`; Git isolation, review и merge появятся в Phase 6–8.</p>
     </section>
 
     <label class="toggle-row">
