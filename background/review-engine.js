@@ -70,9 +70,7 @@
       if (normalizedCriteria.some((item) => item.status !== "PASS" || !item.evidence)) return { ok: false, reason: "approval_requires_all_criteria_pass" };
       if (scopeCheck.status !== "PASS" || !scopeCheck.evidence) return { ok: false, reason: "approval_requires_scope_pass" };
       if (!["PASS", "WAIVED"].includes(testsAssessment.status) || !testsAssessment.evidence) return { ok: false, reason: "approval_requires_tests_assessment" };
-      if (issues.some((item) => ["high", "critical", "blocking"].includes(item.severity)) || requiredChanges.length) {
-        return { ok: false, reason: "approval_contains_blocking_changes" };
-      }
+      if (issues.some((item) => ["high", "critical", "blocking"].includes(item.severity)) || requiredChanges.length) return { ok: false, reason: "approval_contains_blocking_changes" };
     } else if (eventType === "CHANGES_REQUIRED") {
       const hasFailure = normalizedCriteria.some((item) => item.status === "FAIL") || scopeCheck.status === "FAIL" || testsAssessment.status === "FAIL";
       if (!hasFailure && !issues.length && !requiredChanges.length) return { ok: false, reason: "changes_required_without_findings" };
@@ -81,6 +79,33 @@
       return { ok: false, reason: "unsupported_review_event" };
     }
     return { ok: true, review: normalized };
+  }
+
+  function boundedDiff(comparison) {
+    const files = [];
+    let patchBudget = 18000;
+    for (const file of Array.isArray(comparison?.files) ? comparison.files : []) {
+      const patch = asText(file?.patch || "", Math.min(6000, patchBudget));
+      patchBudget -= patch.length;
+      files.push({
+        filename: String(file?.filename || ""),
+        previousFilename: file?.previous_filename || null,
+        status: file?.status || "modified",
+        additions: Number(file?.additions) || 0,
+        deletions: Number(file?.deletions) || 0,
+        changes: Number(file?.changes) || 0,
+        patch: patch || null
+      });
+      if (patchBudget <= 0) break;
+    }
+    return {
+      status: comparison?.status || null,
+      aheadBy: Number(comparison?.ahead_by) || 0,
+      behindBy: Number(comparison?.behind_by) || 0,
+      totalCommits: Number(comparison?.total_commits) || 0,
+      files,
+      truncatedForReviewPacket: files.length < (Array.isArray(comparison?.files) ? comparison.files.length : 0) || patchBudget <= 0
+    };
   }
 
   class ReviewEngine {
@@ -103,6 +128,7 @@
     getPublicState() { return this.store.summary(); }
     activeReviewerAgentIds() { return this.store.activeReviewerIds(); }
     activeCount() { return this.store.active().length; }
+    async configureProject(projectId, settings = {}) { return this.store.ensureProject(projectId, settings); }
 
     async init() {
       if (this.initialized) return this.getPublicState();
@@ -135,6 +161,18 @@
           taskId: review.taskId,
           runId: review.reviewId
         });
+      }
+    }
+
+    async recoverReviewableTasks() {
+      if (this.schedulerStore.summary().status !== "RUNNING") return;
+      const existingWorkerRuns = new Set(this.store.list().map((review) => review.workerRunId));
+      for (const task of this.schedulerStore.reviewableTasks?.() || []) {
+        if (!["DONE_BY_WORKER", "REVIEW_PENDING"].includes(task.status)) continue;
+        const run = this.schedulerStore.getRun(task.lastRunId);
+        if (!run || existingWorkerRuns.has(run.runId)) continue;
+        await this.enqueueForWorkerCompletion({ task, run, workerReport: task.workerReport || {} });
+        existingWorkerRuns.add(run.runId);
       }
     }
 
@@ -192,16 +230,19 @@
       };
     }
 
+    async reviewDiff(project, artifact) {
+      if (!artifact?.commit || !artifact?.baseSha || !this.gitProvider?.compare) return { ok: true, diff: null };
+      const result = await this.gitProvider.compare(project, artifact.baseSha, artifact.commit);
+      if (!result.ok) return result;
+      return { ok: true, diff: boundedDiff(result.comparison || {}) };
+    }
+
     async buildPacket(review, task) {
       const project = this.projectStore.getActiveProject();
       const workerRun = this.schedulerStore.getRun(review.workerRunId);
       const artifact = task.lastArtifact || workerRun?.git?.artifact || null;
-      let diff = null;
-      if (artifact?.commit && this.gitProvider?.getReviewDiff) {
-        const fetched = await this.gitProvider.getReviewDiff(project, artifact.baseSha, artifact.commit);
-        if (!fetched.ok) return { ok: false, reason: fetched.reason || "review_diff_unavailable", details: fetched };
-        diff = fetched.diff;
-      }
+      const diffResult = await this.reviewDiff(project, artifact);
+      if (!diffResult.ok) return { ok: false, reason: diffResult.reason || "review_diff_unavailable", details: diffResult };
       return {
         ok: true,
         packet: {
@@ -216,7 +257,7 @@
             knownLimitations: clone(review.packetSeed?.workerReport?.knownLimitations || [])
           },
           artifact: clone(artifact),
-          diff,
+          diff: diffResult.diff,
           scope: clone(task.scope || {}),
           verification: clone(task.verification || []),
           provenance: {
@@ -270,14 +311,20 @@
     async tick({ reason = "review_tick" } = {}) {
       this.tickPromise = this.tickPromise.catch(() => {}).then(async () => {
         if (this.schedulerStore.summary().status !== "RUNNING") return { ok: false, reason: "scheduler_not_running" };
+        const maxWorkers = this.schedulerStore.summary().settings.maxWorkers;
+        let capacity = Math.max(0, maxWorkers - this.schedulerStore.activeRuns().length - this.store.active().length);
         const assigned = [];
         for (const review of this.store.pending()) {
+          if (capacity <= 0) break;
           const task = this.schedulerStore.getTask(review.taskId);
           if (!task || !["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)) continue;
           const reviewer = this.reviewerCandidates(review, task)[0];
           if (!reviewer) continue;
           const result = await this.dispatch(review, reviewer);
-          if (result.ok) assigned.push({ reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: reviewer.agentId });
+          if (result.ok) {
+            assigned.push({ reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: reviewer.agentId });
+            capacity -= 1;
+          }
         }
         return { ok: true, reason, assigned, review: this.getPublicState() };
       });
@@ -376,5 +423,6 @@
 
   root.ReviewEngine = ReviewEngine;
   root.validateReviewPayload = validateReviewPayload;
-  if (typeof module !== "undefined" && module.exports) module.exports = { ReviewEngine, validateReviewPayload, normalizeIssues };
+  root.boundedReviewDiff = boundedDiff;
+  if (typeof module !== "undefined" && module.exports) module.exports = { ReviewEngine, validateReviewPayload, normalizeIssues, boundedDiff };
 })();
