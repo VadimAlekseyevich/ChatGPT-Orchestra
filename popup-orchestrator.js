@@ -6,9 +6,11 @@
   const ui = {
     runtimeStatus: document.querySelector("#runtimeStatus"),
     projectStatus: document.querySelector("#projectStatus"),
+    executionStatus: document.querySelector("#executionStatus"),
     repositoryUrl: document.querySelector("#repositoryUrl"),
     projectGoal: document.querySelector("#projectGoal"),
     startProject: document.querySelector("#startProject"),
+    startExecution: document.querySelector("#startExecution"),
     leadStatus: document.querySelector("#leadStatus"),
     workersStatus: document.querySelector("#workersStatus"),
     agentsList: document.querySelector("#agentsList"),
@@ -59,10 +61,24 @@
     if (!ui.projectGoal.value) ui.projectGoal.value = project.goal || "";
   }
 
+  function renderScheduler(project, scheduler) {
+    if (!scheduler || !project || scheduler.projectId !== project.projectId || scheduler.taskCount === 0) {
+      ui.executionStatus.textContent = "Execution: not started";
+      ui.startExecution.disabled = project?.status !== "READY";
+      return;
+    }
+    const counts = scheduler.counts || {};
+    const done = Number(counts.DONE_UNVERIFIED) || 0;
+    const needsUser = Number(counts.NEEDS_USER) || 0;
+    ui.executionStatus.textContent = `${scheduler.status} · ${done}/${scheduler.taskCount} done · ${scheduler.activeRuns} active${needsUser ? ` · ${needsUser} needs user` : ""}`;
+    ui.startExecution.disabled = scheduler.status !== "IDLE" && scheduler.status !== "NEEDS_USER";
+  }
+
   function renderState(state) {
     if (!state) return;
     ui.runtimeStatus.textContent = `Runtime: ${state.runtimeStatus || "idle"}`;
     renderProject(state.project);
+    renderScheduler(state.project, state.scheduler);
     ui.leadStatus.textContent = statusText(state.lead);
     const connected = (state.workers || []).filter((worker) => !["OFFLINE", "ERROR"].includes(worker.status)).length;
     ui.workersStatus.textContent = `${connected}/${(state.workers || []).length}`;
@@ -116,10 +132,24 @@
     await refresh();
   }
 
+  async function startExecution() {
+    ui.startExecution.disabled = true;
+    const maxWorkers = Math.max(1, Math.min(4, Number(ui.workerCount.value) || 3));
+    ui.workerCount.value = maxWorkers;
+    const response = await send(TYPES.ORCHESTRATOR_START_EXECUTION, { maxWorkers });
+    if (!response.ok) {
+      ui.executionStatus.textContent = `Execution error: ${response.reason || "unknown"}`;
+      ui.startExecution.disabled = false;
+      return;
+    }
+    renderState(response.state);
+  }
+
   ui.refreshPool?.addEventListener("click", refresh);
   ui.registerLead?.addEventListener("click", registerLead);
   ui.createWorkers?.addEventListener("click", createWorkers);
   ui.startProject?.addEventListener("click", startProject);
+  ui.startExecution?.addEventListener("click", startExecution);
 
   refresh();
   setInterval(refresh, 3000);
