@@ -21,7 +21,7 @@
       const payload = message?.payload || {};
 
       if (type === root.MESSAGE_TYPES.PING) {
-        adapter.enableHeartbeat();
+        adapter.bindAgent(payload.agentId);
         sendResponse({
           type: root.MESSAGE_TYPES.PONG,
           payload: adapter.getStatus()
