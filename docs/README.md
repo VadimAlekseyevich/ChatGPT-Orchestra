@@ -7,6 +7,7 @@
 - [`../ROADMAP.md`](../ROADMAP.md) — целевая архитектура, фазы реализации, state machines, scheduler, protocol, Git/review/integration и recovery;
 - [`../CHANGELOG.md`](../CHANGELOG.md) — история изменений;
 - [`phase-2-tab-registry.md`](phase-2-tab-registry.md) — контракт service worker, agent registration, heartbeat и lifecycle вкладок;
+- [`phase-3-protocol-v1.md`](phase-3-protocol-v1.md) — Orchestra Protocol v1, Event Bus, idempotency, sequence и rejection semantics;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
