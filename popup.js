@@ -24,7 +24,8 @@ const DEFAULT_RULES = [
 
 const DEFAULTS = {
   enabled: true,
-  delayMs: 1200
+  delayMs: 1200,
+  delayRandomMs: 1200
 };
 
 const LEGACY_DEFAULT_MARKER = "DONE";
@@ -37,6 +38,7 @@ const elements = {
   ruleTemplate: document.querySelector("#ruleTemplate"),
   addRule: document.querySelector("#addRule"),
   delayMs: document.querySelector("#delayMs"),
+  delayRandomMs: document.querySelector("#delayRandomMs"),
   save: document.querySelector("#save"),
   reset: document.querySelector("#reset"),
   status: document.querySelector("#status")
@@ -171,6 +173,12 @@ function focusRule(rule) {
   card?.querySelector('[data-field="marker"]')?.focus();
 }
 
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
 async function load() {
   try {
     const settings = await chrome.storage.local.get([
@@ -178,11 +186,13 @@ async function load() {
       "rules",
       "marker",
       "followUp",
-      "delayMs"
+      "delayMs",
+      "delayRandomMs"
     ]);
 
     elements.enabled.checked = settings.enabled ?? DEFAULTS.enabled;
-    elements.delayMs.value = Number(settings.delayMs) || DEFAULTS.delayMs;
+    elements.delayMs.value = clampNumber(settings.delayMs, 300, 30000, DEFAULTS.delayMs);
+    elements.delayRandomMs.value = clampNumber(settings.delayRandomMs, 0, 30000, DEFAULTS.delayRandomMs);
     rules = normalizeRules(settings.rules, settings.marker, settings.followUp);
     renderRules();
   } catch (error) {
@@ -199,16 +209,19 @@ async function save() {
     return;
   }
 
-  const delayMs = Math.min(30000, Math.max(300, Number(elements.delayMs.value) || DEFAULTS.delayMs));
+  const delayMs = clampNumber(elements.delayMs.value, 300, 30000, DEFAULTS.delayMs);
+  const delayRandomMs = clampNumber(elements.delayRandomMs.value, 0, 30000, DEFAULTS.delayRandomMs);
 
   try {
     await chrome.storage.local.set({
       enabled: elements.enabled.checked,
       rules: rules.map((rule) => ({ ...rule })),
-      delayMs
+      delayMs,
+      delayRandomMs
     });
     await chrome.storage.local.remove(["marker", "followUp"]);
     elements.delayMs.value = delayMs;
+    elements.delayRandomMs.value = delayRandomMs;
     renderRules();
     setStatus("Сохранено");
   } catch (error) {
