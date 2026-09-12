@@ -10,11 +10,40 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Legacy flag runner · orchestration foundation</p>
+      <p>Service-worker orchestrator · agent tab registry</p>
     </header>
 
+    <section class="orchestra-section" aria-labelledby="orchestraTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="orchestraTitle">Оркестр</h2>
+          <p id="runtimeStatus">Runtime: загрузка…</p>
+        </div>
+        <button id="refreshPool" class="secondary compact" type="button">Обновить</button>
+      </div>
+
+      <div class="pool-summary">
+        <div><span>Lead</span><strong id="leadStatus">не привязан</strong></div>
+        <div><span>Workers</span><strong id="workersStatus">0</strong></div>
+      </div>
+
+      <div id="agentsList" class="agents-list"></div>
+
+      <label>
+        <span>Количество worker-вкладок</span>
+        <input id="workerCount" type="number" min="1" max="4" step="1" value="3" />
+      </label>
+
+      <div class="actions orchestra-actions">
+        <button id="registerLead" type="button">Эту вкладку → Lead</button>
+        <button id="createWorkers" class="secondary" type="button">Создать Workers</button>
+      </div>
+
+      <p class="hint">Lead привязывается только явным действием. Worker-вкладки создаёт само расширение. Остальные вкладки ChatGPT не становятся агентами автоматически.</p>
+    </section>
+
     <label class="toggle-row">
-      <span>Автоматическая обработка флагов</span>
+      <span>Legacy-обработка флагов</span>
       <input id="enabled" type="checkbox" />
     </label>
 
@@ -47,7 +76,7 @@
 
     <div id="status" role="status" aria-live="polite"></div>
 
-    <p class="hint">Текущий alpha сохраняет legacy-механизм флагов как foundation будущего Orchestra Core. Фактическая задержка = базовая задержка + случайное значение от 0 до указанной добавки. Поставьте 0, чтобы отключить рандом. Для действия «Позвать пользователя» расширение остановит цикл, сфокусирует вкладку и покажет диалог.</p>
+    <p class="hint">Legacy-флаги пока остаются compatibility layer. Phase 2 добавляет только централизованное управление вкладками и адресные команды; task scheduler появится позже по roadmap.</p>
   </main>
 
   <template id="ruleTemplate">
@@ -80,6 +109,7 @@
     </article>
   </template>
 
+  <script src="content/message-types.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
