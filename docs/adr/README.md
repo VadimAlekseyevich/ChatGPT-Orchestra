@@ -34,4 +34,5 @@ Date: YYYY-MM-DD
 - [`0002-orchestra-protocol-v1.md`](0002-orchestra-protocol-v1.md) — versioned `@@ORCH` envelope, persisted event identity и idempotency semantics;
 - [`0003-persisted-planning-pipeline.md`](0003-persisted-planning-pipeline.md) — staged persisted planning, separate large artifacts and deterministic DAG readiness gate;
 - [`0004-conflict-aware-scheduler.md`](0004-conflict-aware-scheduler.md) — persisted task/run scheduler, conflict-prevention policy and transitional `DONE_UNVERIFIED` semantics;
-- [`0005-git-task-isolation.md`](0005-git-task-isolation.md) — per-run task branches, immutable base snapshot and independent Git artifact validation.
+- [`0005-git-task-isolation.md`](0005-git-task-isolation.md) — per-run task branches, immutable base snapshot and independent Git artifact validation;
+- [`0006-independent-review-loop.md`](0006-independent-review-loop.md) — dynamic Reviewer role, author/reviewer separation, structured approval and bounded rework loop.
