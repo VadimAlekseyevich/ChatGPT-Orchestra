@@ -185,6 +185,19 @@
       await this.persist();
       return this.get(reviewId);
     }
+
+    async fail(reviewId, reason, details = null) {
+      const review = this.state.reviews[reviewId];
+      if (!review || !["PENDING", "ASSIGNED", "REVIEWING"].includes(review.status)) return null;
+      const now = this.clock();
+      review.status = "FAILED";
+      review.lastError = String(reason || "review_failed");
+      review.result = details && typeof details === "object" ? clone(details) : null;
+      review.completedAt = now;
+      review.updatedAt = now;
+      await this.persist();
+      return this.get(reviewId);
+    }
   }
 
   root.ReviewStore = ReviewStore;
