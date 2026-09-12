@@ -41,11 +41,13 @@ async function setup() {
 
 test("accepts an event exactly once and treats exact replay as duplicate", async () => {
   const { bus, store, sender } = await setup();
-  const first = await bus.handleEvent(event(), sender);
-  const second = await bus.handleEvent(event(), sender);
+  const source = { responseFingerprint: "fp-1", pathname: "/c/x", messageCount: 8 };
+  const first = await bus.handleEvent(event(), sender, source);
+  const second = await bus.handleEvent(event(), sender, source);
   assert.equal(first.accepted, true);
   assert.equal(second.duplicate, true);
   assert.equal(store.summary().acceptedEvents, 1);
+  assert.deepEqual(store.recentEvents(1)[0].source, source);
 });
 
 test("same eventId with changed payload is an id collision", async () => {
