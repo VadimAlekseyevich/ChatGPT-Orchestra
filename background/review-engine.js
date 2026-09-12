@@ -2,6 +2,8 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
+  const MAX_REVIEW_PATCH_CHARS = 18000;
+  const MAX_REVIEW_FILE_PATCH_CHARS = 6000;
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -27,10 +29,9 @@
 
   function validateReviewPayload(eventType, payload, task) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { ok: false, reason: "review_payload_invalid" };
-    const criteria = Array.isArray(payload.criteria) ? payload.criteria : [];
     const expected = Array.isArray(task?.acceptanceCriteria) ? task.acceptanceCriteria.map(String) : [];
     const byCriterion = new Map();
-    for (const item of criteria) {
+    for (const item of Array.isArray(payload.criteria) ? payload.criteria : []) {
       if (!item || typeof item !== "object") continue;
       const criterion = String(item.criterion || "");
       if (!criterion || byCriterion.has(criterion)) continue;
@@ -44,35 +45,26 @@
     const missingCriteria = expected.filter((criterion) => !byCriterion.has(criterion));
     if (missingCriteria.length) return { ok: false, reason: "review_criteria_incomplete", missingCriteria };
 
-    const normalizedCriteria = expected.map((criterion) => byCriterion.get(criterion));
-    const scopeCheck = payload.scopeCheck && typeof payload.scopeCheck === "object" ? {
-      status: String(payload.scopeCheck.status || "").toUpperCase(),
-      evidence: asText(payload.scopeCheck.evidence, 2500)
-    } : { status: "", evidence: "" };
-    const testsAssessment = payload.testsAssessment && typeof payload.testsAssessment === "object" ? {
-      status: String(payload.testsAssessment.status || "").toUpperCase(),
-      evidence: asText(payload.testsAssessment.evidence, 2500)
-    } : { status: "", evidence: "" };
+    const criteria = expected.map((criterion) => byCriterion.get(criterion));
+    const scopeCheck = payload.scopeCheck && typeof payload.scopeCheck === "object"
+      ? { status: String(payload.scopeCheck.status || "").toUpperCase(), evidence: asText(payload.scopeCheck.evidence, 2500) }
+      : { status: "", evidence: "" };
+    const testsAssessment = payload.testsAssessment && typeof payload.testsAssessment === "object"
+      ? { status: String(payload.testsAssessment.status || "").toUpperCase(), evidence: asText(payload.testsAssessment.evidence, 2500) }
+      : { status: "", evidence: "" };
     const issues = normalizeIssues(payload.issues);
     const requiredChanges = Array.isArray(payload.requiredChanges)
       ? payload.requiredChanges.map((item) => asText(item, 1500)).filter(Boolean)
       : [];
-    const normalized = {
-      summary: asText(payload.summary, 3000),
-      criteria: normalizedCriteria,
-      scopeCheck,
-      testsAssessment,
-      issues,
-      requiredChanges
-    };
+    const normalized = { summary: asText(payload.summary, 3000), criteria, scopeCheck, testsAssessment, issues, requiredChanges };
 
     if (eventType === "REVIEW_APPROVED") {
-      if (normalizedCriteria.some((item) => item.status !== "PASS" || !item.evidence)) return { ok: false, reason: "approval_requires_all_criteria_pass" };
+      if (criteria.some((item) => item.status !== "PASS" || !item.evidence)) return { ok: false, reason: "approval_requires_all_criteria_pass" };
       if (scopeCheck.status !== "PASS" || !scopeCheck.evidence) return { ok: false, reason: "approval_requires_scope_pass" };
       if (!["PASS", "WAIVED"].includes(testsAssessment.status) || !testsAssessment.evidence) return { ok: false, reason: "approval_requires_tests_assessment" };
       if (issues.some((item) => ["high", "critical", "blocking"].includes(item.severity)) || requiredChanges.length) return { ok: false, reason: "approval_contains_blocking_changes" };
     } else if (eventType === "CHANGES_REQUIRED") {
-      const hasFailure = normalizedCriteria.some((item) => item.status === "FAIL") || scopeCheck.status === "FAIL" || testsAssessment.status === "FAIL";
+      const hasFailure = criteria.some((item) => item.status === "FAIL") || scopeCheck.status === "FAIL" || testsAssessment.status === "FAIL";
       if (!hasFailure && !issues.length && !requiredChanges.length) return { ok: false, reason: "changes_required_without_findings" };
       if (!requiredChanges.length) return { ok: false, reason: "changes_required_missing_actions" };
     } else {
@@ -82,11 +74,19 @@
   }
 
   function boundedDiff(comparison) {
+    const sourceFiles = Array.isArray(comparison?.files) ? comparison.files : [];
     const files = [];
-    let patchBudget = 18000;
-    for (const file of Array.isArray(comparison?.files) ? comparison.files : []) {
-      const patch = asText(file?.patch || "", Math.min(6000, patchBudget));
-      patchBudget -= patch.length;
+    let patchBudget = MAX_REVIEW_PATCH_CHARS;
+    let truncated = false;
+    for (const file of sourceFiles) {
+      const rawPatch = String(file?.patch || "");
+      const fileLimit = Math.min(MAX_REVIEW_FILE_PATCH_CHARS, Math.max(0, patchBudget));
+      let patch = rawPatch;
+      if (rawPatch.length > fileLimit) {
+        patch = fileLimit > 0 ? `${rawPatch.slice(0, fileLimit)}…` : "";
+        truncated = true;
+      }
+      patchBudget -= Math.min(rawPatch.length, fileLimit);
       files.push({
         filename: String(file?.filename || ""),
         previousFilename: file?.previous_filename || null,
@@ -96,15 +96,19 @@
         changes: Number(file?.changes) || 0,
         patch: patch || null
       });
-      if (patchBudget <= 0) break;
+      if (patchBudget <= 0 && files.length < sourceFiles.length) {
+        truncated = true;
+        break;
+      }
     }
+    if (files.length < sourceFiles.length) truncated = true;
     return {
       status: comparison?.status || null,
       aheadBy: Number(comparison?.ahead_by) || 0,
       behindBy: Number(comparison?.behind_by) || 0,
       totalCommits: Number(comparison?.total_commits) || 0,
       files,
-      truncatedForReviewPacket: files.length < (Array.isArray(comparison?.files) ? comparison.files.length : 0) || patchBudget <= 0
+      truncatedForReviewPacket: truncated
     };
   }
 
@@ -145,14 +149,29 @@
       return this.getPublicState();
     }
 
+    async replaceReview(review, reason) {
+      const replacement = await this.store.requeue(review.reviewId, reason);
+      if (replacement) {
+        await this.schedulerStore.markReviewPending?.(review.taskId, replacement.reviewId, review.packetSeed?.workerReport || null);
+        await this.schedulerStore.logDecision("review_replaced", {
+          taskId: review.taskId,
+          abandonedReviewId: review.reviewId,
+          replacementReviewId: replacement.reviewId,
+          reason
+        });
+      }
+      return replacement;
+    }
+
     async restoreActiveReviews() {
       for (const review of this.store.active()) {
         const reviewer = this.registry.getAgent(review.reviewerAgentId);
         if (!reviewer || !Number.isInteger(reviewer.tabId) || ["OFFLINE", "ERROR"].includes(reviewer.status)) {
-          await this.store.requeue(review.reviewId, "reviewer_unavailable_after_restart");
+          await this.replaceReview(review, "reviewer_unavailable_after_restart");
           continue;
         }
         if (review.reviewerAgentId === review.authorAgentId) {
+          await this.store.fail(review.reviewId, "persisted_self_review_detected");
           await this.escalate("persisted_self_review_detected", review.taskId, { reviewId: review.reviewId });
           continue;
         }
@@ -166,13 +185,13 @@
 
     async recoverReviewableTasks() {
       if (this.schedulerStore.summary().status !== "RUNNING") return;
-      const existingWorkerRuns = new Set(this.store.list().map((review) => review.workerRunId));
+      const liveWorkerRuns = new Set(this.store.list().filter((review) => ["PENDING", "ASSIGNED", "REVIEWING"].includes(review.status)).map((review) => review.workerRunId));
       for (const task of this.schedulerStore.reviewableTasks?.() || []) {
         if (!["DONE_BY_WORKER", "REVIEW_PENDING"].includes(task.status)) continue;
         const run = this.schedulerStore.getRun(task.lastRunId);
-        if (!run || existingWorkerRuns.has(run.runId)) continue;
+        if (!run || liveWorkerRuns.has(run.runId)) continue;
         await this.enqueueForWorkerCompletion({ task, run, workerReport: task.workerReport || {} });
-        existingWorkerRuns.add(run.runId);
+        liveWorkerRuns.add(run.runId);
       }
     }
 
@@ -234,7 +253,9 @@
       if (!artifact?.commit || !artifact?.baseSha || !this.gitProvider?.compare) return { ok: true, diff: null };
       const result = await this.gitProvider.compare(project, artifact.baseSha, artifact.commit);
       if (!result.ok) return result;
-      return { ok: true, diff: boundedDiff(result.comparison || {}) };
+      const diff = boundedDiff(result.comparison || {});
+      if (diff.truncatedForReviewPacket) return { ok: false, reason: "review_diff_too_large", diff };
+      return { ok: true, diff };
     }
 
     async buildPacket(review, task) {
@@ -274,6 +295,7 @@
       const project = this.projectStore.getActiveProject();
       const packetResult = await this.buildPacket(review, task);
       if (!packetResult.ok) {
+        await this.store.fail(review.reviewId, packetResult.reason, packetResult.details || null);
         await this.escalate(packetResult.reason, review.taskId, packetResult.details || null);
         return packetResult;
       }
@@ -285,17 +307,18 @@
         runId: review.reviewId
       });
       if (!bound) {
-        await this.store.requeue(review.reviewId, "review_context_bind_failed");
-        return { ok: false, reason: "review_context_bind_failed" };
+        const replacement = await this.replaceReview(assigned.review, "review_context_bind_failed");
+        return { ok: false, reason: "review_context_bind_failed", replacementReviewId: replacement?.reviewId || null };
       }
       const prompt = root.ReviewPrompts.buildReviewPrompt({ project, task: task.definition || task, review: assigned.review, packet: packetResult.packet, agentId: reviewer.agentId });
       const sent = await this.sendPrompt(reviewer.agentId, prompt);
       if (!sent?.ok) {
         await this.registry.clearProtocolContext(reviewer.agentId);
-        await this.store.requeue(review.reviewId, "review_dispatch_failed");
-        await this.schedulerStore.logDecision("review_dispatch_failed", { reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: reviewer.agentId, result: sent });
-        return { ok: false, reason: "review_dispatch_failed" };
+        const replacement = await this.replaceReview(assigned.review, "review_dispatch_failed");
+        await this.schedulerStore.logDecision("review_dispatch_failed", { reviewId: review.reviewId, replacementReviewId: replacement?.reviewId || null, taskId: review.taskId, reviewerAgentId: reviewer.agentId, result: sent });
+        return { ok: false, reason: "review_dispatch_failed", replacementReviewId: replacement?.reviewId || null };
       }
+      await this.store.markReviewing(review.reviewId);
       await this.schedulerStore.markReviewing?.(review.taskId, review.reviewId, reviewer.agentId);
       await this.schedulerStore.logDecision("review_assigned", {
         reviewId: review.reviewId,
@@ -325,6 +348,7 @@
             assigned.push({ reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: reviewer.agentId });
             capacity -= 1;
           }
+          if (this.schedulerStore.summary().status !== "RUNNING") break;
         }
         return { ok: true, reason, assigned, review: this.getPublicState() };
       });
@@ -348,6 +372,7 @@
       const validation = validateReviewPayload(record.event.event, record.event.payload || {}, task);
       if (!validation.ok) {
         await this.registry.clearProtocolContext(review.reviewerAgentId);
+        await this.store.fail(review.reviewId, validation.reason, validation);
         await this.schedulerStore.logDecision("review_payload_invalid", { reviewId: review.reviewId, taskId: review.taskId, reason: validation.reason, details: validation });
         await this.escalate(validation.reason, review.taskId, validation);
         return;
@@ -394,6 +419,7 @@
       const review = this.matchesActiveReview(record);
       if (!review || !["BLOCKED", "ERROR", "NEEDS_USER"].includes(record.event.event)) return;
       await this.registry.clearProtocolContext(review.reviewerAgentId);
+      await this.store.fail(review.reviewId, `reviewer_${record.event.event.toLowerCase()}`, record.event.payload || {});
       await this.schedulerStore.logDecision("reviewer_failed", { reviewId: review.reviewId, taskId: review.taskId, event: record.event.event, payload: record.event.payload || {} });
       await this.escalate(`reviewer_${record.event.event.toLowerCase()}`, review.taskId, record.event.payload || {});
     }
@@ -402,11 +428,10 @@
       const review = this.store.active().find((item) => item.reviewerAgentId === agentId);
       if (!review) return { ok: true, ignored: true };
       await this.registry.clearProtocolContext(agentId);
-      await this.store.requeue(review.reviewId, reason);
-      await this.schedulerStore.markReviewPending?.(review.taskId, review.reviewId, null);
-      await this.schedulerStore.logDecision("reviewer_unavailable", { reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: agentId, reason });
+      const replacement = await this.replaceReview(review, reason);
+      await this.schedulerStore.logDecision("reviewer_unavailable", { reviewId: review.reviewId, replacementReviewId: replacement?.reviewId || null, taskId: review.taskId, reviewerAgentId: agentId, reason });
       await this.tick({ reason: "reviewer_unavailable" });
-      return { ok: true, handled: true };
+      return { ok: true, handled: true, replacementReviewId: replacement?.reviewId || null };
     }
 
     async handleAgentStateChanged(agent) {
@@ -424,5 +449,5 @@
   root.ReviewEngine = ReviewEngine;
   root.validateReviewPayload = validateReviewPayload;
   root.boundedReviewDiff = boundedDiff;
-  if (typeof module !== "undefined" && module.exports) module.exports = { ReviewEngine, validateReviewPayload, normalizeIssues, boundedDiff };
+  if (typeof module !== "undefined" && module.exports) module.exports = { ReviewEngine, validateReviewPayload, normalizeIssues, boundedDiff, MAX_REVIEW_PATCH_CHARS, MAX_REVIEW_FILE_PATCH_CHARS };
 })();
