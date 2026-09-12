@@ -4,6 +4,45 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.2] - 2026-09-12
+
+### Added
+
+- модульный content adapter layer: `GenerationDetector`, `ComposerAdapter`, `AssistantMessageReader`, `ProtocolParser`, `ChatGPTAdapter`;
+- централизованный selector registry с fallback selectors;
+- deterministic generation state machine;
+- typed content/background message names и runtime command boundary;
+- structured diagnostic logging;
+- zero-dependency Node test harness для deterministic core;
+- тесты parser/state machine/composer safety/response fingerprinting/SPA navigation baseline.
+
+### Reliability
+
+- legacy completion больше не зависит только от того, успело ли расширение заметить `stop-button`;
+- изменение fingerprint нового assistant response является вторым независимым completion signal;
+- completion принимается только после quiet/stability window;
+- существующий response при загрузке страницы используется как baseline и не запускает старый `DONE`;
+- переход между существующими ChatGPT conversations в SPA создаёт новый baseline и не трактуется как свежий completion;
+- одинаковый текст в двух разных assistant turns имеет разные fingerprints за счёт message count.
+
+### Changed
+
+- `content.js` теперь только bootstrap/runtime command boundary;
+- legacy `DONE/FAIL/ERROR` policy вынесена в `LegacyController` и работает поверх `ChatGPTAdapter`;
+- manifest загружает content modules в явном порядке;
+- prerelease version обновлена до `2.0.0-alpha.2`.
+
+### Preserved
+
+- точное case-sensitive сопоставление legacy-флагов;
+- randomized delay перед действием;
+- дополнительная stability-проверка ответа;
+- защита от перезаписи пользовательского текста в composer;
+- `FAIL` notification behavior;
+- локальная конфигурация правил.
+
+---
+
 ## [2.0.0-alpha.1] - 2026-09-12
 
 ### Changed
