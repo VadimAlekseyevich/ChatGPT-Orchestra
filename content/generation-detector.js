@@ -13,13 +13,15 @@
       composer,
       logger = root.Logger,
       quietMs = 700,
-      pollMs = 500
+      pollMs = 500,
+      clock = () => Date.now()
     } = {}) {
       this.documentRef = documentRef;
       this.windowRef = windowRef;
       this.reader = reader;
       this.composer = composer;
       this.logger = logger;
+      this.clock = clock;
       this.pollMs = Math.max(200, Number(pollMs) || 500);
       this.machine = new GenerationStateMachine({ quietMs });
       this.listeners = new Set();
@@ -27,6 +29,7 @@
       this.pollHandle = null;
       this.framePending = false;
       this.started = false;
+      this.lastPathname = null;
     }
 
     setQuietMs(quietMs) {
@@ -60,10 +63,37 @@
 
       const snapshot = this.reader.getSnapshot();
       const busy = this.composer.isGenerating();
+      const now = this.clock();
+
+      if (this.lastPathname === null) {
+        this.lastPathname = snapshot.pathname;
+      } else if (snapshot.pathname !== this.lastPathname) {
+        const previousPathname = this.lastPathname;
+        this.lastPathname = snapshot.pathname;
+
+        // ChatGPT is an SPA. Navigating to another existing conversation changes
+        // the rendered response without creating a new generation. Treat that
+        // response as a new baseline instead of falsely emitting completion.
+        this.machine.reset({
+          busy,
+          fingerprint: snapshot.fingerprint,
+          now
+        });
+        this.logger?.debug?.("conversation_navigation_baseline", {
+          reason,
+          from: previousPathname,
+          to: snapshot.pathname,
+          busy,
+          fingerprint: snapshot.fingerprint
+        });
+        this.emit({ type: "conversation_changed" }, snapshot);
+        return;
+      }
+
       const events = this.machine.observe({
         busy,
         fingerprint: snapshot.fingerprint,
-        now: Date.now()
+        now
       });
 
       for (const event of events) {
@@ -128,6 +158,7 @@
       if (this.pollHandle) clearInterval(this.pollHandle);
       this.pollHandle = null;
       this.framePending = false;
+      this.lastPathname = null;
     }
   }
 
