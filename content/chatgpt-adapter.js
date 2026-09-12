@@ -43,10 +43,22 @@
       this.messenger.send(root.MESSAGE_TYPES.CONTENT_HEARTBEAT, this.getStatus());
     }
 
-    startHeartbeat() {
-      if (this.heartbeatHandle) clearInterval(this.heartbeatHandle);
+    enableHeartbeat() {
+      if (this.heartbeatHandle) return;
       this.sendHeartbeat();
       this.heartbeatHandle = setInterval(() => this.sendHeartbeat(), this.heartbeatMs);
+      this.logger?.debug?.("agent_heartbeat_enabled", { heartbeatMs: this.heartbeatMs });
+    }
+
+    disableHeartbeat() {
+      if (this.heartbeatHandle) clearInterval(this.heartbeatHandle);
+      this.heartbeatHandle = null;
+    }
+
+    async announceReady() {
+      const response = await this.messenger.request(root.MESSAGE_TYPES.CONTENT_READY, this.getStatus());
+      if (response?.agent?.agentId) this.enableHeartbeat();
+      return response;
     }
 
     start(onGenerationEvent) {
@@ -79,14 +91,14 @@
       }
 
       this.detector.start();
-      this.messenger.send(root.MESSAGE_TYPES.CONTENT_READY, this.getStatus());
-      this.startHeartbeat();
+      this.announceReady().catch((error) => {
+        this.logger?.debug?.("content_ready_handshake_failed", { message: error?.message || String(error) });
+      });
     }
 
     stop() {
       this.detector.stop();
-      if (this.heartbeatHandle) clearInterval(this.heartbeatHandle);
-      this.heartbeatHandle = null;
+      this.disableHeartbeat();
       this.unsubscribeExternalDetector?.();
       this.unsubscribeRuntimeDetector?.();
       this.unsubscribeExternalDetector = null;
@@ -105,29 +117,12 @@
       };
     }
 
-    getResponseSnapshot() {
-      return this.reader.getSnapshot();
-    }
-
-    parseResponse(text, options) {
-      return this.parser.parse(text, options);
-    }
-
-    parseLastResponse(options) {
-      return this.parser.parse(this.reader.getLastAssistantText(), options);
-    }
-
-    isGenerating() {
-      return this.composer.isGenerating();
-    }
-
-    async sendPrompt(prompt) {
-      return this.composer.sendPrompt(prompt);
-    }
-
-    stopGeneration() {
-      return this.composer.stopGeneration();
-    }
+    getResponseSnapshot() { return this.reader.getSnapshot(); }
+    parseResponse(text, options) { return this.parser.parse(text, options); }
+    parseLastResponse(options) { return this.parser.parse(this.reader.getLastAssistantText(), options); }
+    isGenerating() { return this.composer.isGenerating(); }
+    async sendPrompt(prompt) { return this.composer.sendPrompt(prompt); }
+    stopGeneration() { return this.composer.stopGeneration(); }
   }
 
   root.ChatGPTAdapter = ChatGPTAdapter;
