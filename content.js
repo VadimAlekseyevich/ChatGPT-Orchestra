@@ -35,7 +35,7 @@
 
   const LEGACY_DEFAULT_MARKER = "DONE";
   const LEGACY_DEFAULT_FOLLOW_UP = "Делай следующее задание";
-  const LOG_PREFIX = "[ChatGPT DONE Auto-Continue]";
+  const LOG_PREFIX = "[ChatGPT Orchestra]";
 
   let config = { ...DEFAULTS, rules: cloneDefaultRules() };
   let wasGenerating = false;
