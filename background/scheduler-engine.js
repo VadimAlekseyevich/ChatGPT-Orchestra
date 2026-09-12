@@ -13,7 +13,8 @@
     "git_repository_identity_missing",
     "git_repository_or_ref_unavailable",
     "git_default_branch_missing",
-    "git_base_snapshot_missing"
+    "git_base_snapshot_missing",
+    "git_changed_files_may_be_truncated"
   ]);
 
   function riskRank(value) {
@@ -98,7 +99,11 @@
       if (!this.gitProvider?.checkBaseFresh) return { ok: false, reason: "git_provider_unavailable" };
       const lastCheckedAt = Number(snapshot.lastCheckedAt) || 0;
       if (!force && lastCheckedAt && this.clock() - lastCheckedAt < GIT_FRESHNESS_TTL_MS) {
-        return { ok: snapshot.lastFreshnessStatus !== "target_branch_moved", cached: true, currentTargetSha: snapshot.currentTargetSha || snapshot.baseSha };
+        const cachedStatus = String(snapshot.lastFreshnessStatus || "fresh");
+        if (cachedStatus === "fresh") {
+          return { ok: true, cached: true, currentTargetSha: snapshot.currentTargetSha || snapshot.baseSha };
+        }
+        return { ok: false, reason: cachedStatus, cached: true, currentTargetSha: snapshot.currentTargetSha || null };
       }
       const result = await this.gitProvider.checkBaseFresh(project, snapshot);
       await this.store.recordGitFreshness?.(result);
@@ -363,7 +368,8 @@
         await this.store.recordArtifactValidation?.(run.runId, validation);
 
         if (!validation.ok) {
-          const fatal = FATAL_GIT_REASONS.has(validation.reason);
+          const reason = String(validation.reason || "artifact_invalid");
+          const fatal = FATAL_GIT_REASONS.has(reason) || reason.startsWith("git_provider_");
           const result = await this.store.markFailure(run.runId, "artifact_invalid", { retryable: !fatal, needsUser: fatal });
           await this.registry.clearProtocolContext(run.agentId);
           await this.store.logDecision("git_artifact_invalid", {
@@ -371,11 +377,11 @@
             runId: run.runId,
             agentId: run.agentId,
             branch: run.git?.branch || null,
-            reason: validation.reason,
+            reason,
             fatal,
             validation
           });
-          if (fatal || result?.task?.status === "NEEDS_USER") await this.escalate(validation.reason || "artifact_invalid", result?.task || task, validation);
+          if (fatal || result?.task?.status === "NEEDS_USER") await this.escalate(reason, result?.task || task, validation);
           else await this.tick({ reason: "artifact_invalid_retry" });
           return;
         }
