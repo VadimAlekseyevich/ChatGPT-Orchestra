@@ -20,12 +20,15 @@
   }
 
   function slugBranchComponent(value) {
-    const normalized = String(value || "")
+    let normalized = String(value || "")
       .trim()
       .replace(/[^A-Za-z0-9._-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .replace(/\.{2,}/g, ".")
-      .slice(0, 72);
+      .replace(/^\.+|\.+$/g, "")
+      .slice(0, 72)
+      .replace(/\.+$/g, "");
+    if (/\.lock$/i.test(normalized)) normalized = normalized.replace(/\.lock$/i, "-lock");
     return normalized || "unknown";
   }
 
@@ -56,8 +59,13 @@
       const char = source[index];
       if (char === "*") {
         if (source[index + 1] === "*") {
-          output += ".*";
-          index += 1;
+          if (source[index + 2] === "/") {
+            output += "(?:.*/)?";
+            index += 2;
+          } else {
+            output += ".*";
+            index += 1;
+          }
         } else {
           output += "[^/]*";
         }
@@ -203,6 +211,7 @@
       if (!defaultBranch) return { ok: false, reason: "git_default_branch_missing" };
       const head = await this.getBranchHead(project, defaultBranch);
       if (!head.ok) return head;
+      const now = this.clock();
       return {
         ok: true,
         snapshot: {
@@ -210,9 +219,10 @@
           repositoryFullName: repoIdentity(project)?.fullName || "",
           defaultBranch,
           baseSha: head.sha,
-          capturedAt: this.clock(),
+          capturedAt: now,
           cleanupPolicy: CLEANUP_POLICY,
-          lastCheckedAt: this.clock(),
+          lastCheckedAt: now,
+          lastFreshnessStatus: "fresh",
           currentTargetSha: head.sha
         }
       };
