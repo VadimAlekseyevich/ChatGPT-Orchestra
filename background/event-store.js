@@ -35,6 +35,14 @@
     });
   }
 
+  function normalizeSource(source = {}) {
+    return {
+      responseFingerprint: String(source?.responseFingerprint || "").slice(0, 256),
+      pathname: String(source?.pathname || "").slice(0, 1024),
+      messageCount: Math.max(0, Number(source?.messageCount) || 0)
+    };
+  }
+
   function defaultState() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -121,7 +129,7 @@
       return Number.isSafeInteger(value) ? value : 0;
     }
 
-    async accept(event, { route = null, tabId = null } = {}) {
+    async accept(event, { route = null, tabId = null, source = null } = {}) {
       const now = this.clock();
       this.state.eventCursor += 1;
       const cursor = this.state.eventCursor;
@@ -141,7 +149,14 @@
       }
 
       this.state.sequences[runKey] = event.sequence;
-      this.state.events.push({ cursor, receivedAt: now, route, tabId: Number.isInteger(tabId) ? tabId : null, event: clone(event) });
+      this.state.events.push({
+        cursor,
+        receivedAt: now,
+        route,
+        tabId: Number.isInteger(tabId) ? tabId : null,
+        source: normalizeSource(source || {}),
+        event: clone(event)
+      });
       if (this.state.events.length > this.maxEvents) this.state.events.splice(0, this.state.events.length - this.maxEvents);
       await this.persist();
       return { cursor, runKey };
@@ -170,6 +185,6 @@
   root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize };
+    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource };
   }
 })();
