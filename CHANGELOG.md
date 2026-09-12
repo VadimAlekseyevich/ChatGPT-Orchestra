@@ -4,6 +4,47 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.3] - 2026-09-12
+
+### Added
+
+- Manifest V3 service worker как центральный runtime coordinator;
+- persistent `TabRegistry` в `chrome.storage.local`;
+- стабильные `agentId` и mapping `agentId <-> tabId <-> chatUrl`;
+- явная роль Lead и до четырёх Worker slots;
+- создание Worker-вкладок через безопасный pre-bind перед navigation в ChatGPT;
+- heartbeat зарегистрированных агентов и состояния `CONNECTING/IDLE/BUSY/OFFLINE/ERROR`;
+- recovery registry после рестарта service worker;
+- обработка reload, close и navigation зарегистрированных вкладок;
+- адресная отправка prompt/stop command конкретному `agentId`;
+- Phase 2 controls/status в popup;
+- unit tests для persistence, registration safety, lifecycle и targeted routing.
+
+### Safety
+
+- обычная пользовательская вкладка ChatGPT не становится агентом автоматически;
+- Lead назначается только явной командой пользователя;
+- Worker регистрируется по `tabId` до перехода с `about:blank` на ChatGPT;
+- незарегистрированные вкладки не запускают периодический heartbeat;
+- runtime messages от неизвестных ChatGPT tabs игнорируются orchestrator'ом.
+
+### Changed
+
+- manifest запрашивает `tabs` и объявляет background service worker;
+- prerelease version обновлена до `2.0.0-alpha.3`;
+- popup теперь показывает состояние Lead/Workers, не заменяя legacy flag settings.
+
+### Not yet implemented
+
+- Orchestra Protocol v1 / event bus;
+- project bootstrap и Planner/Critic;
+- task DAG и scheduler;
+- Git branch isolation;
+- review/integration loops;
+- полноценные Pause/Resume semantics и crash recovery проекта.
+
+---
+
 ## [2.0.0-alpha.2] - 2026-09-12
 
 ### Added

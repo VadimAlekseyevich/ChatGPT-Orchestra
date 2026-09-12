@@ -1,11 +1,12 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.2",
+  "version": "2.0.0-alpha.3",
   "private": true,
-  "description": "Development and deterministic-core tests for ChatGPT Orchestra.",
+  "description": "Development tests for ChatGPT Orchestra adapter and service-worker orchestration core.",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js"
+    "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
+    "test:phase2": "node --test tests/tab-registry.test.js tests/orchestrator.test.js"
   },
   "engines": {
     "node": ">=18"
