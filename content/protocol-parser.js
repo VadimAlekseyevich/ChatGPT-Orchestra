@@ -3,9 +3,11 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Utils = root.Utils || (typeof require === "function" ? require("./utils.js") : null);
+  const OrchestraProtocol = root.OrchestraProtocol
+    || (typeof require === "function" ? require("../protocol/orchestra-protocol.js") : null);
 
   class ProtocolParser {
-    constructor({ maxEnvelopeLength = 4096 } = {}) {
+    constructor({ maxEnvelopeLength = OrchestraProtocol?.MAX_ENVELOPE_LENGTH || 4096 } = {}) {
       this.maxEnvelopeLength = Math.max(128, Number(maxEnvelopeLength) || 4096);
     }
 
@@ -17,12 +19,24 @@
         return { kind: "none", lastLine: "" };
       }
 
-      if (lastLine.startsWith("@@ORCH")) {
+      if (lastLine.startsWith(OrchestraProtocol.PREFIX)) {
+        const parsed = OrchestraProtocol.parseLine(lastLine, {
+          maxEnvelopeLength: this.maxEnvelopeLength
+        });
+        if (!parsed.ok) {
+          return {
+            kind: "protocol_error",
+            lastLine,
+            reason: parsed.reason,
+            field: parsed.field || null,
+            received: parsed.received ?? null
+          };
+        }
         return {
-          kind: "orchestra_candidate",
+          kind: "orchestra_event",
           lastLine,
-          raw: lastLine.slice(0, this.maxEnvelopeLength),
-          truncated: lastLine.length > this.maxEnvelopeLength
+          event: parsed.event,
+          route: OrchestraProtocol.routeForEvent(parsed.event.event)
         };
       }
 
