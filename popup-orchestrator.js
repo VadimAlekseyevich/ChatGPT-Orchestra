@@ -68,11 +68,14 @@
       return;
     }
     const counts = scheduler.counts || {};
-    const done = Number(counts.DONE_UNVERIFIED) || 0;
+    const approved = Number(counts.APPROVED) || 0;
     const needsUser = Number(counts.NEEDS_USER) || 0;
+    const review = scheduler.review || {};
+    const reviewWaiting = (Number(review.pending) || 0) + (Number(review.active) || 0);
     const git = scheduler.git;
     const gitText = git?.defaultBranch && git?.baseSha ? ` · git ${git.defaultBranch}@${String(git.baseSha).slice(0, 8)}` : "";
-    ui.executionStatus.textContent = `${scheduler.status} · ${done}/${scheduler.taskCount} done · ${scheduler.activeRuns} active${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}`;
+    const reviewText = reviewWaiting ? ` · review ${review.active || 0} active/${review.pending || 0} pending` : "";
+    ui.executionStatus.textContent = `${scheduler.status} · ${approved}/${scheduler.taskCount} approved · ${scheduler.activeRuns} work active${reviewText}${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}`;
     ui.startExecution.disabled = true;
   }
 
@@ -138,7 +141,7 @@
     ui.startExecution.disabled = true;
     const maxWorkers = Math.max(1, Math.min(4, Number(ui.workerCount.value) || 3));
     ui.workerCount.value = maxWorkers;
-    const response = await send(TYPES.ORCHESTRATOR_START_EXECUTION, { maxWorkers });
+    const response = await send(TYPES.ORCHESTRATOR_START_EXECUTION, { maxWorkers, maxReviewIterations: 3 });
     if (!response.ok) {
       ui.executionStatus.textContent = `Execution error: ${response.reason || "unknown"}`;
       ui.startExecution.disabled = false;
