@@ -48,6 +48,22 @@ test("persists immutable project bootstrap input and blocks a second active proj
   assert.equal(restored.getActiveProject().projectId, "P1");
 });
 
+test("stage completion is idempotent for the same stage and run", async () => {
+  let now = 10;
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P1", clock: () => now++ });
+  await store.load();
+  await store.createProject({
+    goal: "Make stage recovery idempotent when replaying an accepted event.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+  await store.beginStage("P1", { stage: "DISCOVERY", runId: "R1" });
+  await store.completeStage("P1", { stage: "DISCOVERY", artifact: { value: 1 } });
+  await store.completeStage("P1", { stage: "DISCOVERY", artifact: { value: 1 } });
+  const project = store.getProject("P1");
+  assert.equal(project.stageHistory.filter((entry) => entry.status === "completed").length, 1);
+  assert.deepEqual(project.artifacts.DISCOVERY, { value: 1 });
+});
+
 test("rejects invalid bootstrap input", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P1" });
   await store.load();

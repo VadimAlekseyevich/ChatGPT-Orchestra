@@ -14,6 +14,21 @@ test("parses a multiline planning artifact before the final protocol event", () 
   assert.equal(result.ok, true);
   assert.equal(result.artifact.stack, "js");
   assert.deepEqual(result.artifact.tests, ["npm test"]);
+  assert.match(result.signature, /^fnv1a32:/);
+});
+
+test("artifact signature is stable across object key order", () => {
+  assert.equal(
+    Parser.artifactSignature({ a: 1, nested: { b: 2, c: 3 } }),
+    Parser.artifactSignature({ nested: { c: 3, b: 2 }, a: 1 })
+  );
+});
+
+test("requires exactly one pair of marker lines", () => {
+  const ambiguous = [Parser.BEGIN, "{}", Parser.END, Parser.BEGIN, "{}", Parser.END].join("\n");
+  assert.equal(Parser.parsePlanningArtifact(ambiguous).reason, "planning_artifact_marker_ambiguous");
+  const embedded = `${Parser.BEGIN}\n${JSON.stringify({ text: `contains ${Parser.END} as data` })}\n${Parser.END}`;
+  assert.equal(Parser.parsePlanningArtifact(embedded).ok, true);
 });
 
 test("rejects missing markers, malformed JSON and arrays", () => {

@@ -44,6 +44,22 @@ function fakeRegistry() {
   };
 }
 
+function discoveryArtifact(overrides = {}) {
+  return {
+    repositoryAccess: { status: "ok", inspectedPaths: ["package.json", "src/index.js"], gaps: [] },
+    stack: ["JavaScript"],
+    entrypoints: ["src/index.js"],
+    commands: { build: [], test: ["npm test"], lint: [], typecheck: [] },
+    modules: ["src"],
+    persistence: [],
+    ci: [],
+    instructions: { agentsMd: "absent", paths: [] },
+    sensitiveAreas: [],
+    constraints: [],
+    ...overrides
+  };
+}
+
 function validGraph() {
   return {
     objectiveCoveredBy: ["T2"],
@@ -111,12 +127,13 @@ test("runs the six planning stages and reaches READY with a validated DAG", asyn
   assert.equal(started.ok, true);
   assert.equal(store.getActiveProject().stage, "DISCOVERY");
   assert.match(prompts[0].prompt, /@@ORCH_ARTIFACT_BEGIN/);
+  assert.match(prompts[0].prompt, /repositoryAccess/);
 
   const artifacts = {
-    DISCOVERY: { stack: "JavaScript", tests: ["npm test"] },
-    PLAN_V1: { milestones: ["core", "tests"] },
-    CRITIQUE: { findings: ["add explicit acceptance criteria"] },
-    PLAN_V2: { milestones: ["core", "tests"], agentsMdProposal: { action: "no_change" } },
+    DISCOVERY: discoveryArtifact(),
+    PLAN_V1: { milestones: [{ id: "M1", objective: "core", dependencies: [] }], risks: [], verificationStrategy: ["npm test"], completionDefinition: "All planned behavior is implemented and verified." },
+    CRITIQUE: { findings: [{ severity: "medium", issue: "add explicit acceptance criteria", correction: "make them task-level" }], blockingIssues: [] },
+    PLAN_V2: { milestones: [{ id: "M1", objective: "core", dependencies: [] }], risks: [], verificationStrategy: ["npm test"], completionDefinition: "All planned behavior is implemented and verified.", agentsMdProposal: { action: "no_change" } },
     DECOMPOSE: validGraph(),
     DAG_CRITIC: validGraph()
   };
@@ -134,6 +151,31 @@ test("runs the six planning stages and reaches READY with a validated DAG", asyn
   assert.equal(ready.validation.ok, true);
   assert.equal(prompts.length, 6);
   assert.equal(registry.lead.protocolContext.taskId, "planning:complete");
+});
+
+test("fails closed when repository discovery says the repository is unavailable", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P1" });
+  const registry = fakeRegistry();
+  const prompts = [];
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: new FakeEventBus(),
+    idFactory: () => "R1",
+    sendPrompt: async (_agentId, prompt) => { prompts.push(prompt); return { ok: true }; }
+  });
+  await engine.init();
+  await engine.startProject({
+    goal: "Plan changes only after proving repository access is available.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+  const project = store.getActiveProject();
+  await engine.handleCompletion(completion(project, "DISCOVERY", discoveryArtifact({
+    repositoryAccess: { status: "unavailable", inspectedPaths: [], gaps: ["repository unavailable"] }
+  })));
+  assert.equal(store.getActiveProject().status, "NEEDS_USER");
+  assert.equal(store.getActiveProject().lastError.reason, "repository_access_unavailable");
+  assert.equal(prompts.length, 1);
 });
 
 test("recovers an already accepted stage artifact after service-worker restart", async () => {
@@ -155,20 +197,23 @@ test("recovers an already accepted stage artifact after service-worker restart",
       event: "DONE",
       payload: { stage: "DISCOVERY" }
     },
-    source: { planningArtifact: { stack: "JavaScript" } }
+    source: { planningArtifact: discoveryArtifact() }
   };
   const registry = fakeRegistry();
   const prompts = [];
+  const bus = new FakeEventBus([accepted]);
   const engine = new PlanningEngine({
     projectStore: new ProjectStore({ storageArea: storage, idFactory: () => "unused" }),
     registry,
-    eventBus: new FakeEventBus([accepted]),
+    eventBus: bus,
     idFactory: () => "NEXT",
     sendPrompt: async (_agentId, prompt) => { prompts.push(prompt); return { ok: true }; }
   });
+  await engine.init();
   await engine.init();
 
   assert.equal(engine.projectStore.getActiveProject().stage, "PLAN_V1");
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /planning stage PLAN_V1/);
+  assert.equal(bus.listeners.get("completion").length, 1);
 });
