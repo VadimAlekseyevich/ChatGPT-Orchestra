@@ -27,7 +27,8 @@
         quietMs,
         pollMs
       });
-      this.unsubscribeDetector = null;
+      this.unsubscribeExternalDetector = null;
+      this.unsubscribeRuntimeDetector = null;
     }
 
     configure({ quietMs, sendTimeoutMs } = {}) {
@@ -36,18 +37,43 @@
     }
 
     start(onGenerationEvent) {
-      if (this.unsubscribeDetector) this.unsubscribeDetector();
+      this.unsubscribeExternalDetector?.();
+      this.unsubscribeRuntimeDetector?.();
+      this.unsubscribeExternalDetector = null;
+      this.unsubscribeRuntimeDetector = null;
+
+      this.unsubscribeRuntimeDetector = this.detector.onEvent((event) => {
+        if (event.type === "generation_completed") {
+          this.messenger.send(root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED, {
+            fingerprint: event.snapshot?.fingerprint || "",
+            messageCount: event.snapshot?.messageCount || 0,
+            pathname: event.snapshot?.pathname || ""
+          });
+        }
+
+        if (
+          event.type === "generation_started"
+          || event.type === "generation_stopped"
+          || event.type === "generation_completed"
+        ) {
+          this.messenger.send(root.MESSAGE_TYPES.CHAT_STATE, this.getStatus());
+        }
+      });
+
       if (typeof onGenerationEvent === "function") {
-        this.unsubscribeDetector = this.detector.onEvent(onGenerationEvent);
+        this.unsubscribeExternalDetector = this.detector.onEvent(onGenerationEvent);
       }
+
       this.detector.start();
       this.messenger.send(root.MESSAGE_TYPES.CONTENT_READY, this.getStatus());
     }
 
     stop() {
       this.detector.stop();
-      this.unsubscribeDetector?.();
-      this.unsubscribeDetector = null;
+      this.unsubscribeExternalDetector?.();
+      this.unsubscribeRuntimeDetector?.();
+      this.unsubscribeExternalDetector = null;
+      this.unsubscribeRuntimeDetector = null;
     }
 
     getStatus() {
