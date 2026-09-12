@@ -148,6 +148,7 @@
       const cursor = this.state.eventCursor;
       const identity = eventIdentity(event);
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
+      const normalizedSource = normalizeSource(source || {});
 
       this.state.processedEvents[event.eventId] = { ...identity, signature: eventSignature(event), cursor, acceptedAt: now };
       this.state.processedOrder.push(event.eventId);
@@ -162,12 +163,12 @@
         receivedAt: now,
         route,
         tabId: Number.isInteger(tabId) ? tabId : null,
-        source: normalizeSource(source || {}),
+        source: normalizedSource,
         event: clone(event)
       });
       if (this.state.events.length > this.maxEvents) this.state.events.splice(0, this.state.events.length - this.maxEvents);
       await this.persist();
-      return { cursor, runKey };
+      return { cursor, runKey, source: clone(normalizedSource) };
     }
 
     async reject(reason, { event = null, tabId = null, details = null } = {}) {
