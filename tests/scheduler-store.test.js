@@ -47,6 +47,48 @@ test("persists task/run transitions and unlocks dependencies only after DONE_UNV
   assert.equal(restored.getRun("R1").status, "DONE");
 });
 
+test("Git-required run cannot complete until artifact validation is persisted", async () => {
+  const store = new SchedulerStore({ storageArea: fakeStorage() });
+  await store.load();
+  await store.initializeProject(project(), { maxRetries: 1 });
+  await store.setGitSnapshot({ provider: "test-git", defaultBranch: "main", baseSha: "a".repeat(40) });
+  await store.createRun({
+    taskId: "T1",
+    runId: "R1",
+    agentId: "A1",
+    git: {
+      required: true,
+      provider: "test-git",
+      branch: "orchestra/P1/T1/R1",
+      targetBranch: "main",
+      baseSha: "a".repeat(40)
+    }
+  });
+
+  const rejected = await store.markDone("R1");
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, "git_artifact_not_valid");
+  assert.equal(store.getTask("T1").status, "ASSIGNED");
+  assert.deepEqual(store.runnableTasks().map((task) => task.id), []);
+
+  await store.recordArtifactValidation("R1", {
+    ok: true,
+    artifact: {
+      provider: "test-git",
+      branch: "orchestra/P1/T1/R1",
+      commit: "b".repeat(40),
+      baseSha: "a".repeat(40),
+      targetBranch: "main",
+      changedFiles: ["src/a/file.js"]
+    }
+  });
+  const accepted = await store.markDone("R1");
+  assert.equal(accepted.ok, true);
+  assert.equal(store.getTask("T1").status, "DONE_UNVERIFIED");
+  assert.equal(store.getTask("T1").lastArtifact.commit, "b".repeat(40));
+  assert.deepEqual(store.runnableTasks().map((task) => task.id), ["T2"]);
+});
+
 test("retry budget means initial attempt plus maxRetries", async () => {
   const store = new SchedulerStore({ storageArea: fakeStorage() });
   await store.load();
