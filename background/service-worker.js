@@ -43,11 +43,3 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     console.warn("[ChatGPT Orchestra] tab_updated_handler_failed", error);
   });
 });
-
-chrome.runtime.onStartup.addListener(() => {
-  readyPromise = orchestrator.init();
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-  readyPromise = orchestrator.init();
-});
