@@ -166,7 +166,13 @@
 
     async handleProtocolEvent(message, sender) {
       if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
-      return this.eventBus.handleEvent(message?.payload?.event, sender);
+      const payload = message?.payload || {};
+      const source = {
+        responseFingerprint: payload.responseFingerprint || "",
+        pathname: payload.pathname || "",
+        messageCount: payload.messageCount || 0
+      };
+      return this.eventBus.handleEvent(payload.event, sender, source);
     }
 
     async handleProtocolError(message, sender) {
