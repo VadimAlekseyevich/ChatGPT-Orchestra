@@ -4,16 +4,8 @@
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Protocol = root.OrchestraProtocol
     || (typeof require === "function" ? require("../protocol/orchestra-protocol.js") : null);
-
-  function sameIdentity(processed, event) {
-    return Boolean(processed)
-      && processed.event === event.event
-      && processed.projectId === event.projectId
-      && processed.taskId === event.taskId
-      && processed.runId === event.runId
-      && processed.agentId === event.agentId
-      && processed.sequence === event.sequence;
-  }
+  const StoreModule = typeof require === "function" ? require("./event-store.js") : null;
+  const eventSignature = root.eventSignature || StoreModule?.eventSignature;
 
   class EventBus {
     constructor({ registry, store, logger = console } = {}) {
@@ -23,14 +15,8 @@
       this.listeners = new Map();
     }
 
-    async load() {
-      return this.store.load();
-    }
-
-    summary() {
-      return this.store.summary();
-    }
-
+    async load() { return this.store.load(); }
+    summary() { return this.store.summary(); }
     recent(limit) {
       return {
         events: this.store.recentEvents(limit),
@@ -51,10 +37,7 @@
     }
 
     async emit(route, record) {
-      const listeners = [
-        ...(this.listeners.get(route) || []),
-        ...(this.listeners.get("*") || [])
-      ];
+      const listeners = [...(this.listeners.get(route) || []), ...(this.listeners.get("*") || [])];
       for (const listener of listeners) {
         try {
           await listener(record);
@@ -68,6 +51,17 @@
       const tabId = sender?.tab?.id;
       await this.store.reject(reason, { event, tabId, details });
       return { ok: false, reason };
+    }
+
+    validateProtocolContext(agent, event) {
+      const expected = agent?.protocolContext;
+      if (!expected) return { ok: true };
+      for (const field of ["projectId", "taskId", "runId"]) {
+        if (expected[field] && event[field] !== expected[field]) {
+          return { ok: false, reason: `${field}_mismatch`, field, expected: expected[field], received: event[field] };
+        }
+      }
+      return { ok: true };
     }
 
     async handleEvent(rawEvent, sender) {
@@ -85,16 +79,21 @@
       const agent = this.registry.getAgentByTabId(tabId);
       if (!agent) return this.reject("unregistered_sender", { event, sender });
       if (event.agentId !== agent.agentId) {
-        return this.reject("agent_mismatch", {
+        return this.reject("agent_mismatch", { event, sender, details: { expectedAgentId: agent.agentId } });
+      }
+
+      const context = this.validateProtocolContext(agent, event);
+      if (!context.ok) {
+        return this.reject(context.reason, {
           event,
           sender,
-          details: { expectedAgentId: agent.agentId }
+          details: { field: context.field, expected: context.expected, received: context.received }
         });
       }
 
       const existing = this.store.getProcessed(event.eventId);
       if (existing) {
-        if (sameIdentity(existing, event)) {
+        if (existing.signature && existing.signature === eventSignature(event)) {
           return {
             ok: true,
             duplicate: true,
@@ -109,24 +108,14 @@
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
       const lastSequence = this.store.getLastSequence(runKey);
       if (event.sequence <= lastSequence) {
-        return this.reject("stale_sequence", {
-          event,
-          sender,
-          details: { lastSequence }
-        });
+        return this.reject("stale_sequence", { event, sender, details: { lastSequence } });
       }
 
       const route = Protocol.routeForEvent(event.event);
       if (!route) return this.reject("unknown_route", { event, sender });
 
       const accepted = await this.store.accept(event, { route, tabId });
-      const record = {
-        cursor: accepted.cursor,
-        route,
-        tabId,
-        agent,
-        event
-      };
+      const record = { cursor: accepted.cursor, route, tabId, agent, event };
       await this.emit(route, record);
       return {
         ok: true,
@@ -162,6 +151,6 @@
   root.EventBus = EventBus;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventBus, sameIdentity };
+    module.exports = { EventBus };
   }
 })();
