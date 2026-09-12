@@ -52,3 +52,16 @@ test("requires complete identity and positive sequence", () => {
   assert.equal(Protocol.validateEnvelope(validEvent({ sequence: 0 })).reason, "invalid_sequence");
   assert.equal(Protocol.validateEnvelope(validEvent({ v: 2 })).reason, "unsupported_version");
 });
+
+test("rejects explicitly invalid payload types instead of silently replacing them", () => {
+  assert.equal(Protocol.validateEnvelope(validEvent({ payload: [] })).reason, "invalid_payload");
+  assert.equal(Protocol.validateEnvelope(validEvent({ payload: "text" })).reason, "invalid_payload");
+});
+
+test("normalization does not mutate the input payload", () => {
+  const input = validEvent({ payload: { existing: true }, commit: "abc" });
+  const result = Protocol.validateEnvelope(input);
+  assert.equal(result.ok, true);
+  assert.deepEqual(input.payload, { existing: true });
+  assert.deepEqual(result.event.payload, { existing: true, commit: "abc" });
+});
