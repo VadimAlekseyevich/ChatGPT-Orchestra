@@ -31,6 +31,14 @@
           taskId: `planning:${project.stage.toLowerCase()}`,
           runId: project.currentRunId
         });
+        const recent = this.eventBus.recent(200).events || [];
+        const accepted = [...recent].reverse().find((record) => (
+          record?.event?.projectId === project.projectId
+          && record?.event?.taskId === `planning:${project.stage.toLowerCase()}`
+          && record?.event?.runId === project.currentRunId
+          && record?.source?.planningArtifact
+        ));
+        if (accepted) await this.handleCompletion(accepted);
       }
       return this.getPublicState();
     }
@@ -70,18 +78,18 @@
     }
 
     async handleCompletion(record) {
-      const event = recor?.event;
+      const event = record?.event;
       const project = this.projectStore.getActiveProject();
       const lead = this.getLead();
       if (!event || !project || project.status !== "PLANNING" || !lead) return;
       if (event.agentId !== lead.agentId || event.projectId !== project.projectId) return;
 
-      const stage = String(event.payload?.stage || "").toUpperCase();
+      const stage = String (event.payload?.stage || "").toUpperCase();
       if (stage !== project.stage) {
         await this.projectStore.fail(project.projectId, "planning_stage_mismatch", { expected: project.stage, received: stage });
         return;
       }
-      const artifact = event.payload?.artifact;
+      const artifact = record?.source?.planningArtifact;
       const problem = this.artifactCheck(stage, artifact);
       if (problem) {
         await this.projectStore.fail(project.projectId, problem, { stage });

@@ -1,13 +1,14 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.4",
+  "version": "2.0.0-alpha.5",
   "private": true,
-  "description": "Development tests for ChatGPT Orchestra adapter, service-worker orchestration core and Orchestra Protocol v1.",
+  "description": "Development tests for ChatGPT Orchestra adapter, orchestration core, Protocol v1 and project planning pipeline.",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
     "test:phase2": "node --test tests/tab-registry.test.js tests/orchestrator.test.js",
-    "test:phase3": "node --test tests/orchestra-protocol.test.js tests/event-bus.test.js"
+    "test:phase3": "node --test tests/orchestra-protocol.test.js tests/event-bus.test.js",
+    "test:phase4": "node --test tests/project-store.test.js tests/dag-validator.test.js tests/planning-artifact-parser.test.js tests/planning-engine.test.js"
   },
   "engines": {
     "node": ">=18"

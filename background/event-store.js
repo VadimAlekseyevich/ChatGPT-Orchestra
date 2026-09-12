@@ -7,6 +7,7 @@
   const DEFAULT_MAX_EVENTS = 1000;
   const DEFAULT_MAX_REJECTIONS = 250;
   const DEFAULT_MAX_PROCESSED = 10000;
+  const MAX_PLANNING_ARTIFACT_LENGTH = 262144;
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -35,11 +36,23 @@
     });
   }
 
+  function normalizePlanningArtifact(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded.length > MAX_PLANNING_ARTIFACT_LENGTH) return null;
+      return clone(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
   function normalizeSource(source = {}) {
     return {
       responseFingerprint: String(source?.responseFingerprint || "").slice(0, 256),
       pathname: String(source?.pathname || "").slice(0, 1024),
-      messageCount: Math.max(0, Number(source?.messageCount) || 0)
+      messageCount: Math.max(0, Number(source?.messageCount) || 0),
+      planningArtifact: normalizePlanningArtifact(source?.planningArtifact)
     };
   }
 
@@ -136,12 +149,7 @@
       const identity = eventIdentity(event);
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
 
-      this.state.processedEvents[event.eventId] = {
-        ...identity,
-        signature: eventSignature(event),
-        cursor,
-        acceptedAt: now
-      };
+      this.state.processedEvents[event.eventId] = { ...identity, signature: eventSignature(event), cursor, acceptedAt: now };
       this.state.processedOrder.push(event.eventId);
       while (this.state.processedOrder.length > this.maxProcessed) {
         const oldestId = this.state.processedOrder.shift();
@@ -185,6 +193,6 @@
   root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource };
+    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact };
   }
 })();

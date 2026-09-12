@@ -4,14 +4,14 @@
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const CHATGPT_HOME = "https://chatgpt.com/";
   const MAX_WORKERS = 4;
-
   function asError(error) { return error?.message || String(error || "unknown_error"); }
 
   class ServiceWorkerOrchestrator {
-    constructor({ chromeApi = globalThis.chrome, registry, eventBus = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
+    constructor({ chromeApi = globalThis.chrome, registry, eventBus = null, planningEngine = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
       this.chrome = chromeApi;
       this.registry = registry;
       this.eventBus = eventBus;
+      this.planningEngine = planningEngine;
       this.logger = logger;
       this.workerUrl = workerUrl;
       this.initialized = false;
@@ -21,6 +21,7 @@
       if (this.initialized) return this.getPublicState();
       await this.registry.load();
       if (this.eventBus) await this.eventBus.load();
+      if (this.planningEngine) await this.planningEngine.init();
       await this.reconcileRegisteredTabs();
       this.initialized = true;
       return this.getPublicState();
@@ -35,7 +36,8 @@
         updatedAt: snapshot.updatedAt,
         lead: agents.find((agent) => agent.role === "lead") || null,
         workers: agents.filter((agent) => agent.role === "worker"),
-        protocol: this.eventBus?.summary?.() || null
+        protocol: this.eventBus?.summary?.() || null,
+        project: this.planningEngine?.getPublicState?.() || null
       };
     }
 
@@ -117,15 +119,13 @@
     async bindProtocolContext(agentId, context = {}) {
       const agent = this.registry.getAgent(agentId);
       if (!agent) return { ok: false, reason: "unknown_agent" };
-      const updated = await this.registry.setProtocolContext(agentId, context);
-      return { ok: true, agent: updated };
+      return { ok: true, agent: await this.registry.setProtocolContext(agentId, context) };
     }
 
     async clearProtocolContext(agentId) {
       const agent = this.registry.getAgent(agentId);
       if (!agent) return { ok: false, reason: "unknown_agent" };
-      const updated = await this.registry.clearProtocolContext(agentId);
-      return { ok: true, agent: updated };
+      return { ok: true, agent: await this.registry.clearProtocolContext(agentId) };
     }
 
     async sendPromptToAgent(agentId, prompt) {
@@ -167,12 +167,12 @@
     async handleProtocolEvent(message, sender) {
       if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
       const payload = message?.payload || {};
-      const source = {
+      return this.eventBus.handleEvent(payload.event, sender, {
         responseFingerprint: payload.responseFingerprint || "",
         pathname: payload.pathname || "",
-        messageCount: payload.messageCount || 0
-      };
-      return this.eventBus.handleEvent(payload.event, sender, source);
+        messageCount: payload.messageCount || 0,
+        planningArtifact: payload.planningArtifact || null
+      });
     }
 
     async handleProtocolError(message, sender) {
@@ -197,6 +197,11 @@
 
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_EVENTS) return { ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) };
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_PROJECT) return { ok: true, project: this.planningEngine?.getPublicState?.() || null };
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT) {
+        if (!this.planningEngine) return { ok: false, reason: "planning_engine_unavailable" };
+        return this.planningEngine.startProject({ goal: payload.goal, repositoryUrl: payload.repositoryUrl });
+      }
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD) return this.registerActiveLead();
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS) return this.createWorkers(payload.count);
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_BIND_PROTOCOL_CONTEXT) return this.bindProtocolContext(payload.agentId, payload.context);

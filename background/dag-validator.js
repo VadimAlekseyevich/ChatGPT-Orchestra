@@ -2,10 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-
-  function asStrings(value) {
-    return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
-  }
+  function asStrings(value) { return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : []; }
 
   function validateTaskGraph(graph) {
     const errors = [];
@@ -27,16 +24,31 @@
       byId.set(id, task);
       if (!String(task.title || "").trim()) errors.push({ code: "task_title_missing", taskId: id });
       if (!String(task.objective || "").trim()) errors.push({ code: "task_objective_missing", taskId: id });
+
       const acceptance = asStrings(task.acceptanceCriteria);
       if (!acceptance.length) errors.push({ code: "acceptance_criteria_missing", taskId: id });
       const allow = asStrings(task.scope?.allow);
       if (!allow.length) errors.push({ code: "scope_allow_missing", taskId: id });
+
       const kind = String(task.kind || "code").toLowerCase();
       const verification = asStrings(task.verification);
       if (kind === "code" && !verification.length && !String(task.verificationWaiver || "").trim()) {
         errors.push({ code: "verification_missing", taskId: id });
       }
-      if (kind === "code" && verification.length > 12) warnings.push({ code: "verification_large", taskId: id });
+
+      const complexity = String(task.estimatedComplexity || "").toUpperCase();
+      if (!["S", "M", "L"].includes(complexity)) errors.push({ code: "complexity_missing_or_invalid", taskId: id });
+      if (complexity === "L" && !String(task.decompositionRationale || "").trim()) {
+        errors.push({ code: "large_task_without_rationale", taskId: id });
+      }
+
+      const risk = typeof task.risk === "string" ? task.risk : JSON.stringify(task.risk || "");
+      if (/migration|schema|database/i.test(risk) && !String(task.migrationPlan || "").trim()) {
+        errors.push({ code: "migration_safety_missing", taskId: id });
+      }
+
+      const priority = Number(task.priority);
+      if (!Number.isFinite(priority) || priority < 0 || priority > 100) warnings.push({ code: "priority_out_of_range", taskId: id });
       if (acceptance.length > 12) warnings.push({ code: "task_maybe_oversized", taskId: id });
     }
 
@@ -67,17 +79,14 @@
       }
     }
     if (topologicalOrder.length !== byId.size) {
-      const cyclic = [...byId.keys()].filter((id) => !topologicalOrder.includes(id));
-      errors.push({ code: "dependency_cycle", taskIds: cyclic });
+      errors.push({ code: "dependency_cycle", taskIds: [...byId.keys()].filter((id) => !topologicalOrder.includes(id)) });
     }
 
     const coverage = asStrings(graph.objectiveCoveredBy);
     if (!coverage.length) errors.push({ code: "objective_coverage_missing" });
     for (const id of coverage) if (!byId.has(id)) errors.push({ code: "objective_coverage_unknown_task", taskId: id });
     const terminalIds = [...byId.keys()].filter((id) => (outgoing.get(id) || []).length === 0);
-    if (coverage.length && !coverage.some((id) => terminalIds.includes(id))) {
-      warnings.push({ code: "objective_coverage_has_no_terminal_task" });
-    }
+    if (coverage.length && !coverage.some((id) => terminalIds.includes(id))) warnings.push({ code: "objective_coverage_has_no_terminal_task" });
 
     return {
       ok: errors.length === 0,
@@ -86,7 +95,7 @@
       topologicalOrder,
       stats: {
         tasks: byId.size,
-        roots: [...byId.keys()].filter((id) => (asStrings(byId.get(id).dependencies)).length === 0).length,
+        roots: [...byId.keys()].filter((id) => asStrings(byId.get(id).dependencies).length === 0).length,
         terminals: terminalIds.length
       }
     };

@@ -10,8 +10,30 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Service-worker orchestrator · agent tab registry</p>
+      <p>Project planning · protocol · agent pool</p>
     </header>
+
+    <section class="orchestra-section" aria-labelledby="projectTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="projectTitle">Project Bootstrap</h2>
+          <p id="projectStatus">Project: none</p>
+        </div>
+      </div>
+
+      <label>
+        <span>GitHub repository</span>
+        <input id="repositoryUrl" type="text" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://github.com/owner/repo" />
+      </label>
+
+      <label>
+        <span>Цель проекта / изменения</span>
+        <textarea id="projectGoal" rows="5" maxlength="12000" placeholder="Опиши желаемый результат, ограничения и важные требования."></textarea>
+      </label>
+
+      <button id="startProject" type="button">Start Planning</button>
+      <p class="hint">Нужен зарегистрированный Lead. Phase 4 строит Discovery → Plan → Critique → Task DAG, но ещё не запускает worker-задачи.</p>
+    </section>
 
     <section class="orchestra-section" aria-labelledby="orchestraTitle">
       <div class="section-heading">
@@ -55,7 +77,6 @@
         </div>
         <button id="addRule" class="secondary compact" type="button">Добавить</button>
       </div>
-
       <div id="rulesList"></div>
     </section>
 
@@ -63,7 +84,6 @@
       <span>Базовая задержка после генерации, мс</span>
       <input id="delayMs" type="number" min="300" max="30000" step="100" />
     </label>
-
     <label>
       <span>Случайная добавка к задержке, 0…мс</span>
       <input id="delayRandomMs" type="number" min="0" max="30000" step="100" />
@@ -73,10 +93,7 @@
       <button id="save" type="button">Сохранить</button>
       <button id="reset" class="secondary" type="button">Базовые правила</button>
     </div>
-
     <div id="status" role="status" aria-live="polite"></div>
-
-    <p class="hint">Legacy-флаги пока остаются compatibility layer. Phase 2 добавляет только централизованное управление вкладками и адресные команды; task scheduler появится позже по roadmap.</p>
   </main>
 
   <template id="ruleTemplate">
@@ -88,12 +105,7 @@
         </label>
         <button class="text-button danger" data-action="remove" type="button">Удалить</button>
       </div>
-
-      <label>
-        <span>Флаг</span>
-        <input data-field="marker" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="DONE" />
-      </label>
-
+      <label><span>Флаг</span><input data-field="marker" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="DONE" /></label>
       <label>
         <span>Действие</span>
         <select data-field="action">
@@ -101,11 +113,7 @@
           <option value="notify">Позвать пользователя</option>
         </select>
       </label>
-
-      <label>
-        <span data-role="payloadLabel">Промпт</span>
-        <textarea data-field="prompt" rows="3" maxlength="4000"></textarea>
-      </label>
+      <label><span data-role="payloadLabel">Промпт</span><textarea data-field="prompt" rows="3" maxlength="4000"></textarea></label>
     </article>
   </template>
 

@@ -3,9 +3,13 @@
 importScripts(
   "../content/message-types.js",
   "../protocol/orchestra-protocol.js",
+  "../prompts/planning-prompts.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
+  "project-store.js",
+  "dag-validator.js",
+  "planning-engine.js",
   "orchestrator.js"
 );
 
@@ -13,7 +17,16 @@ const root = globalThis.ChatGPTOrchestra;
 const registry = new root.TabRegistry();
 const eventStore = new root.EventStore();
 const eventBus = new root.EventBus({ registry, store: eventStore });
-const orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus });
+const projectStore = new root.ProjectStore();
+
+let orchestrator = null;
+const planningEngine = new root.PlanningEngine({
+  projectStore,
+  registry,
+  eventBus,
+  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+});
+orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine });
 let readyPromise = orchestrator.init();
 
 function withReady(callback) {
