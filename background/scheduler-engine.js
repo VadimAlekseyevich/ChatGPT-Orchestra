@@ -10,16 +10,7 @@
   }
 
   class SchedulerEngine {
-    constructor({
-      store,
-      projectStore,
-      registry,
-      eventBus,
-      sendPrompt,
-      clock = () => Date.now(),
-      idFactory = null,
-      logger = console
-    } = {}) {
+    constructor({ store, projectStore, registry, eventBus, sendPrompt, clock = () => Date.now(), idFactory = null, logger = console } = {}) {
       this.store = store;
       this.projectStore = projectStore;
       this.registry = registry;
@@ -55,7 +46,15 @@
     async restoreActiveContexts() {
       for (const run of this.store.activeRuns()) {
         const agent = this.registry.getAgent(run.agentId);
-        if (!agent) continue;
+        if (!agent || !Number.isInteger(agent.tabId) || ["OFFLINE", "ERROR"].includes(agent.status)) {
+          const result = await this.store.markFailure(run.runId, "agent_unavailable_after_restart", { retryable: true });
+          await this.store.logDecision("recovered_agent_unavailable", { runId: run.runId, taskId: run.taskId, agentId: run.agentId });
+          if (result?.task?.status === "NEEDS_USER") {
+            await this.escalate("restart_retries_exhausted", result.task);
+            break;
+          }
+          continue;
+        }
         await this.registry.setProtocolContext(run.agentId, {
           projectId: this.store.summary().projectId,
           taskId: run.taskId,
@@ -68,7 +67,7 @@
       const project = this.projectStore.getActiveProject();
       if (!project) return { ok: false, reason: "no_active_project" };
       if (!project.taskGraph?.tasks?.length) return { ok: false, reason: "project_task_graph_missing" };
-      if (!["READY", "RUNNING", "NEEDS_USER"].includes(project.status)) {
+      if (!["READY", "RUNNING"].includes(project.status)) {
         return { ok: false, reason: "project_not_ready_for_execution", status: project.status };
       }
 
@@ -81,8 +80,9 @@
         });
         if (!initialized.ok) return initialized;
       } else {
-        await this.store.setSettings({ maxWorkers, maxRetries, ...(runTimeoutMs ? { runTimeoutMs } : {}) });
         if (current.status === "COMPLETED_UNVERIFIED") return { ok: false, reason: "scheduler_already_complete" };
+        if (current.status === "NEEDS_USER") return { ok: false, reason: "scheduler_needs_user" };
+        await this.store.setSettings({ maxWorkers, maxRetries, ...(runTimeoutMs ? { runTimeoutMs } : {}) });
         await this.store.setStatus("RUNNING");
       }
 
@@ -95,9 +95,7 @@
     downstreamCount(taskId) {
       const tasks = this.store.listTasks();
       const direct = new Map(tasks.map((task) => [task.id, []]));
-      for (const task of tasks) {
-        for (const dependency of task.dependencies || []) direct.get(dependency)?.push(task.id);
-      }
+      for (const task of tasks) for (const dependency of task.dependencies || []) direct.get(dependency)?.push(task.id);
       const seen = new Set();
       const visit = (id) => {
         for (const child of direct.get(id) || []) {
@@ -149,7 +147,11 @@
       const created = await this.store.createRun({ taskId: task.id, runId, agentId: agent.agentId, locks });
       if (!created.ok) return created;
 
-      await this.registry.setProtocolContext(agent.agentId, { projectId: project.projectId, taskId: task.id, runId });
+      const bound = await this.registry.setProtocolContext(agent.agentId, { projectId: project.projectId, taskId: task.id, runId });
+      if (!bound) {
+        await this.store.markFailure(runId, "agent_context_bind_failed", { retryable: true });
+        return { ok: false, reason: "agent_context_bind_failed" };
+      }
       const definition = task.definition || task;
       const prompt = root.WorkerPrompts.buildWorkerPrompt({ project, task: definition, runId, agentId: agent.agentId });
       const result = await this.sendPrompt(agent.agentId, prompt);
