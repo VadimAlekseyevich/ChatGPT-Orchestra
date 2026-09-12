@@ -8,6 +8,7 @@
 - [`../CHANGELOG.md`](../CHANGELOG.md) — история изменений;
 - [`phase-2-tab-registry.md`](phase-2-tab-registry.md) — контракт service worker, agent registration, heartbeat и lifecycle вкладок;
 - [`phase-3-protocol-v1.md`](phase-3-protocol-v1.md) — Orchestra Protocol v1, Event Bus, idempotency, sequence и rejection semantics;
+- [`phase-4-project-planning.md`](phase-4-project-planning.md) — Project Store, staged planning pipeline, large-artifact framing, crash recovery и deterministic DAG gate;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
