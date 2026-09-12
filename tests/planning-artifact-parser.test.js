@@ -14,7 +14,7 @@ test("parses a multiline planning artifact before the final protocol event", () 
   assert.equal(result.ok, true);
   assert.equal(result.artifact.stack, "js");
   assert.deepEqual(result.artifact.tests, ["npm test"]);
-  assert.match(result.signature, /^fnv1a32:/);
+  assert.match(result.signature, /^fnv1a64:/);
 });
 
 test("artifact signature is stable across object key order", () => {
