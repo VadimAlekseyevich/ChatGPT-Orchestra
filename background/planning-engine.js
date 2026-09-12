@@ -13,16 +13,20 @@
       this.sendPrompt = sendPrompt;
       this.idFactory = idFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
       this.unsubscribers = [];
+      this.initialized = false;
     }
 
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
     getPublicState() { return this.projectStore.summary(); }
 
     async init() {
+      if (this.initialized) return this.getPublicState();
       await this.projectStore.load();
-      this.unsubscribers.push(this.eventBus.subscribe("completion", (record) => this.handleCompletion(record)));
-      this.unsubscribers.push(this.eventBus.subscribe("blocker", (record) => this.handleBlocker(record)));
-      this.unsubscribers.push(this.eventBus.subscribe("user", (record) => this.handleBlocker(record)));
+      if (!this.unsubscribers.length) {
+        this.unsubscribers.push(this.eventBus.subscribe("completion", (record) => this.handleCompletion(record)));
+        this.unsubscribers.push(this.eventBus.subscribe("blocker", (record) => this.handleBlocker(record)));
+        this.unsubscribers.push(this.eventBus.subscribe("user", (record) => this.handleBlocker(record)));
+      }
       const project = this.projectStore.getActiveProject();
       const lead = this.getLead();
       if (project?.status === "PLANNING" && project.currentRunId && lead) {
@@ -40,6 +44,7 @@
         ));
         if (accepted) await this.handleCompletion(accepted);
       }
+      this.initialized = true;
       return this.getPublicState();
     }
 
@@ -84,7 +89,7 @@
       if (!event || !project || project.status !== "PLANNING" || !lead) return;
       if (event.agentId !== lead.agentId || event.projectId !== project.projectId) return;
 
-      const stage = String (event.payload?.stage || "").toUpperCase();
+      const stage = String(event.payload?.stage || "").toUpperCase();
       if (stage !== project.stage) {
         await this.projectStore.fail(project.projectId, "planning_stage_mismatch", { expected: project.stage, received: stage });
         return;
