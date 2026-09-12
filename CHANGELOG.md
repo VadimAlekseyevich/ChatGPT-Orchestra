@@ -4,6 +4,51 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.5] - 2026-09-12
+
+### Added
+
+- persisted `ProjectStore` с immutable initial goal и normalized GitHub repository identity;
+- popup `Project Bootstrap` для `goal + repository`;
+- staged planning pipeline `DISCOVERY -> PLAN_V1 -> CRITIQUE -> PLAN_V2 -> DECOMPOSE -> DAG_CRITIC`;
+- versioned planning prompts и stage-specific persisted input artifacts;
+- автоматическая привязка Lead к `projectId/taskId/runId` каждого planning run;
+- bounded `@@ORCH_ARTIFACT_BEGIN/END` framing для больших planning artifacts без расширения Protocol v1 envelope;
+- planning artifact provenance в accepted Event Store records для crash-window recovery;
+- deterministic DAG validator с cycle/dependency/scope/acceptance/verification/complexity/migration/objective-coverage gates;
+- persisted final task graph и validation result;
+- `agentsMdProposal` как proposal-only planning artifact без автоматической перезаписи existing `AGENTS.md`;
+- Phase 4 unit/regression tests для Project Store, artifact parser, event provenance, DAG validation, full six-stage pipeline и service-worker recovery scenario;
+- dedicated Phase 4 architecture document and ADR 0003.
+
+### Reliability and safety
+
+- `READY` выставляется только после deterministic DAG validation, а не по заявлению Lead;
+- stale output предыдущей planning stage/run отклоняется Phase 3 protocol context binding;
+- large plan/DAG не помещается внутрь маленького `@@ORCH` envelope;
+- `BLOCKED`, `ERROR` и `NEEDS_USER` planning events не требуют artifact block;
+- restart после accepted planning event может восстановить artifact из Event Store и продолжить со следующей stage без повторной отправки уже обработанного prompt;
+- `PlanningEngine.init()` идемпотентен и не создаёт повторные Event Bus subscriptions;
+- Phase 4 не назначает DAG tasks workers и не запускает scheduler раньше Phase 5.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.5`;
+- service worker загружает Project Store, Planning Engine, DAG validator и planning prompt contracts;
+- public orchestrator state содержит active project summary;
+- popup показывает project status/stage/task count;
+- Event Store source metadata может хранить bounded planning artifact для recovery.
+
+### Not yet implemented
+
+- parallel task scheduler и dependency unlocking;
+- automatic Worker task assignment;
+- Git task branches/artifact validation;
+- review/integration loops;
+- full project Pause/Resume and reconciliation.
+
+---
+
 ## [2.0.0-alpha.4] - 2026-09-12
 
 ### Added
