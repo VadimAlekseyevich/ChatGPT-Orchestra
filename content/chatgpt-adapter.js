@@ -30,6 +30,7 @@
       });
       this.heartbeatMs = Math.max(2000, Number(heartbeatMs) || 5000);
       this.heartbeatHandle = null;
+      this.registeredAgentId = null;
       this.unsubscribeExternalDetector = null;
       this.unsubscribeRuntimeDetector = null;
     }
@@ -39,15 +40,30 @@
       if (sendTimeoutMs != null) this.composer.setSendTimeoutMs(sendTimeoutMs);
     }
 
+    bindAgent(agentId) {
+      const normalized = String(agentId || "").trim();
+      if (!normalized) return false;
+      this.registeredAgentId = normalized;
+      this.enableHeartbeat();
+      return true;
+    }
+
     sendHeartbeat() {
-      this.messenger.send(root.MESSAGE_TYPES.CONTENT_HEARTBEAT, this.getStatus());
+      if (!this.registeredAgentId) return;
+      this.messenger.send(root.MESSAGE_TYPES.CONTENT_HEARTBEAT, {
+        ...this.getStatus(),
+        agentId: this.registeredAgentId
+      });
     }
 
     enableHeartbeat() {
-      if (this.heartbeatHandle) return;
+      if (!this.registeredAgentId || this.heartbeatHandle) return;
       this.sendHeartbeat();
       this.heartbeatHandle = setInterval(() => this.sendHeartbeat(), this.heartbeatMs);
-      this.logger?.debug?.("agent_heartbeat_enabled", { heartbeatMs: this.heartbeatMs });
+      this.logger?.debug?.("agent_heartbeat_enabled", {
+        heartbeatMs: this.heartbeatMs,
+        agentId: this.registeredAgentId
+      });
     }
 
     disableHeartbeat() {
@@ -57,8 +73,51 @@
 
     async announceReady() {
       const response = await this.messenger.request(root.MESSAGE_TYPES.CONTENT_READY, this.getStatus());
-      if (response?.agent?.agentId) this.enableHeartbeat();
+      if (response?.agent?.agentId) this.bindAgent(response.agent.agentId);
       return response;
+    }
+
+    async publishProtocolResult(snapshot) {
+      if (!this.registeredAgentId || !snapshot?.text) return;
+      const parsed = this.parser.parse(snapshot.text);
+
+      if (parsed.kind === "orchestra_event") {
+        if (parsed.event.agentId !== this.registeredAgentId) {
+          this.messenger.send(root.MESSAGE_TYPES.PROTOCOL_ERROR, {
+            reason: "agent_mismatch_content",
+            received: parsed.event.agentId,
+            expectedAgentId: this.registeredAgentId,
+            responseFingerprint: snapshot.fingerprint,
+            lastLine: parsed.lastLine
+          });
+          return;
+        }
+
+        const response = await this.messenger.request(root.MESSAGE_TYPES.ORCHESTRA_EVENT, {
+          event: parsed.event,
+          responseFingerprint: snapshot.fingerprint,
+          pathname: snapshot.pathname,
+          messageCount: snapshot.messageCount
+        });
+        this.logger?.info?.("orchestra_protocol_event_submitted", {
+          eventId: parsed.event.eventId,
+          event: parsed.event.event,
+          accepted: Boolean(response?.accepted),
+          duplicate: Boolean(response?.duplicate),
+          reason: response?.reason || null
+        });
+        return;
+      }
+
+      if (parsed.kind === "protocol_error") {
+        this.messenger.send(root.MESSAGE_TYPES.PROTOCOL_ERROR, {
+          reason: parsed.reason,
+          field: parsed.field,
+          received: parsed.received,
+          responseFingerprint: snapshot.fingerprint,
+          lastLine: parsed.lastLine
+        });
+      }
     }
 
     start(onGenerationEvent) {
@@ -74,6 +133,11 @@
             fingerprint: event.snapshot?.fingerprint || "",
             messageCount: event.snapshot?.messageCount || 0,
             pathname: event.snapshot?.pathname || ""
+          });
+          this.publishProtocolResult(event.snapshot).catch((error) => {
+            this.logger?.warn?.("protocol_publish_failed", {
+              message: error?.message || String(error)
+            });
           });
         }
 
