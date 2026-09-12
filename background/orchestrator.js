@@ -106,11 +106,12 @@
       const created = [];
 
       for (let index = live.length; index < target; index += 1) {
-        let tab;
+        let tab = null;
+        let agent = null;
         try {
           tab = await this.chrome.tabs.create({ url: "about:blank", active: false });
           const reusable = offline.shift();
-          const agent = reusable
+          agent = reusable
             ? await this.registry.bindAgent(reusable.agentId, {
                 tabId: tab.id,
                 chatUrl: this.workerUrl,
@@ -127,8 +128,11 @@
           await this.chrome.tabs.update(tab.id, { url: this.workerUrl });
           created.push(agent.agentId);
         } catch (error) {
-          if (Number.isInteger(tab?.id)) {
-            await this.registry.updateNavigation(tab.id, tab.url || "about:blank");
+          if (agent && Number.isInteger(tab?.id)) {
+            await this.registry.markOfflineByTabId(tab.id, "worker_tab_create_failed");
+          }
+          if (Number.isInteger(tab?.id) && this.chrome.tabs.remove) {
+            try { await this.chrome.tabs.remove(tab.id); } catch (_) {}
           }
           return {
             ok: false,
