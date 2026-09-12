@@ -64,7 +64,7 @@
       return { ok: true };
     }
 
-    async handleEvent(rawEvent, sender) {
+    async handleEvent(rawEvent, sender, source = {}) {
       const validation = Protocol.validateEnvelope(rawEvent);
       if (!validation.ok) {
         return this.reject(validation.reason, {
@@ -114,8 +114,8 @@
       const route = Protocol.routeForEvent(event.event);
       if (!route) return this.reject("unknown_route", { event, sender });
 
-      const accepted = await this.store.accept(event, { route, tabId });
-      const record = { cursor: accepted.cursor, route, tabId, agent, event };
+      const accepted = await this.store.accept(event, { route, tabId, source });
+      const record = { cursor: accepted.cursor, route, tabId, source, agent, event };
       await this.emit(route, record);
       return {
         ok: true,
