@@ -70,7 +70,9 @@
     const counts = scheduler.counts || {};
     const done = Number(counts.DONE_UNVERIFIED) || 0;
     const needsUser = Number(counts.NEEDS_USER) || 0;
-    ui.executionStatus.textContent = `${scheduler.status} · ${done}/${scheduler.taskCount} done · ${scheduler.activeRuns} active${needsUser ? ` · ${needsUser} needs user` : ""}`;
+    const git = scheduler.git;
+    const gitText = git?.defaultBranch && git?.baseSha ? ` · git ${git.defaultBranch}@${String(git.baseSha).slice(0, 8)}` : "";
+    ui.executionStatus.textContent = `${scheduler.status} · ${done}/${scheduler.taskCount} done · ${scheduler.activeRuns} active${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}`;
     ui.startExecution.disabled = true;
   }
 

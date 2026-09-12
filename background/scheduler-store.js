@@ -5,10 +5,15 @@
   const STORAGE_KEY = "orchestra.scheduler.v1";
   const SCHEMA_VERSION = 1;
   const DEFAULTS = Object.freeze({ maxWorkers: 4, maxRetries: 2, runTimeoutMs: 20 * 60 * 1000 });
+  const NON_MUTATING_KINDS = new Set(["analysis", "research", "planning", "manual", "no-code", "nocode"]);
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function taskRequiresGit(task) {
+    return !NON_MUTATING_KINDS.has(String(task?.kind || task?.definition?.kind || "code").trim().toLowerCase());
   }
 
   function defaultState() {
@@ -17,6 +22,7 @@
       projectId: null,
       status: "IDLE",
       settings: { ...DEFAULTS },
+      git: null,
       tasks: {},
       runs: {},
       decisionLog: [],
@@ -54,9 +60,25 @@
       attempts: 0,
       activeRunId: null,
       lastRunId: null,
+      lastArtifact: null,
       lastError: null,
       completedAt: null,
       updatedAt: 0
+    };
+  }
+
+  function normalizeRunGit(git) {
+    if (!git || typeof git !== "object" || Array.isArray(git)) return null;
+    return {
+      required: git.required !== false,
+      provider: String(git.provider || ""),
+      branch: String(git.branch || ""),
+      targetBranch: String(git.targetBranch || ""),
+      baseSha: String(git.baseSha || "").toLowerCase(),
+      cleanupPolicy: String(git.cleanupPolicy || "retain_until_review_or_manual_cleanup"),
+      artifactStatus: String(git.artifactStatus || "PENDING"),
+      artifact: git.artifact ? clone(git.artifact) : null,
+      validation: git.validation ? clone(git.validation) : null
     };
   }
 
@@ -78,6 +100,7 @@
           ...defaultState(),
           ...candidate,
           settings: normalizeSettings(candidate.settings),
+          git: candidate.git && typeof candidate.git === "object" ? clone(candidate.git) : null,
           tasks: { ...(candidate.tasks || {}) },
           runs: { ...(candidate.runs || {}) },
           decisionLog: Array.isArray(candidate.decisionLog) ? [...candidate.decisionLog] : []
@@ -92,6 +115,25 @@
     listTasks() { return Object.values(this.state.tasks).map(clone); }
     listRuns() { return Object.values(this.state.runs).map(clone); }
     activeRuns() { return this.listRuns().filter((run) => ["ASSIGNED", "RUNNING"].includes(run.status)); }
+    getGitSnapshot() { return this.state.git ? clone(this.state.git) : null; }
+
+    legacyGitProvenanceIssues() {
+      const issues = [];
+      for (const task of this.listTasks()) {
+        if (!taskRequiresGit(task)) continue;
+        if (task.status === "DONE_UNVERIFIED" && !task.lastArtifact) {
+          issues.push({ type: "completed_task_without_validated_artifact", taskId: task.id, runId: task.lastRunId || null });
+        }
+      }
+      for (const run of this.activeRuns()) {
+        const task = this.getTask(run.taskId);
+        if (!taskRequiresGit(task)) continue;
+        if (!run.git?.branch || !run.git?.baseSha) {
+          issues.push({ type: "active_run_without_git_assignment", taskId: run.taskId, runId: run.runId, agentId: run.agentId });
+        }
+      }
+      return issues;
+    }
 
     summary() {
       const tasks = this.listTasks();
@@ -102,6 +144,7 @@
         projectId: this.state.projectId,
         status: this.state.status,
         settings: clone(this.state.settings),
+        git: this.state.git ? clone(this.state.git) : null,
         taskCount: tasks.length,
         counts,
         activeRuns: this.activeRuns().length,
@@ -136,6 +179,22 @@
       return { ok: true, state: this.summary() };
     }
 
+    async setGitSnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== "object") return null;
+      this.state.git = clone(snapshot);
+      await this.persist();
+      return this.getGitSnapshot();
+    }
+
+    async recordGitFreshness(result = {}) {
+      if (!this.state.git) return null;
+      if (result.currentTargetSha) this.state.git.currentTargetSha = String(result.currentTargetSha).toLowerCase();
+      this.state.git.lastCheckedAt = Number(result.checkedAt) || this.clock();
+      this.state.git.lastFreshnessStatus = result.ok === false ? String(result.reason || "failed") : "fresh";
+      await this.persist();
+      return this.getGitSnapshot();
+    }
+
     async setStatus(status) {
       this.state.status = String(status || "IDLE");
       await this.persist();
@@ -161,7 +220,7 @@
       return clone(this.state.decisionLog.slice(-count));
     }
 
-    async createRun({ taskId, runId, agentId, locks = [] }) {
+    async createRun({ taskId, runId, agentId, locks = [], git = null }) {
       const task = this.state.tasks[taskId];
       if (!task) return { ok: false, reason: "unknown_task" };
       if (task.status !== "READY") return { ok: false, reason: "task_not_ready", status: task.status };
@@ -179,6 +238,7 @@
         status: "ASSIGNED",
         attempt: task.attempts,
         locks: [...locks],
+        git: normalizeRunGit(git),
         assignedAt: now,
         startedAt: null,
         lastEventAt: now,
@@ -213,10 +273,28 @@
       return this.getRun(runId);
     }
 
+    async recordArtifactValidation(runId, result = {}) {
+      const run = this.state.runs[runId];
+      if (!run || !run.git) return null;
+      run.git.artifactStatus = result.ok ? "VALID" : "INVALID";
+      run.git.validation = {
+        ok: Boolean(result.ok),
+        reason: result.ok ? null : String(result.reason || "artifact_invalid"),
+        checkedAt: this.clock(),
+        details: clone(result.ok ? { freshness: result.freshness || null } : result)
+      };
+      run.git.artifact = result.ok && result.artifact ? clone(result.artifact) : null;
+      await this.persist();
+      return this.getRun(runId);
+    }
+
     async markDone(runId) {
       const run = this.state.runs[runId];
       if (!run) return null;
       const task = this.state.tasks[run.taskId];
+      if (taskRequiresGit(task) && (!run.git || run.git.required === false || run.git.artifactStatus !== "VALID")) {
+        return { ok: false, reason: "git_artifact_not_valid", run: this.getRun(runId) };
+      }
       const now = this.clock();
       run.status = "DONE";
       run.lastEventAt = now;
@@ -227,9 +305,10 @@
         task.completedAt = now;
         task.updatedAt = now;
         task.lastError = null;
+        task.lastArtifact = run.git?.artifact ? clone(run.git.artifact) : null;
       }
       await this.persist();
-      return { task: task ? this.getTask(task.id) : null, run: this.getRun(runId) };
+      return { ok: true, task: task ? this.getTask(task.id) : null, run: this.getRun(runId) };
     }
 
     async markFailure(runId, reason, { retryable = true, needsUser = false } = {}) {
@@ -272,6 +351,6 @@
   root.normalizeSchedulerSettings = normalizeSettings;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask };
+    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask, normalizeRunGit, taskRequiresGit };
   }
 })();

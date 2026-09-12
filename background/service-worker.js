@@ -12,6 +12,7 @@ importScripts(
   "dag-validator.js",
   "planning-engine.js",
   "conflict-policy.js",
+  "git-provider.js",
   "scheduler-store.js",
   "scheduler-engine.js",
   "orchestrator.js"
@@ -23,6 +24,7 @@ const eventStore = new root.EventStore();
 const eventBus = new root.EventBus({ registry, store: eventStore });
 const projectStore = new root.ProjectStore();
 const schedulerStore = new root.SchedulerStore();
+const gitProvider = new root.GitProvider.GitHubRestProvider();
 
 let orchestrator = null;
 const planningEngine = new root.PlanningEngine({
@@ -36,6 +38,7 @@ const schedulerEngine = new root.SchedulerEngine({
   projectStore,
   registry,
   eventBus,
+  gitProvider,
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
 orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });

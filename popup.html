@@ -10,7 +10,7 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Project planning · scheduler · agent pool</p>
+      <p>Project planning · scheduler · Git isolation</p>
     </header>
 
     <section class="orchestra-section" aria-labelledby="projectTitle">
@@ -72,7 +72,7 @@
         </div>
       </div>
       <button id="startExecution" type="button">Start Execution</button>
-      <p class="hint">Phase 5 назначает только runnable tasks и использует conflict-aware locks. Worker `DONE` сохраняется как `DONE_UNVERIFIED`; Git isolation, review и merge появятся в Phase 6–8.</p>
+      <p class="hint">Alpha.7 снимает immutable Git base snapshot, выдаёт каждой mutating task отдельную branch и независимо валидирует remote commit/scope перед `DONE_UNVERIFIED`. Review и merge начинаются в Phase 7–8.</p>
     </section>
 
     <label class="toggle-row">
