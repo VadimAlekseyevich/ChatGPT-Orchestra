@@ -71,7 +71,7 @@
         }
 
         let planningArtifact = null;
-        if (String(parsed.event.taskId || "").startsWith("planning:")) {
+        if (String(parsed.event.taskId || "").startsWith("planning:") && parsed.event.event === "DONE") {
           const artifactResult = root.PlanningArtifactParser?.parsePlanningArtifact(snapshot.text);
           if (!artifactResult?.ok) {
             this.messenger.send(root.MESSAGE_TYPES.PROTOCOL_ERROR, {
