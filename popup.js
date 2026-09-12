@@ -72,5 +72,4 @@ async function save() {
 elements.save.addEventListener("click", save);
 elements.enabled.addEventListener("change", save);
 
-document.addEventListener("DOMContentLoaded", load);
 load();
