@@ -4,6 +4,54 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.6] - 2026-09-12
+
+### Added
+
+- persisted `SchedulerStore` с mutable task/run state отдельно от approved Phase 4 DAG;
+- conflict-aware `SchedulerEngine` с runnable queue и адресным Worker assignment;
+- configurable `maxWorkers` от 1 до 4;
+- candidate ordering по downstream unlock, priority и risk;
+- dependency unlocking после Phase 5 transitional status `DONE_UNVERIFIED`;
+- explicit/inferred resource locks и file-scope overlap heuristic;
+- persisted scheduler decision log;
+- retryable `BLOCKED`/`ERROR`, retry budget и `NEEDS_USER` escalation;
+- MV3 `alarms` watchdog с default timeout 20 минут;
+- heartbeat-aware timeout detection через `TabRegistry.lastSeenAt`;
+- immediate retry path для active run, чей Worker исчез между service-worker restarts;
+- versioned Worker prompt contract с exact `projectId/taskId/runId/agentId` binding;
+- popup `Start Execution` и execution counters;
+- Phase 5 scheduler docs, smoke-test, ADR 0004 и regression tests.
+
+### Reliability and safety
+
+- scheduler никогда не назначает одну Worker identity двум active runs одновременно;
+- задачи с overlapping scope или shared resource locks не выполняются параллельно;
+- Worker `DONE` не превращается в `APPROVED`, `MERGED` или `VERIFIED`;
+- длинная живая ChatGPT generation не timeout'ится, пока зарегистрированная вкладка продолжает heartbeat;
+- tab close во время run считается failed attempt, а не completion;
+- exhausted retry budget и explicit `NEEDS_USER` останавливают новые assignments;
+- Phase 5 Worker prompt запрещает unsafe direct push/merge в target branch до появления Phase 6 Git isolation.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.6`;
+- manifest добавляет permission `alarms` для scheduler watchdog;
+- Project Store умеет отражать `RUNNING`, `NEEDS_USER` и `COMPLETED_UNVERIFIED` execution status;
+- service worker загружает conflict policy, scheduler store/engine и Worker prompt contracts;
+- public orchestrator state содержит scheduler summary;
+- Worker slots в popup одновременно определяют `maxWorkers` при старте execution.
+
+### Not yet implemented
+
+- per-task Git branch isolation / commit validation;
+- independent review approval;
+- integration/merge and semantic conflict handling;
+- general Pause/Resume and user-resolution flow;
+- verified terminal project state.
+
+---
+
 ## [2.0.0-alpha.5] - 2026-09-12
 
 ### Added
