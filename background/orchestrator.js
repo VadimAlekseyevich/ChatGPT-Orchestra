@@ -73,6 +73,10 @@
       }
 
       let lead = this.registry.listAgents().find((agent) => agent.role === "lead") || null;
+      if (lead && Number.isInteger(lead.tabId) && lead.tabId !== tab.id) {
+        return { ok: false, reason: "lead_already_registered", agentId: lead.agentId };
+      }
+
       if (lead) {
         lead = await this.registry.bindAgent(lead.agentId, {
           tabId: tab.id,
@@ -96,20 +100,44 @@
 
     async createWorkers(targetCount = 3) {
       const target = Math.max(1, Math.min(MAX_WORKERS, Number(targetCount) || 3));
-      const current = this.registry.listAgents().filter((agent) => agent.role === "worker");
+      const workers = this.registry.listAgents().filter((agent) => agent.role === "worker");
+      const live = workers.filter((agent) => Number.isInteger(agent.tabId));
+      const offline = workers.filter((agent) => !Number.isInteger(agent.tabId));
       const created = [];
 
-      for (let index = current.length; index < target; index += 1) {
-        const tab = await this.chrome.tabs.create({ url: "about:blank", active: false });
-        const agent = await this.registry.createAgent({
-          role: "worker",
-          tabId: tab.id,
-          chatUrl: this.workerUrl,
-          label: `Worker ${index + 1}`,
-          status: "CONNECTING"
-        });
-        await this.chrome.tabs.update(tab.id, { url: this.workerUrl });
-        created.push(agent.agentId);
+      for (let index = live.length; index < target; index += 1) {
+        let tab;
+        try {
+          tab = await this.chrome.tabs.create({ url: "about:blank", active: false });
+          const reusable = offline.shift();
+          const agent = reusable
+            ? await this.registry.bindAgent(reusable.agentId, {
+                tabId: tab.id,
+                chatUrl: this.workerUrl,
+                status: "CONNECTING"
+              })
+            : await this.registry.createAgent({
+                role: "worker",
+                tabId: tab.id,
+                chatUrl: this.workerUrl,
+                label: `Worker ${index + 1}`,
+                status: "CONNECTING"
+              });
+
+          await this.chrome.tabs.update(tab.id, { url: this.workerUrl });
+          created.push(agent.agentId);
+        } catch (error) {
+          if (Number.isInteger(tab?.id)) {
+            await this.registry.updateNavigation(tab.id, tab.url || "about:blank");
+          }
+          return {
+            ok: false,
+            reason: "worker_tab_create_failed",
+            message: asError(error),
+            created,
+            state: this.getPublicState()
+          };
+        }
       }
 
       await this.registry.setRuntimeStatus("pool_active");
@@ -184,7 +212,10 @@
         root.MESSAGE_TYPES.CHAT_STATE,
         root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
       ]);
+
       if (contentTypes.has(type)) return this.handleContentMessage(message, sender);
+      if (sender?.tab) return { ok: false, reason: "orchestrator_command_forbidden_from_tab" };
+
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD) return this.registerActiveLead();
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS) return this.createWorkers(payload.count);
