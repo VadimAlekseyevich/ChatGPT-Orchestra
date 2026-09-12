@@ -33,6 +33,14 @@ test("parses compact fallback syntax", () => {
   assert.equal(result.event.taskId, "T1");
 });
 
+test("rejects duplicate fields in compact syntax", () => {
+  const line = "@@ORCH|v=1|event=DONE|projectId=P1|taskId=T1|runId=R1|agentId=A1|eventId=E1|eventId=E2|sequence=1";
+  const result = Protocol.parseLine(line);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "duplicate_compact_field");
+  assert.equal(result.field, "eventId");
+});
+
 test("rejects malformed, oversized and unknown protocol events", () => {
   assert.equal(Protocol.parseLine("@@ORCH {bad").reason, "invalid_json");
   assert.equal(Protocol.parseLine(`@@ORCH ${JSON.stringify(validEvent({ event: "NOPE" }))}`).reason, "unknown_event");
