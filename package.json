@@ -11,7 +11,7 @@
     "test:phase4": "node --test tests/project-store.test.js tests/dag-validator.test.js tests/planning-artifact-parser.test.js tests/planning-event-source.test.js tests/planning-engine.test.js",
     "test:phase5": "node --test tests/conflict-policy.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase6": "node --test tests/git-provider.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
-    "test:phase7": "node --test tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js"
+    "test:phase7": "node --test tests/event-bus.test.js tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js"
   },
   "engines": {
     "node": ">=18"
