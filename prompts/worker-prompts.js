@@ -8,12 +8,13 @@
 
   function buildWorkerPrompt({ project, task, runId, agentId }) {
     if (!project?.projectId || !task?.id || !runId || !agentId) throw new Error("invalid_worker_assignment");
-    const eventBase = {
-      v: 1,
-      projectId: project.projectId,
-      taskId: task.id,
-      runId,
-      agentId
+    const eventBase = { v: 1, projectId: project.projectId, taskId: task.id, runId, agentId };
+    const finalExample = {
+      ...eventBase,
+      event: "DONE",
+      eventId: `${runId}-final`,
+      sequence: 1,
+      payload: { summary: "what was completed", testsPerformed: [], knownLimitations: [], changedFiles: [] }
     };
     return [
       "You are a ChatGPT Orchestra Worker executing one bounded task.",
@@ -29,14 +30,14 @@
       `TASK:\n${json(task)}`,
       "",
       "PROTOCOL CONTRACT:",
-      `- Identity for every event: ${json(eventBase)}`,
-      "- eventId must be fresh and unique for every emitted event.",
-      "- sequence starts at 1 and increases monotonically within this run.",
-      "- You may emit TASK_ACCEPTED or PROGRESS while working.",
+      `- Identity: ${json(eventBase)}`,
+      "- This assignment expects one final protocol event in this response. Use sequence=1.",
+      `- Use eventId=${runId}-final for the final event; runId makes it unique across assignments.`,
       "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER.",
-      "- The final non-empty response line must be a valid @@ORCH JSON envelope and no text may follow it.",
+      "- The final non-empty response line must be one valid @@ORCH JSON envelope; no text may follow it and do not emit a second @@ORCH line.",
+      `- DONE example: @@ORCH ${JSON.stringify(finalExample)}`,
       "- For DONE payload include summary, testsPerformed, knownLimitations and changedFiles if known. Do not invent commits or branches.",
-      "- For BLOCKED/ERROR include reason and retryable=true/false. Use NEEDS_USER when external user input/permission is required."
+      "- For BLOCKED/ERROR use the same identity/eventId/sequence and include reason plus retryable=true/false. Use NEEDS_USER when external user input or permission is required."
     ].join("\n");
   }
 
