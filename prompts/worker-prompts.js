@@ -2,11 +2,11 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 2;
+  const PROMPT_VERSION = 3;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
 
-  function buildWorkerPrompt({ project, task, runId, agentId, gitAssignment = null }) {
+  function buildWorkerPrompt({ project, task, runId, agentId, gitAssignment = null, reworkContext = null }) {
     if (!project?.projectId || !task?.id || !runId || !agentId) throw new Error("invalid_worker_assignment");
     const eventBase = { v: 1, projectId: project.projectId, taskId: task.id, runId, agentId };
     const gitRequired = gitAssignment?.required !== false;
@@ -30,12 +30,16 @@
       }
     };
 
+    const startSha = gitAssignment?.startSha || gitAssignment?.baseSha || "";
     const gitInstructions = gitRequired ? [
       "GIT ISOLATION CONTRACT:",
       `- Target branch: ${gitAssignment.targetBranch}`,
-      `- Immutable execution base SHA: ${gitAssignment.baseSha}`,
-      `- Required task branch: ${gitAssignment.branch}`,
-      "- Start the task branch from exactly the supplied base SHA. Do not base it on a newer target-branch head.",
+      `- Immutable execution base SHA used for validation: ${gitAssignment.baseSha}`,
+      `- Required task branch for this run: ${gitAssignment.branch}`,
+      `- Create this run branch from exactly: ${startSha}.`,
+      reworkContext?.previousCommit
+        ? "- This is a rework run. The start SHA is the previous reviewed task artifact so your branch must preserve prior accepted work and apply the requested corrections on top of it."
+        : "- This is an initial run. The start SHA is the immutable execution base.",
       "- Never commit or push directly to the target branch.",
       "- Never reuse another task/run branch. This run owns only the exact branch above.",
       "- Push the task branch before reporting DONE. A local-only commit is not a valid artifact.",
@@ -50,11 +54,21 @@
       "- Do not make repository changes unless the assignment itself is wrong; report BLOCKED if mutation becomes necessary."
     ];
 
+    const reworkInstructions = reworkContext ? [
+      "",
+      "REWORK CONTRACT:",
+      "- This run exists because an independent Reviewer returned CHANGES_REQUIRED.",
+      "- Address every requiredChanges item. Do not silently ignore a finding; if one is incorrect or impossible, return BLOCKED/NEEDS_USER with evidence.",
+      `- Previous reviewed artifact: ${json(reworkContext.previousArtifact || null)}`,
+      `- Structured review issues: ${json(reworkContext.issues || [])}`,
+      `- Required changes: ${json(reworkContext.requiredChanges || [])}`
+    ] : [];
+
     return [
       "You are a ChatGPT Orchestra Worker executing one bounded task.",
       `Worker prompt contract version: ${PROMPT_VERSION}.`,
       "Work only on the assigned task. Do not broaden scope without reporting BLOCKED or NEEDS_USER.",
-      "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and, for mutating tasks, its Git artifact is ready for independent validation; Orchestra still records the task as DONE_UNVERIFIED until review exists.",
+      "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and its result is ready for independent Git validation and Reviewer evaluation.",
       "",
       `PROJECT ID: ${project.projectId}`,
       `REPOSITORY: ${project.repository?.url || "unknown"}`,
@@ -63,6 +77,7 @@
       `TASK:\n${json(task)}`,
       "",
       ...gitInstructions,
+      ...reworkInstructions,
       "",
       "PROTOCOL CONTRACT:",
       `- Identity: ${json(eventBase)}`,
