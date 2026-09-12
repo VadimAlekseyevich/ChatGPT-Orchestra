@@ -34,12 +34,15 @@ function snapshot() {
     cleanupPolicy: "retain_until_review_or_manual_cleanup",
     capturedAt: 1,
     lastCheckedAt: 1,
+    lastFreshnessStatus: "fresh",
     currentTargetSha: BASE
   };
 }
 
 test("builds deterministic safe per-run branch names", () => {
   assert.equal(Git.taskBranchName("proj:1", "task/2", "run 3"), "orchestra/proj-1/task-2/run-3");
+  assert.equal(Git.slugBranchComponent("..danger.lock"), "danger-lock");
+  assert.equal(Git.slugBranchComponent("..."), "unknown");
   assert.equal(Git.isCommitSha(COMMIT), true);
   assert.equal(Git.isCommitSha("abc123"), false);
 });
@@ -55,6 +58,9 @@ test("scope validator accepts allowed paths and rejects deny/outside paths", () 
     "changed_file_denied"
   );
   assert.equal(Git.matchesPattern("src/a/file.js", "**/*"), true);
+  assert.equal(Git.matchesPattern("src/test.js", "src/**/test.js"), true);
+  assert.equal(Git.matchesPattern("src/deep/nested/test.js", "src/**/test.js"), true);
+  assert.equal(Git.matchesPattern("test.js", "src/**/test.js"), false);
 });
 
 test("captures target branch and base SHA from GitHub REST", async () => {
@@ -73,6 +79,7 @@ test("captures target branch and base SHA from GitHub REST", async () => {
   assert.equal(result.snapshot.defaultBranch, "main");
   assert.equal(result.snapshot.baseSha, BASE);
   assert.equal(result.snapshot.capturedAt, 50);
+  assert.equal(result.snapshot.lastFreshnessStatus, "fresh");
   assert.equal(calls.length, 2);
 });
 
