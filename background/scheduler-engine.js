@@ -308,7 +308,13 @@
       const now = this.clock();
       const timeout = this.store.summary().settings.runTimeoutMs;
       for (const run of this.store.activeRuns()) {
-        const reference = run.lastEventAt || run.startedAt || run.assignedAt;
+        const agentHeartbeat = Number(this.registry.getAgent(run.agentId)?.lastSeenAt) || 0;
+        const reference = Math.max(
+          Number(run.lastEventAt) || 0,
+          Number(run.startedAt) || 0,
+          Number(run.assignedAt) || 0,
+          agentHeartbeat
+        );
         if (!reference || now - reference < timeout) continue;
         const result = await this.store.markFailure(run.runId, "timeout", { retryable: true });
         await this.registry.clearProtocolContext(run.agentId);
