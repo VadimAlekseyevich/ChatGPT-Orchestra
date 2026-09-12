@@ -5,10 +5,15 @@
   const STORAGE_KEY = "orchestra.scheduler.v1";
   const SCHEMA_VERSION = 1;
   const DEFAULTS = Object.freeze({ maxWorkers: 4, maxRetries: 2, runTimeoutMs: 20 * 60 * 1000 });
+  const NON_MUTATING_KINDS = new Set(["analysis", "research", "planning", "manual", "no-code", "nocode"]);
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function taskRequiresGit(task) {
+    return !NON_MUTATING_KINDS.has(String(task?.kind || task?.definition?.kind || "code").trim().toLowerCase());
   }
 
   function defaultState() {
@@ -111,6 +116,24 @@
     listRuns() { return Object.values(this.state.runs).map(clone); }
     activeRuns() { return this.listRuns().filter((run) => ["ASSIGNED", "RUNNING"].includes(run.status)); }
     getGitSnapshot() { return this.state.git ? clone(this.state.git) : null; }
+
+    legacyGitProvenanceIssues() {
+      const issues = [];
+      for (const task of this.listTasks()) {
+        if (!taskRequiresGit(task)) continue;
+        if (task.status === "DONE_UNVERIFIED" && !task.lastArtifact) {
+          issues.push({ type: "completed_task_without_validated_artifact", taskId: task.id, runId: task.lastRunId || null });
+        }
+      }
+      for (const run of this.activeRuns()) {
+        const task = this.getTask(run.taskId);
+        if (!taskRequiresGit(task)) continue;
+        if (!run.git?.branch || !run.git?.baseSha) {
+          issues.push({ type: "active_run_without_git_assignment", taskId: run.taskId, runId: run.runId, agentId: run.agentId });
+        }
+      }
+      return issues;
+    }
 
     summary() {
       const tasks = this.listTasks();
@@ -268,10 +291,10 @@
     async markDone(runId) {
       const run = this.state.runs[runId];
       if (!run) return null;
-      if (run.git?.required !== false && run.git && run.git.artifactStatus !== "VALID") {
+      const task = this.state.tasks[run.taskId];
+      if (taskRequiresGit(task) && (!run.git || run.git.required === false || run.git.artifactStatus !== "VALID")) {
         return { ok: false, reason: "git_artifact_not_valid", run: this.getRun(runId) };
       }
-      const task = this.state.tasks[run.taskId];
       const now = this.clock();
       run.status = "DONE";
       run.lastEventAt = now;
@@ -328,6 +351,6 @@
   root.normalizeSchedulerSettings = normalizeSettings;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask, normalizeRunGit };
+    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask, normalizeRunGit, taskRequiresGit };
   }
 })();
