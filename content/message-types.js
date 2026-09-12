@@ -20,6 +20,10 @@
     ORCHESTRATOR_GET_EVENTS: "orchestra/orchestrator-get-events",
     ORCHESTRATOR_GET_PROJECT: "orchestra/orchestrator-get-project",
     ORCHESTRATOR_START_PROJECT: "orchestra/orchestrator-start-project",
+    ORCHESTRATOR_GET_SCHEDULER: "orchestra/orchestrator-get-scheduler",
+    ORCHESTRATOR_GET_SCHEDULER_DECISIONS: "orchestra/orchestrator-get-scheduler-decisions",
+    ORCHESTRATOR_START_EXECUTION: "orchestra/orchestrator-start-execution",
+    ORCHESTRATOR_SCHEDULER_TICK: "orchestra/orchestrator-scheduler-tick",
     ORCHESTRATOR_REGISTER_ACTIVE_LEAD: "orchestra/orchestrator-register-active-lead",
     ORCHESTRATOR_CREATE_WORKERS: "orchestra/orchestrator-create-workers",
     ORCHESTRATOR_BIND_PROTOCOL_CONTEXT: "orchestra/orchestrator-bind-protocol-context",
@@ -28,7 +32,5 @@
     ORCHESTRATOR_STOP_AGENT: "orchestra/orchestrator-stop-agent"
   });
 
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = root.MESSAGE_TYPES;
-  }
+  if (typeof module !== "undefined" && module.exports) module.exports = root.MESSAGE_TYPES;
 })();
