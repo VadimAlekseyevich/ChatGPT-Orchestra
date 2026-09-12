@@ -28,6 +28,7 @@
   const DEFAULTS = {
     enabled: true,
     delayMs: 1200,
+    delayRandomMs: 1200,
     stableMs: 650,
     sendTimeoutMs: 5000
   };
@@ -89,6 +90,7 @@
         "marker",
         "followUp",
         "delayMs",
+        "delayRandomMs",
         "stableMs",
         "sendTimeoutMs"
       ]);
@@ -366,12 +368,21 @@
     }
   }
 
+  function getCompletedGenerationDelayMs() {
+    const baseDelay = Math.max(300, Number(config.delayMs) || DEFAULTS.delayMs);
+    const randomWindow = Math.max(0, Number(config.delayRandomMs) || 0);
+    const randomExtra = randomWindow > 0
+      ? Math.floor(Math.random() * (randomWindow + 1))
+      : 0;
+    return baseDelay + randomExtra;
+  }
+
   function scheduleCompletedGenerationCheck() {
     if (pendingRun) clearTimeout(pendingRun);
-    pendingRun = setTimeout(
-      processCompletedGeneration,
-      Math.max(300, Number(config.delayMs) || DEFAULTS.delayMs)
-    );
+
+    const delay = getCompletedGenerationDelayMs();
+    log("Flag check scheduled in", delay, "ms.");
+    pendingRun = setTimeout(processCompletedGeneration, delay);
   }
 
   function inspectGenerationState() {
@@ -394,7 +405,7 @@
 
     if (!generating && wasGenerating) {
       wasGenerating = false;
-      log("Generation finished. Checking flag after delay.");
+      log("Generation finished. Checking flag after randomized delay.");
       scheduleCompletedGenerationCheck();
     }
   }
@@ -433,7 +444,7 @@
       config.rules = normalizeRules(changes.rules.newValue);
     }
 
-    for (const key of ["enabled", "delayMs", "stableMs", "sendTimeoutMs"]) {
+    for (const key of ["enabled", "delayMs", "delayRandomMs", "stableMs", "sendTimeoutMs"]) {
       if (changes[key]) config[key] = changes[key].newValue;
     }
 
