@@ -35,6 +35,7 @@
 
   function normalizeTask(task) {
     return {
+      definition: clone(task),
       id: String(task.id),
       title: String(task.title || task.id),
       objective: String(task.objective || ""),
