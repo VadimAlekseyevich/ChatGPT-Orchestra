@@ -11,7 +11,8 @@
       logger = root.Logger,
       quietMs = 700,
       pollMs = 500,
-      sendTimeoutMs = 5000
+      sendTimeoutMs = 5000,
+      heartbeatMs = 5000
     } = {}) {
       this.logger = logger;
       this.reader = new root.AssistantMessageReader({ documentRef, locationRef });
@@ -27,6 +28,8 @@
         quietMs,
         pollMs
       });
+      this.heartbeatMs = Math.max(2000, Number(heartbeatMs) || 5000);
+      this.heartbeatHandle = null;
       this.unsubscribeExternalDetector = null;
       this.unsubscribeRuntimeDetector = null;
     }
@@ -34,6 +37,16 @@
     configure({ quietMs, sendTimeoutMs } = {}) {
       if (quietMs != null) this.detector.setQuietMs(quietMs);
       if (sendTimeoutMs != null) this.composer.setSendTimeoutMs(sendTimeoutMs);
+    }
+
+    sendHeartbeat() {
+      this.messenger.send(root.MESSAGE_TYPES.CONTENT_HEARTBEAT, this.getStatus());
+    }
+
+    startHeartbeat() {
+      if (this.heartbeatHandle) clearInterval(this.heartbeatHandle);
+      this.sendHeartbeat();
+      this.heartbeatHandle = setInterval(() => this.sendHeartbeat(), this.heartbeatMs);
     }
 
     start(onGenerationEvent) {
@@ -45,6 +58,7 @@
       this.unsubscribeRuntimeDetector = this.detector.onEvent((event) => {
         if (event.type === "generation_completed") {
           this.messenger.send(root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED, {
+            ...this.getStatus(),
             fingerprint: event.snapshot?.fingerprint || "",
             messageCount: event.snapshot?.messageCount || 0,
             pathname: event.snapshot?.pathname || ""
@@ -66,10 +80,13 @@
 
       this.detector.start();
       this.messenger.send(root.MESSAGE_TYPES.CONTENT_READY, this.getStatus());
+      this.startHeartbeat();
     }
 
     stop() {
       this.detector.stop();
+      if (this.heartbeatHandle) clearInterval(this.heartbeatHandle);
+      this.heartbeatHandle = null;
       this.unsubscribeExternalDetector?.();
       this.unsubscribeRuntimeDetector?.();
       this.unsubscribeExternalDetector = null;
