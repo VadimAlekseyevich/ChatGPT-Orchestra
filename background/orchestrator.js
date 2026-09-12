@@ -21,8 +21,8 @@
       if (this.initialized) return this.getPublicState();
       await this.registry.load();
       if (this.eventBus) await this.eventBus.load();
-      if (this.planningEngine) await this.planningEngine.init();
       await this.reconcileRegisteredTabs();
+      if (this.planningEngine) await this.planningEngine.init();
       this.initialized = true;
       return this.getPublicState();
     }
