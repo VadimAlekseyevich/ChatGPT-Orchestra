@@ -15,12 +15,14 @@
 
   function artifactSignature(value) {
     const text = canonicalize(value);
-    let hash = 0x811c9dc5;
+    let hash = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    const mask = 0xffffffffffffffffn;
     for (let index = 0; index < text.length; index += 1) {
-      hash ^= text.charCodeAt(index);
-      hash = Math.imul(hash, 0x01000193) >>> 0;
+      hash ^= BigInt(text.charCodeAt(index));
+      hash = (hash * prime) & mask;
     }
-    return `fnv1a32:${hash.toString(16).padStart(8, "0")}`;
+    return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
   }
 
   function parsePlanningArtifact(text, { maxLength = MAX_BYTES } = {}) {
