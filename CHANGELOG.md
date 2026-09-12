@@ -2,7 +2,7 @@
 
 Все заметные изменения ChatGPT Orchestra фиксируются в этом файле.
 
-Формат основан на принципах Keep a Changelog. Multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
+Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
 ## [2.0.0-alpha.7] - 2026-09-12
 
@@ -20,17 +20,17 @@
 - target-branch movement detection;
 - artifact validation audit в scheduler decision log;
 - popup Git base indicator;
-- Phase 6 architecture doc, smoke-test и ADR 0005;
-- `npm run test:phase6` и Git-provider regression tests.
+- Phase 6 architecture doc, smoke-test, ADR 0005 и regression tests;
+- `npm run test:phase6`.
 
 ### Reliability and safety
 
-- Worker `DONE` больше не может перевести mutating task в `DONE_UNVERIFIED`, пока remote Git artifact не прошёл независимую validation;
+- Worker `DONE` не переводит mutating task в `DONE_UNVERIFIED`, пока remote Git artifact не прошёл независимую validation;
 - wrong branch, malformed commit SHA, missing remote branch, head mismatch, wrong merge base, out-of-scope files и false changed-files report отклоняются;
 - `target_branch_moved` переводит execution в `NEEDS_USER` вместо silent rebase;
 - provider/auth/network/rate-limit failures fail closed и не превращаются в trusted Worker report;
-- retry создаёт новый `runId`, поэтому получает новую task branch identity;
-- abandoned task branches сохраняются для provenance по policy `retain_until_review_or_manual_cleanup`;
+- retry создаёт новый `runId`, следовательно новую task branch identity;
+- abandoned task branches сохраняются по policy `retain_until_review_or_manual_cleanup`;
 - extension не хранит GitHub credentials и не выполняет GitHub write API calls.
 
 ### Changed
@@ -38,9 +38,9 @@
 - prerelease version обновлена до `2.0.0-alpha.7`;
 - manifest добавляет host permission `https://api.github.com/*` для read-only artifact verification;
 - `SchedulerStore` хранит execution Git snapshot, run branch metadata и artifact validation result;
-- `SchedulerEngine` проверяет base freshness до новых dispatch и Git artifact перед task completion;
+- `SchedulerEngine` проверяет base freshness до нового dispatch и Git artifact перед task completion;
 - `WorkerPrompts` запрещает direct target-branch writes и требует pushed per-run branch metadata;
-- `DONE_UNVERIFIED` теперь означает «Git artifact validated but not independently reviewed».
+- `DONE_UNVERIFIED` теперь означает «Git artifact validated, но ещё не independently reviewed».
 
 ### Known limitation
 
@@ -59,18 +59,47 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Added
 
-- persisted `SchedulerStore` and `SchedulerEngine`;
-- parallel Worker assignment and dependency unlocking;
-- configurable `maxWorkers`;
-- conflict-aware file/resource locking;
-- retries, watchdog, tab-loss handling and `NEEDS_USER` escalation;
-- scheduler decision log and Phase 5 regression tests.
+- persisted `SchedulerStore` с mutable task/run state отдельно от approved Phase 4 DAG;
+- conflict-aware `SchedulerEngine` с runnable queue и адресным Worker assignment;
+- configurable `maxWorkers` от 1 до 4;
+- candidate ordering по downstream unlock, priority и risk;
+- dependency unlocking после Phase 5 transitional status `DONE_UNVERIFIED`;
+- explicit/inferred resource locks и file-scope overlap heuristic;
+- persisted scheduler decision log;
+- retryable `BLOCKED`/`ERROR`, retry budget и `NEEDS_USER` escalation;
+- MV3 `alarms` watchdog с default timeout 20 минут;
+- heartbeat-aware timeout detection через `TabRegistry.lastSeenAt`;
+- immediate retry path для active run, чей Worker исчез между service-worker restarts;
+- versioned Worker prompt contract с exact `projectId/taskId/runId/agentId` binding;
+- popup `Start Execution` и execution counters;
+- Phase 5 scheduler docs, smoke-test, ADR 0004 и regression tests.
 
-### Safety
+### Reliability and safety
 
-- one Worker identity cannot own two active runs;
-- mutually-exclusive tasks are not scheduled together;
-- Worker `DONE` remains `DONE_UNVERIFIED` rather than `APPROVED/MERGED/VERIFIED`.
+- scheduler никогда не назначает одну Worker identity двум active runs одновременно;
+- задачи с overlapping scope или shared resource locks не выполняются параллельно;
+- Worker `DONE` не превращается в `APPROVED`, `MERGED` или `VERIFIED`;
+- длинная живая ChatGPT generation не timeout'ится, пока зарегистрированная вкладка продолжает heartbeat;
+- tab close во время run считается failed attempt, а не completion;
+- exhausted retry budget и explicit `NEEDS_USER` останавливают новые assignments;
+- Phase 5 Worker prompt запрещает unsafe direct push/merge в target branch до появления Phase 6 Git isolation.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.6`;
+- manifest добавляет permission `alarms` для scheduler watchdog;
+- Project Store умеет отражать `RUNNING`, `NEEDS_USER` и `COMPLETED_UNVERIFIED` execution status;
+- service worker загружает conflict policy, scheduler store/engine и Worker prompt contracts;
+- public orchestrator state содержит scheduler summary;
+- Worker slots в popup одновременно определяют `maxWorkers` при старте execution.
+
+### Not yet implemented
+
+- per-task Git branch isolation / commit validation;
+- independent review approval;
+- integration/merge and semantic conflict handling;
+- general Pause/Resume and user-resolution flow;
+- verified terminal project state.
 
 ---
 
@@ -78,11 +107,44 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Added
 
-- persisted Project Store and `goal + repository` bootstrap;
-- staged `DISCOVERY -> PLAN_V1 -> CRITIQUE -> PLAN_V2 -> DECOMPOSE -> DAG_CRITIC` pipeline;
-- bounded planning artifact framing;
-- deterministic DAG validation and `READY` gate;
-- planning crash-window recovery and Phase 4 tests/docs.
+- persisted `ProjectStore` с immutable initial goal и normalized GitHub repository identity;
+- popup `Project Bootstrap` для `goal + repository`;
+- staged planning pipeline `DISCOVERY -> PLAN_V1 -> CRITIQUE -> PLAN_V2 -> DECOMPOSE -> DAG_CRITIC`;
+- versioned planning prompts и stage-specific persisted input artifacts;
+- автоматическая привязка Lead к `projectId/taskId/runId` каждого planning run;
+- bounded `@@ORCH_ARTIFACT_BEGIN/END` framing для больших planning artifacts без расширения Protocol v1 envelope;
+- planning artifact provenance в accepted Event Store records для crash-window recovery;
+- deterministic DAG validator с cycle/dependency/scope/acceptance/verification/complexity/migration/objective-coverage gates;
+- persisted final task graph и validation result;
+- `agentsMdProposal` как proposal-only planning artifact без автоматической перезаписи existing `AGENTS.md`;
+- Phase 4 unit/regression tests для Project Store, artifact parser, event provenance, DAG validation, full six-stage pipeline и service-worker recovery scenario;
+- dedicated Phase 4 architecture document and ADR 0003.
+
+### Reliability and safety
+
+- `READY` выставляется только после deterministic DAG validation, а не по заявлению Lead;
+- stale output предыдущей planning stage/run отклоняется Phase 3 protocol context binding;
+- large plan/DAG не помещается внутрь маленького `@@ORCH` envelope;
+- `BLOCKED`, `ERROR` и `NEEDS_USER` planning events не требуют artifact block;
+- restart после accepted planning event может восстановить artifact из Event Store и продолжить со следующей stage без повторной отправки уже обработанного prompt;
+- `PlanningEngine.init()` идемпотентен и не создаёт повторные Event Bus subscriptions;
+- Phase 4 не назначает DAG tasks workers и не запускает scheduler раньше Phase 5.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.5`;
+- service worker загружает Project Store, Planning Engine, DAG validator и planning prompt contracts;
+- public orchestrator state содержит active project summary;
+- popup показывает project status/stage/task count;
+- Event Store source metadata может хранить bounded planning artifact для recovery.
+
+### Not yet implemented
+
+- parallel task scheduler и dependency unlocking;
+- automatic Worker task assignment;
+- Git task branches/artifact validation;
+- review/integration loops;
+- full project Pause/Resume and reconciliation.
 
 ---
 
@@ -90,11 +152,44 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Added
 
-- Orchestra Protocol v1 (`@@ORCH`);
-- persisted Event Store/Event Bus;
-- event identity, duplicate/collision suppression and monotonic sequence;
-- protocol context binding and stale-event rejection;
-- Phase 3 protocol regression tests.
+- Orchestra Protocol v1 с префиксом `@@ORCH`;
+- JSON envelope и compact fallback syntax;
+- обязательные `projectId`, `taskId`, `runId`, `agentId`, `eventId`, `sequence`;
+- persisted `EventStore` и `EventBus` в `chrome.storage.local`;
+- route classification для lifecycle/progress/completion/blocker/review/integration/user events;
+- persisted `processedEvents`, monotonic sequence tracking и event cursor;
+- exact duplicate suppression после перезапуска service worker;
+- rejection log для malformed/stale/foreign protocol events;
+- protocol context binding `projectId/taskId/runId` к конкретному agent;
+- regression tests для parser, duplicate replay, eventId collision, stale sequence, sender mismatch и persisted replay.
+
+### Safety
+
+- protocol обрабатывается только из последней непустой строки assistant response;
+- неизвестная версия/event type отклоняется без side effect;
+- незарегистрированный tab не может публиковать Orchestra events;
+- `agentId` в envelope обязан совпасть с registry identity sender tab;
+- если agent имеет protocol context, stale/чужие `projectId/taskId/runId` отклоняются;
+- одинаковый `eventId` с другим payload считается collision, а не duplicate;
+- sequence, идущий назад или повторяющийся в рамках run, отклоняется;
+- malformed protocol сохраняется в rejection audit вместо автоматического действия.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.4`;
+- `ProtocolParser` сначала распознаёт Orchestra Protocol и только затем legacy rules;
+- `ChatGPTAdapter` публикует protocol result после подтверждённого generation completion;
+- service worker загружает protocol/event store до обработки runtime events;
+- legacy `DONE/FAIL/ERROR` остаётся compatibility fallback.
+
+### Not yet implemented
+
+- project bootstrap и Planner/Critic;
+- task DAG/scheduler;
+- автоматическое назначение protocol context scheduler'ом;
+- Git branch isolation;
+- review/integration loops;
+- Pause/Resume и full project recovery.
 
 ---
 
@@ -102,11 +197,40 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Added
 
-- Manifest V3 service worker Orchestrator;
-- persistent Tab Registry and stable agent IDs;
-- explicit Lead registration and managed Worker tabs;
-- heartbeat/reconnect/tab lifecycle handling;
-- targeted agent routing and Phase 2 tests.
+- Manifest V3 service worker как центральный runtime coordinator;
+- persistent `TabRegistry` в `chrome.storage.local`;
+- стабильные `agentId` и mapping `agentId <-> tabId <-> chatUrl`;
+- явная роль Lead и до четырёх Worker slots;
+- создание Worker-вкладок через безопасный pre-bind перед navigation в ChatGPT;
+- heartbeat зарегистрированных агентов и состояния `CONNECTING/IDLE/BUSY/OFFLINE/ERROR`;
+- recovery registry после рестарта service worker;
+- обработка reload, close и navigation зарегистрированных вкладок;
+- адресная отправка prompt/stop command конкретному `agentId`;
+- Phase 2 controls/status в popup;
+- unit tests для persistence, registration safety, lifecycle и targeted routing.
+
+### Safety
+
+- обычная пользовательская вкладка ChatGPT не становится агентом автоматически;
+- Lead назначается только явной командой пользователя;
+- Worker регистрируется по `tabId` до перехода с `about:blank` на ChatGPT;
+- незарегистрированные вкладки не запускают периодический heartbeat;
+- runtime messages от неизвестных ChatGPT tabs игнорируются orchestrator'ом.
+
+### Changed
+
+- manifest запрашивает `tabs` и объявляет background service worker;
+- prerelease version обновлена до `2.0.0-alpha.3`;
+- popup теперь показывает состояние Lead/Workers, не заменяя legacy flag settings.
+
+### Not yet implemented
+
+- Orchestra Protocol v1 / event bus;
+- project bootstrap и Planner/Critic;
+- task DAG и scheduler;
+- Git branch isolation;
+- review/integration loops;
+- полноценные Pause/Resume semantics и crash recovery проекта.
 
 ---
 
@@ -114,11 +238,38 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Added
 
-- modular ChatGPT adapter layer;
+- модульный content adapter layer: `GenerationDetector`, `ComposerAdapter`, `AssistantMessageReader`, `ProtocolParser`, `ChatGPTAdapter`;
+- централизованный selector registry с fallback selectors;
 - deterministic generation state machine;
-- dual-signal completion detection for missed busy/stop-button transitions;
-- SPA/startup stale-response protection;
-- typed messages, structured diagnostics and deterministic core tests.
+- typed content/background message names и runtime command boundary;
+- structured diagnostic logging;
+- zero-dependency Node test harness для deterministic core;
+- тесты parser/state machine/composer safety/response fingerprinting/SPA navigation baseline.
+
+### Reliability
+
+- legacy completion больше не зависит только от того, успело ли расширение заметить `stop-button`;
+- изменение fingerprint нового assistant response является вторым независимым completion signal;
+- completion принимается только после quiet/stability window;
+- существующий response при загрузке страницы используется как baseline и не запускает старый `DONE`;
+- переход между существующими ChatGPT conversations в SPA создаёт новый baseline и не трактуется как свежий completion;
+- одинаковый текст в двух разных assistant turns имеет разные fingerprints за счёт message count.
+
+### Changed
+
+- `content.js` теперь только bootstrap/runtime command boundary;
+- legacy `DONE/FAIL/ERROR` policy вынесена в `LegacyController` и работает поверх `ChatGPTAdapter`;
+- manifest загружает content modules в явном порядке;
+- prerelease version обновлена до `2.0.0-alpha.2`.
+
+### Preserved
+
+- точное case-sensitive сопоставление legacy-флагов;
+- randomized delay перед действием;
+- дополнительная stability-проверка ответа;
+- защита от перезаписи пользовательского текста в composer;
+- `FAIL` notification behavior;
+- локальная конфигурация правил.
 
 ---
 
@@ -126,13 +277,45 @@ Initial GitHub REST validation is unauthenticated. Private/unavailable repositor
 
 ### Changed
 
-- project renamed to **ChatGPT Orchestra**;
-- README/repository metadata/versioning policy reset around the multi-agent product direction;
-- legacy single-tab flag runner retained as compatibility foundation;
-- added `ROADMAP.md`, `CHANGELOG.md` and ADR structure.
+- проект переименован в **ChatGPT Orchestra**;
+- обновлены extension title, popup branding и diagnostic log prefix;
+- repository URLs и badges переведены на `VadimAlekseyevich/ChatGPT-Orchestra`;
+- README переписан вокруг целевой multi-agent архитектуры;
+- существующий single-tab flag runner формально обозначен как **legacy foundation**, а не конечный продукт;
+- принят versioning policy для новой архитектурной линии;
+- добавлены `ROADMAP.md`, `CHANGELOG.md` и структура `docs/adr/`.
+
+### Preserved
+
+Legacy baseline продолжает поддерживать:
+
+- `DONE`, `FAIL`, `ERROR` и пользовательские правила;
+- автоматическую отправку follow-up prompt;
+- уведомление пользователя;
+- randomized delay;
+- local duplicate-response guard;
+- защиту непустого composer;
+- локальное хранение конфигурации.
+
+### Not yet implemented
+
+В этой alpha пока отсутствуют:
+
+- multi-tab Orchestrator Core;
+- agent registry;
+- Orchestra Protocol;
+- Planner/Critic/DAG pipeline;
+- parallel scheduler;
+- Git task isolation;
+- review/integration loops;
+- pause/resume и crash recovery.
+
+Следующие изменения должны реализовываться по фазам из `ROADMAP.md`.
 
 ---
 
 ## Legacy baseline — 1.2.0
 
-Pre-Orchestra version with configurable single-tab `DONE/FAIL/ERROR` automation, notifications, randomized delay, duplicate-response guard and local settings.
+Версия до переименования проекта. Реализовала configurable single-tab response flags, `DONE/FAIL/ERROR`, notifications, automatic follow-ups, randomized delay и local storage configuration.
+
+Исторические версии до `2.0.0-alpha.1` рассматриваются как foundation нового проекта, а не как отдельная целевая продуктовая линия.
