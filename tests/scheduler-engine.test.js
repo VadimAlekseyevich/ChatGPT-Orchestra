@@ -2,9 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 require("../background/conflict-policy.js");
+require("../background/git-provider.js");
 require("../prompts/worker-prompts.js");
 const { SchedulerStore } = require("../background/scheduler-store.js");
 const { SchedulerEngine } = require("../background/scheduler-engine.js");
+
+const BASE_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const COMMIT_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 function fakeStorage() {
   const data = {};
@@ -23,6 +27,44 @@ class FakeEventBus {
     this.listeners.set(route, list);
     return () => {};
   }
+}
+
+function fakeGitProvider({ validation = null } = {}) {
+  return {
+    branchName(projectId, taskId, runId) { return `orchestra/${projectId}/${taskId}/${runId}`; },
+    async captureBase(project) {
+      return {
+        ok: true,
+        snapshot: {
+          provider: "test-git",
+          repositoryFullName: project.repository.fullName,
+          defaultBranch: "main",
+          baseSha: BASE_SHA,
+          capturedAt: 1,
+          cleanupPolicy: "retain_until_review_or_manual_cleanup",
+          lastCheckedAt: 1,
+          currentTargetSha: BASE_SHA
+        }
+      };
+    },
+    async checkBaseFresh() { return { ok: true, currentTargetSha: BASE_SHA, checkedAt: Date.now() }; },
+    async validateArtifact({ run }) {
+      if (validation) return validation(run);
+      return {
+        ok: true,
+        artifact: {
+          provider: "test-git",
+          branch: run.git.branch,
+          commit: COMMIT_SHA,
+          baseSha: BASE_SHA,
+          targetBranch: "main",
+          changedFiles: [`src/${run.taskId}.js`],
+          verifiedAt: 2
+        },
+        freshness: { ok: true, currentTargetSha: BASE_SHA, checkedAt: 2 }
+      };
+    }
+  };
 }
 
 function registry(count = 3) {
@@ -73,7 +115,7 @@ function project(tasks) {
     projectId: "P1",
     status: "READY",
     initialGoal: "Execute a synthetic scheduler test safely.",
-    repository: { url: "https://github.com/acme/widget" },
+    repository: { url: "https://github.com/acme/widget", owner: "acme", repo: "widget", fullName: "acme/widget" },
     taskGraph: { tasks }
   };
 }
@@ -108,6 +150,19 @@ function completion(run) {
   };
 }
 
+function engineOptions({ store, projects, workers, idFactory, sendPrompt, clock, gitProvider } = {}) {
+  return {
+    store,
+    projectStore: projects,
+    registry: workers,
+    eventBus: new FakeEventBus(),
+    gitProvider: gitProvider || fakeGitProvider(),
+    ...(clock ? { clock } : {}),
+    ...(idFactory ? { idFactory } : {}),
+    sendPrompt: sendPrompt || (async () => ({ ok: true }))
+  };
+}
+
 test("runs three independent tasks in parallel and unlocks the dependent fourth only after all prerequisites", async () => {
   const graph = project([
     task("T1", [], ["src/a/**"], 30),
@@ -120,14 +175,13 @@ test("runs three independent tasks in parallel and unlocks the dependent fourth 
   const projects = projectStore(graph);
   const prompts = [];
   let runId = 0;
-  const engine = new SchedulerEngine({
+  const engine = new SchedulerEngine(engineOptions({
     store,
-    projectStore: projects,
-    registry: workers,
-    eventBus: new FakeEventBus(),
+    projects,
+    workers,
     idFactory: () => `R${++runId}`,
     sendPrompt: async (agentId, prompt) => { prompts.push({ agentId, prompt }); return { ok: true }; }
-  });
+  }));
 
   await engine.init();
   const started = await engine.start({ maxWorkers: 3 });
@@ -136,6 +190,7 @@ test("runs three independent tasks in parallel and unlocks the dependent fourth 
   assert.deepEqual(new Set(store.activeRuns().map((run) => run.taskId)), new Set(["T1", "T2", "T3"]));
   assert.equal(store.getTask("T4").status, "READY");
   assert.equal(prompts.length, 3);
+  assert.ok(prompts.every(({ prompt }) => prompt.includes("GIT ISOLATION CONTRACT")));
 
   for (const taskId of ["T1", "T2"]) {
     const run = store.activeRuns().find((item) => item.taskId === taskId);
@@ -153,6 +208,7 @@ test("runs three independent tasks in parallel and unlocks the dependent fourth 
   await engine.handleCompletion(completion(finalRun));
   assert.equal(store.summary().status, "COMPLETED_UNVERIFIED");
   assert.equal(projects.state.project.status, "COMPLETED_UNVERIFIED");
+  assert.equal(store.getTask("T4").lastArtifact.commit, COMMIT_SHA);
 });
 
 test("never assigns mutually exclusive overlapping tasks at the same time", async () => {
@@ -161,14 +217,7 @@ test("never assigns mutually exclusive overlapping tasks at the same time", asyn
     task("T2", [], ["src/shared/nested/**"], 90)
   ]);
   const store = new SchedulerStore({ storageArea: fakeStorage() });
-  const engine = new SchedulerEngine({
-    store,
-    projectStore: projectStore(graph),
-    registry: registry(2),
-    eventBus: new FakeEventBus(),
-    idFactory: (() => { let id = 0; return () => `R${++id}`; })(),
-    sendPrompt: async () => ({ ok: true })
-  });
+  const engine = new SchedulerEngine(engineOptions({ store, projects: projectStore(graph), workers: registry(2), idFactory: (() => { let id = 0; return () => `R${++id}`; })() }));
   await engine.init();
   await engine.start({ maxWorkers: 2 });
   assert.equal(store.activeRuns().length, 1);
@@ -181,15 +230,7 @@ test("watchdog retries then escalates when retry budget is exhausted", async () 
   const graph = project([task("T1", [], ["src/a/**"])]);
   const store = new SchedulerStore({ storageArea: fakeStorage(), clock: () => now });
   const projects = projectStore(graph);
-  const engine = new SchedulerEngine({
-    store,
-    projectStore: projects,
-    registry: registry(1),
-    eventBus: new FakeEventBus(),
-    clock: () => now,
-    idFactory: () => "R1",
-    sendPrompt: async () => ({ ok: true })
-  });
+  const engine = new SchedulerEngine(engineOptions({ store, projects, workers: registry(1), clock: () => now, idFactory: () => "R1" }));
   await engine.init();
   await engine.start({ maxWorkers: 1, maxRetries: 0, runTimeoutMs: 60000 });
   assert.equal(store.activeRuns().length, 1);
@@ -205,15 +246,7 @@ test("recent content heartbeat keeps a long-running Worker alive", async () => {
   const graph = project([task("T1", [], ["src/a/**"])]);
   const store = new SchedulerStore({ storageArea: fakeStorage(), clock: () => now });
   const workers = registry(1);
-  const engine = new SchedulerEngine({
-    store,
-    projectStore: projectStore(graph),
-    registry: workers,
-    eventBus: new FakeEventBus(),
-    clock: () => now,
-    idFactory: () => "R1",
-    sendPrompt: async () => ({ ok: true })
-  });
+  const engine = new SchedulerEngine(engineOptions({ store, projects: projectStore(graph), workers, clock: () => now, idFactory: () => "R1" }));
   await engine.init();
   await engine.start({ maxWorkers: 1, maxRetries: 0, runTimeoutMs: 60000 });
   now += 61000;
@@ -230,20 +263,45 @@ test("restart immediately retries an active run whose Worker disappeared", async
   const seed = new SchedulerStore({ storageArea: storage });
   await seed.load();
   await seed.initializeProject(graph, { maxRetries: 2 });
-  await seed.createRun({ taskId: "T1", runId: "R-old", agentId: "A1" });
+  await seed.setGitSnapshot((await fakeGitProvider().captureBase(graph)).snapshot);
+  await seed.createRun({
+    taskId: "T1",
+    runId: "R-old",
+    agentId: "A1",
+    git: { required: true, provider: "test-git", branch: "orchestra/P1/T1/R-old", targetBranch: "main", baseSha: BASE_SHA }
+  });
 
   const workers = registry(1);
   workers.agents[0].tabId = null;
   workers.agents[0].status = "OFFLINE";
-  const engine = new SchedulerEngine({
+  const engine = new SchedulerEngine(engineOptions({
     store: new SchedulerStore({ storageArea: storage }),
-    projectStore: projectStore({ ...graph, status: "RUNNING" }),
-    registry: workers,
-    eventBus: new FakeEventBus(),
-    sendPrompt: async () => ({ ok: true })
-  });
+    projects: projectStore({ ...graph, status: "RUNNING" }),
+    workers
+  }));
   await engine.init();
   assert.equal(engine.store.getRun("R-old").status, "AGENT_UNAVAILABLE_AFTER_RESTART");
   assert.equal(engine.store.getTask("T1").status, "READY");
   assert.ok(engine.store.recentDecisions(20).some((entry) => entry.type === "recovered_agent_unavailable"));
+});
+
+test("invalid Git artifact cannot unlock dependencies and is retried", async () => {
+  const graph = project([task("T1", [], ["src/a/**"]), task("T2", ["T1"], ["src/b/**"])]);
+  const store = new SchedulerStore({ storageArea: fakeStorage() });
+  const workers = registry(1);
+  const projects = projectStore(graph);
+  const engine = new SchedulerEngine(engineOptions({
+    store,
+    projects,
+    workers,
+    idFactory: (() => { let id = 0; return () => `R${++id}`; })(),
+    gitProvider: fakeGitProvider({ validation: () => ({ ok: false, reason: "git_branch_head_mismatch" }) })
+  }));
+  await engine.init();
+  await engine.start({ maxWorkers: 1, maxRetries: 1 });
+  const first = store.activeRuns()[0];
+  await engine.handleCompletion(completion(first));
+  assert.notEqual(store.getTask("T1").status, "DONE_UNVERIFIED");
+  assert.equal(store.getTask("T2").status, "READY");
+  assert.ok(store.recentDecisions(20).some((entry) => entry.type === "git_artifact_invalid"));
 });
