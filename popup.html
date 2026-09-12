@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChatGPT DONE Auto-Continue</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="panel">
+    <header>
+      <h1>DONE Auto-Continue</h1>
+      <p>Microsoft Edge · ChatGPT</p>
+    </header>
+
+    <label class="toggle-row">
+      <span>Автопродолжение</span>
+      <input id="enabled" type="checkbox" />
+    </label>
+
+    <label>
+      <span>Маркер в конце ответа</span>
+      <input id="marker" type="text" autocomplete="off" spellcheck="false" />
+    </label>
+
+    <label>
+      <span>Что отправлять после DONE</span>
+      <textarea id="followUp" rows="3"></textarea>
+    </label>
+
+    <label>
+      <span>Задержка после генерации, мс</span>
+      <input id="delayMs" type="number" min="300" max="30000" step="100" />
+    </label>
+
+    <button id="save" type="button">Сохранить</button>
+    <div id="status" role="status" aria-live="polite"></div>
+
+    <p class="hint">После установки обнови вкладку ChatGPT. Расширение реагирует только на генерацию, которую оно реально увидело.</p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
