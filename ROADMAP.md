@@ -790,19 +790,21 @@ Integrator отвечает за:
 
 ## Phase 0 — Repository reset / Rename hygiene
 
+**Статус:** завершена в `2.0.0-alpha.1`.
+
 **Цель:** привести репозиторий в состояние, где новое название и новая цель не конфликтуют со старым README.
 
 ### Задачи
 
-- [ ] переименовать title расширения в `ChatGPT Orchestra`;
-- [ ] обновить package/manifest description;
-- [ ] исправить старые repository URLs;
-- [ ] обновить badges;
-- [ ] описать legacy MVP как baseline;
-- [ ] добавить ссылку на этот `ROADMAP.md`;
-- [ ] решить policy версионирования: рекомендуется начать новую архитектуру с `0.2.0` или `2.0.0-alpha.1`, а не делать вид, что это обычный patch старого auto-continue;
-- [ ] добавить `CHANGELOG.md`;
-- [ ] добавить минимальную структуру `docs/` по мере появления ADR.
+- [x] переименовать title расширения в `ChatGPT Orchestra`;
+- [x] обновить package/manifest description;
+- [x] исправить старые repository URLs;
+- [x] обновить badges;
+- [x] описать legacy MVP как baseline;
+- [x] добавить ссылку на этот `ROADMAP.md`;
+- [x] решить policy версионирования;
+- [x] добавить `CHANGELOG.md`;
+- [x] добавить минимальную структуру `docs/` и ADR.
 
 ### Definition of Done
 
@@ -814,37 +816,70 @@ Integrator отвечает за:
 
 ## Phase 1 — Adapter extraction and deterministic core
 
+**Статус:** реализуется в `2.0.0-alpha.2`.
+
 **Цель:** отделить DOM automation от логики управления.
+
+### Известная reliability-проблема legacy baseline
+
+Зафиксирован реальный случай, когда ответ завершался флагом `DONE`, но расширение не всегда его обрабатывало. Legacy detector в значительной степени зависел от того, что content script успеет увидеть переход UI через `stop-button`: если busy-состояние было пропущено из-за timing, DOM-изменения или изменения интерфейса ChatGPT, проверка флага могла вообще не запуститься.
+
+Это считается отдельным acceptance requirement Phase 1, а не случайным UI-багом.
+
+Phase 1 должна гарантировать:
+
+- completion detection не зависит от одного selector/signal;
+- явный generation/busy signal остаётся основным сигналом, но имеет fallback;
+- изменение fingerprint нового assistant response запускает settling даже если busy signal был полностью пропущен;
+- side effect разрешён только после quiet/stability window;
+- response, уже существующий при загрузке страницы, является baseline и не считается новым completion;
+- SPA-navigation в другой существующий conversation создаёт новый baseline и не запускает старый `DONE`;
+- одинаковый текст в двух разных assistant turns различается по fingerprint;
+- duplicate completion одного и того же response подавляется;
+- structured logs позволяют понять, какой signal привёл к completion или почему flag не был обработан.
+
+Обязательный regression scenario:
+
+```text
+startup: old response exists -> no action
+new assistant response appears
+busy/stop-button transition is NOT observed
+response becomes stable
+DONE is parsed exactly once
+```
 
 ### Реализация
 
-- [ ] разбить `content.js` на модули;
-- [ ] `GenerationDetector`;
-- [ ] `ComposerAdapter`;
-- [ ] `AssistantMessageReader`;
-- [ ] `ProtocolParser`;
-- [ ] `ChatGPTAdapter` facade;
-- [ ] унифицировать сообщения content <-> background;
-- [ ] ввести typed message names/constants;
-- [ ] сохранить legacy `DONE/FAIL/ERROR` behavior;
-- [ ] добавить structured logs;
-- [ ] централизовать selectors;
-- [ ] добавить selector fallback strategy;
-- [ ] добавить detection для unavailable composer/error page.
+- [x] разбить `content.js` на модули;
+- [x] `GenerationDetector`;
+- [x] `ComposerAdapter`;
+- [x] `AssistantMessageReader`;
+- [x] `ProtocolParser` boundary;
+- [x] `ChatGPTAdapter` facade;
+- [x] унифицировать сообщения content <-> future background;
+- [x] ввести typed message names/constants;
+- [x] сохранить legacy `DONE/FAIL/ERROR` behavior;
+- [x] добавить structured logs;
+- [x] централизовать selectors;
+- [x] добавить selector fallback strategy;
+- [x] добавить detection для unavailable composer/error page;
+- [x] добавить fallback completion detection по response fingerprint;
+- [x] добавить SPA navigation baseline reset.
 
 ### Тесты
 
-- unit tests parser;
-- unit tests state transitions;
-- fixtures с вариантами response text;
-- duplicate response test;
-- composer occupied test;
-- generation started/stopped test;
-- stale page response test.
+- [x] unit tests parser;
+- [x] unit tests generation state transitions;
+- [x] fixtures с вариантами response text;
+- [x] duplicate response/completion test;
+- [x] composer occupied test;
+- [x] generation started/stopped test;
+- [x] missed-busy recovery test;
+- [x] stale page/navigation response test.
 
 ### DoD
 
-Старый функционал работает через новый Adapter, а orchestration logic больше не находится внутри DOM observer callback.
+Старый функционал работает через новый Adapter, а orchestration logic больше не находится внутри DOM observer callback. Browser smoke test реального production ChatGPT остаётся обязательным перед тем, как считать prerelease проверенной в реальном UI.
 
 ---
 
@@ -1936,8 +1971,8 @@ ChatGPT Orchestra можно считать состоявшимся, когда
 
 # 28. Ближайшая следующая задача
 
-После принятия этого roadmap следующая implementation-задача должна быть узкой:
+После Phase 1 следующая implementation-задача:
 
-> **Extract the existing single-tab ChatGPT DOM logic into a reusable adapter and introduce a Manifest V3 service-worker orchestrator with a persistent tab registry, without changing the visible legacy DONE/FAIL/ERROR behavior.**
+> **Phase 2 — introduce a Manifest V3 service-worker orchestrator with a persistent tab registry and targeted messaging, while keeping ChatGPT DOM details behind the Phase 1 adapter boundary.**
 
-Она создаёт фундамент для всего остального и не требует одновременно решать planning, Git integration и multi-agent scheduling.
+Сначала нужно доказать управление несколькими адресуемыми вкладками и их lifecycle/reconnect; только после этого переходить к полноценному Orchestra Protocol/Event Bus из Phase 3.
