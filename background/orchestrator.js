@@ -114,12 +114,16 @@
         return { ok: false, reason: "project_not_ready_for_execution", status: project?.status || null };
       }
       const maxWorkers = Math.max(1, Math.min(MAX_WORKERS, Number(payload.maxWorkers) || 3));
-      const workers = await this.createWorkers(maxWorkers);
+      // Phase 7 forbids self-review. Even when execution concurrency is one, keep a second
+      // registered worker tab available so the author's result can be reviewed independently.
+      const poolSize = Math.max(2, maxWorkers);
+      const workers = await this.createWorkers(poolSize);
       if (!workers.ok) return workers;
       const result = await this.schedulerEngine.start({
         maxWorkers,
         maxRetries: payload.maxRetries ?? 2,
-        runTimeoutMs: payload.runTimeoutMs || undefined
+        runTimeoutMs: payload.runTimeoutMs || undefined,
+        maxReviewIterations: payload.maxReviewIterations ?? 3
       });
       return { ...result, state: this.getPublicState() };
     }
