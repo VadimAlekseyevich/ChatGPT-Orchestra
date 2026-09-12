@@ -1,30 +1,103 @@
 (() => {
   "use strict";
 
+  const DEFAULT_RULES = [
+    {
+      id: "done",
+      enabled: true,
+      marker: "DONE",
+      action: "prompt",
+      prompt: "Делай следующее задание"
+    },
+    {
+      id: "fail",
+      enabled: true,
+      marker: "FAIL",
+      action: "notify",
+      prompt: "Требуется ваше участие. Откройте чат ChatGPT."
+    },
+    {
+      id: "error",
+      enabled: true,
+      marker: "ERROR",
+      action: "prompt",
+      prompt: "Исправь ошибку и продолжи работу. Если без моего участия продолжить нельзя, заверши ответ флагом FAIL."
+    }
+  ];
+
   const DEFAULTS = {
     enabled: true,
-    marker: "DONE",
-    followUp: "Делай следующее задание",
     delayMs: 1200,
     stableMs: 650,
     sendTimeoutMs: 5000
   };
 
+  const LEGACY_DEFAULT_MARKER = "DONE";
+  const LEGACY_DEFAULT_FOLLOW_UP = "Делай следующее задание";
   const LOG_PREFIX = "[ChatGPT DONE Auto-Continue]";
-  let config = { ...DEFAULTS };
+
+  let config = { ...DEFAULTS, rules: cloneDefaultRules() };
   let wasGenerating = false;
   let pendingRun = null;
   let lastHandledKey = "";
   let observerStarted = false;
 
+  function cloneDefaultRules() {
+    return DEFAULT_RULES.map((rule) => ({ ...rule }));
+  }
+
   function log(...args) {
     console.debug(LOG_PREFIX, ...args);
   }
 
+  function normalizeRule(rule, index) {
+    if (!rule || typeof rule !== "object") return null;
+
+    const marker = String(rule.marker || "").trim();
+    if (!marker) return null;
+
+    const action = rule.action === "notify" ? "notify" : "prompt";
+    const prompt = String(rule.prompt || "").trim();
+
+    return {
+      id: String(rule.id || `rule-${index}-${marker}`),
+      enabled: rule.enabled !== false,
+      marker,
+      action,
+      prompt
+    };
+  }
+
+  function normalizeRules(rules, legacyMarker, legacyFollowUp) {
+    if (Array.isArray(rules)) {
+      return rules
+        .map(normalizeRule)
+        .filter(Boolean);
+    }
+
+    const migrated = cloneDefaultRules();
+    migrated[0].marker = String(legacyMarker || LEGACY_DEFAULT_MARKER).trim() || LEGACY_DEFAULT_MARKER;
+    migrated[0].prompt = String(legacyFollowUp || LEGACY_DEFAULT_FOLLOW_UP).trim() || LEGACY_DEFAULT_FOLLOW_UP;
+    return migrated;
+  }
+
   async function loadConfig() {
     try {
-      const stored = await chrome.storage.local.get(DEFAULTS);
-      config = { ...DEFAULTS, ...stored };
+      const stored = await chrome.storage.local.get([
+        "enabled",
+        "rules",
+        "marker",
+        "followUp",
+        "delayMs",
+        "stableMs",
+        "sendTimeoutMs"
+      ]);
+
+      config = {
+        ...DEFAULTS,
+        ...stored,
+        rules: normalizeRules(stored.rules, stored.marker, stored.followUp)
+      };
     } catch (error) {
       console.warn(LOG_PREFIX, "Could not load settings; using defaults.", error);
     }
@@ -80,17 +153,23 @@
     return normalizeText(body.innerText || body.textContent || "");
   }
 
-  function endsWithMarker(text, marker) {
+  function getLastNonEmptyLine(text) {
     const normalizedText = normalizeText(text);
-    const normalizedMarker = normalizeText(marker).trim();
-    if (!normalizedText || !normalizedMarker) return false;
+    if (!normalizedText) return "";
 
     const lines = normalizedText
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
 
-    return lines.at(-1) === normalizedMarker;
+    return lines.at(-1) || "";
+  }
+
+  function findMatchingRule(text) {
+    const lastLine = getLastNonEmptyLine(text);
+    if (!lastLine) return null;
+
+    return config.rules.find((rule) => rule.enabled && rule.marker === lastLine) || null;
   }
 
   function hashString(value) {
@@ -102,8 +181,8 @@
     return (hash >>> 0).toString(16);
   }
 
-  function currentHandledKey(text) {
-    return `${location.pathname}:${hashString(text)}`;
+  function currentHandledKey(text, rule) {
+    return `${location.pathname}:${rule.id}:${hashString(text)}`;
   }
 
   function getComposer() {
@@ -200,8 +279,14 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function sendFollowUp() {
+  async function sendPrompt(prompt) {
     if (!config.enabled || isGenerating()) return false;
+
+    const text = String(prompt || "").trim();
+    if (!text) {
+      console.warn(LOG_PREFIX, "Matched rule has an empty prompt; auto-send skipped.");
+      return false;
+    }
 
     const composer = getComposer();
     if (!composer) {
@@ -214,7 +299,7 @@
       return false;
     }
 
-    setComposerText(composer, config.followUp);
+    setComposerText(composer, text);
     const sendButton = await waitForSendButton(config.sendTimeoutMs);
 
     if (!sendButton) {
@@ -223,8 +308,25 @@
     }
 
     sendButton.click();
-    log("Follow-up sent:", config.followUp);
+    log("Follow-up sent:", text);
     return true;
+  }
+
+  async function notifyUser(rule) {
+    const message = String(rule.prompt || "").trim()
+      || "ChatGPT остановил автопродолжение и ждёт вашего участия.";
+
+    window.focus();
+    window.alert(`${rule.marker}: ${message}`);
+    log("User notified for marker:", rule.marker);
+    return true;
+  }
+
+  async function handleRule(rule) {
+    if (rule.action === "notify") {
+      return notifyUser(rule);
+    }
+    return sendPrompt(rule.prompt);
   }
 
   async function processCompletedGeneration() {
@@ -233,8 +335,9 @@
     if (!config.enabled || isGenerating()) return;
 
     const firstText = getLastAssistantText();
-    if (!endsWithMarker(firstText, config.marker)) {
-      log("Generation finished, but the last non-empty line is not the marker.");
+    const firstRule = findMatchingRule(firstText);
+    if (!firstRule) {
+      log("Generation finished, but the last non-empty line does not match an enabled rule.");
       return;
     }
 
@@ -243,23 +346,22 @@
     if (!config.enabled || isGenerating()) return;
 
     const stableText = getLastAssistantText();
-    if (stableText !== firstText || !endsWithMarker(stableText, config.marker)) {
-      log("Assistant text changed during stability check; skipping this pass.");
+    const stableRule = findMatchingRule(stableText);
+    if (stableText !== firstText || !stableRule || stableRule.id !== firstRule.id) {
+      log("Assistant text or matched rule changed during stability check; skipping this pass.");
       return;
     }
 
-    const handledKey = currentHandledKey(stableText);
+    const handledKey = currentHandledKey(stableText, stableRule);
     if (handledKey === lastHandledKey) {
-      log("This DONE response was already handled.");
+      log("This flagged response was already handled.");
       return;
     }
 
-    // Mark before clicking Send so a UI mutation cannot schedule the same response twice.
     lastHandledKey = handledKey;
-    const sent = await sendFollowUp();
+    const handled = await handleRule(stableRule);
 
-    if (!sent) {
-      // Allow a future genuine generation-state transition to retry.
+    if (!handled) {
       lastHandledKey = "";
     }
   }
@@ -292,7 +394,7 @@
 
     if (!generating && wasGenerating) {
       wasGenerating = false;
-      log("Generation finished. Checking marker after delay.");
+      log("Generation finished. Checking flag after delay.");
       scheduleCompletedGenerationCheck();
     }
   }
@@ -320,16 +422,21 @@
       attributeFilter: ["disabled", "data-testid", "aria-label"]
     });
 
-    // Fallback polling protects against UI changes that do not trigger a useful mutation.
     setInterval(inspectGenerationState, 750);
     log("Monitoring started.", config);
   }
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
-    for (const [key, change] of Object.entries(changes)) {
-      config[key] = change.newValue;
+
+    if (changes.rules) {
+      config.rules = normalizeRules(changes.rules.newValue);
     }
+
+    for (const key of ["enabled", "delayMs", "stableMs", "sendTimeoutMs"]) {
+      if (changes[key]) config[key] = changes[key].newValue;
+    }
+
     log("Settings updated.", config);
   });
 

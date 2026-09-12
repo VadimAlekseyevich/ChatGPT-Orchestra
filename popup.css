@@ -9,7 +9,9 @@
 
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 420px;
+  max-height: 600px;
+  overflow-y: auto;
   background: Canvas;
   color: CanvasText;
 }
@@ -22,19 +24,33 @@ header {
   margin-bottom: 16px;
 }
 
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
 h1 {
-  margin: 0 0 4px;
+  margin-bottom: 4px;
   font-size: 18px;
   line-height: 1.2;
 }
 
+h2 {
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+
 header p,
-.hint {
-  margin: 0;
+.section-heading p,
+.hint,
+.empty-state {
+  margin-bottom: 0;
   opacity: 0.68;
 }
 
-header p {
+header p,
+.section-heading p {
   font-size: 12px;
 }
 
@@ -47,7 +63,8 @@ label {
 
 input[type="text"],
 input[type="number"],
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
   border-radius: 8px;
@@ -55,6 +72,9 @@ textarea {
   background: Canvas;
   color: CanvasText;
   font: inherit;
+}
+
+textarea {
   resize: vertical;
 }
 
@@ -66,13 +86,51 @@ textarea {
   border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
 }
 
-.toggle-row input {
+.toggle-row input,
+.inline-check input {
   width: 18px;
   height: 18px;
 }
 
+.rules-section {
+  margin: 16px 0;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rule-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, CanvasText 3%, Canvas);
+}
+
+.rule-card label {
+  margin: 10px 0 0;
+}
+
+.rule-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 !important;
+}
+
 button {
-  width: 100%;
   border: 0;
   border-radius: 8px;
   padding: 10px 12px;
@@ -87,6 +145,37 @@ button:hover {
   opacity: 0.9;
 }
 
+button.secondary {
+  border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+  background: Canvas;
+  color: CanvasText;
+}
+
+button.compact {
+  padding: 7px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+button.text-button {
+  padding: 3px 0;
+  background: transparent;
+  color: CanvasText;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+button.danger {
+  opacity: 0.72;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 #status {
   min-height: 20px;
   padding-top: 8px;
@@ -98,8 +187,17 @@ button:hover {
   font-weight: 600;
 }
 
-.hint {
-  margin-top: 8px;
+.hint,
+.empty-state {
   font-size: 11px;
   line-height: 1.45;
+}
+
+.hint {
+  margin-top: 8px;
+}
+
+.empty-state {
+  padding: 14px 0;
+  text-align: center;
 }

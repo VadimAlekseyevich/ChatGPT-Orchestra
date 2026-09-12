@@ -14,30 +14,66 @@
     </header>
 
     <label class="toggle-row">
-      <span>Автопродолжение</span>
+      <span>Автоматическая обработка флагов</span>
       <input id="enabled" type="checkbox" />
     </label>
 
-    <label>
-      <span>Маркер в конце ответа</span>
-      <input id="marker" type="text" autocomplete="off" spellcheck="false" />
-    </label>
+    <section class="rules-section" aria-labelledby="rulesTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="rulesTitle">Флаги и действия</h2>
+          <p>Флаг должен быть последней непустой строкой ответа.</p>
+        </div>
+        <button id="addRule" class="secondary compact" type="button">Добавить</button>
+      </div>
 
-    <label>
-      <span>Что отправлять после DONE</span>
-      <textarea id="followUp" rows="3"></textarea>
-    </label>
+      <div id="rulesList"></div>
+    </section>
 
     <label>
       <span>Задержка после генерации, мс</span>
       <input id="delayMs" type="number" min="300" max="30000" step="100" />
     </label>
 
-    <button id="save" type="button">Сохранить</button>
+    <div class="actions">
+      <button id="save" type="button">Сохранить</button>
+      <button id="reset" class="secondary" type="button">Базовые правила</button>
+    </div>
+
     <div id="status" role="status" aria-live="polite"></div>
 
-    <p class="hint">После установки обнови вкладку ChatGPT. Расширение реагирует только на генерацию, которую оно реально увидело.</p>
+    <p class="hint">Для действия «Позвать пользователя» расширение остановит цикл, сфокусирует вкладку и покажет диалог. Для «Отправить промпт» текст будет автоматически отправлен в ChatGPT.</p>
   </main>
+
+  <template id="ruleTemplate">
+    <article class="rule-card">
+      <div class="rule-card-head">
+        <label class="inline-check">
+          <input data-field="enabled" type="checkbox" />
+          <span>Включён</span>
+        </label>
+        <button class="text-button danger" data-action="remove" type="button">Удалить</button>
+      </div>
+
+      <label>
+        <span>Флаг</span>
+        <input data-field="marker" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="DONE" />
+      </label>
+
+      <label>
+        <span>Действие</span>
+        <select data-field="action">
+          <option value="prompt">Отправить промпт</option>
+          <option value="notify">Позвать пользователя</option>
+        </select>
+      </label>
+
+      <label>
+        <span data-role="payloadLabel">Промпт</span>
+        <textarea data-field="prompt" rows="3" maxlength="4000"></textarea>
+      </label>
+    </article>
+  </template>
 
   <script src="popup.js"></script>
 </body>

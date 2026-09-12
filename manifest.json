@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT DONE Auto-Continue",
-  "version": "1.0.0",
-  "description": "Automatically sends a follow-up message when ChatGPT finishes generating and the response ends with DONE.",
+  "version": "1.1.0",
+  "description": "Handles configurable response flags in ChatGPT: continue automatically, retry after errors, or notify the user.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://chatgpt.com/*",
