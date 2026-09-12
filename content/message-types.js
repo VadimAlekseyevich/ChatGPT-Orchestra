@@ -20,6 +20,8 @@
     ORCHESTRATOR_GET_EVENTS: "orchestra/orchestrator-get-events",
     ORCHESTRATOR_REGISTER_ACTIVE_LEAD: "orchestra/orchestrator-register-active-lead",
     ORCHESTRATOR_CREATE_WORKERS: "orchestra/orchestrator-create-workers",
+    ORCHESTRATOR_BIND_PROTOCOL_CONTEXT: "orchestra/orchestrator-bind-protocol-context",
+    ORCHESTRATOR_CLEAR_PROTOCOL_CONTEXT: "orchestra/orchestrator-clear-protocol-context",
     ORCHESTRATOR_SEND_AGENT_PROMPT: "orchestra/orchestrator-send-agent-prompt",
     ORCHESTRATOR_STOP_AGENT: "orchestra/orchestrator-stop-agent"
   });
