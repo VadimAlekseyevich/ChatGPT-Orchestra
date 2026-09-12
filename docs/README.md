@@ -13,6 +13,8 @@
 - [`phase-5-smoke-test.md`](phase-5-smoke-test.md) — local Node + Edge acceptance checks для scheduler;
 - [`phase-6-git-task-isolation.md`](phase-6-git-task-isolation.md) — per-run branches, base snapshot, GitProvider и independent artifact validation;
 - [`phase-6-smoke-test.md`](phase-6-smoke-test.md) — local Node + Edge acceptance checks для Git isolation;
+- [`phase-7-review-loop.md`](phase-7-review-loop.md) — dynamic independent Reviewer role, structured acceptance checks и bounded rework loop;
+- [`phase-7-smoke-test.md`](phase-7-smoke-test.md) — local Node + Edge acceptance checks для independent review;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
