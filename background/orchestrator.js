@@ -109,6 +109,10 @@
 
     async startExecution(payload = {}) {
       if (!this.schedulerEngine) return { ok: false, reason: "scheduler_unavailable" };
+      const project = this.planningEngine?.getPublicState?.();
+      if (!project || project.status !== "READY") {
+        return { ok: false, reason: "project_not_ready_for_execution", status: project?.status || null };
+      }
       const maxWorkers = Math.max(1, Math.min(MAX_WORKERS, Number(payload.maxWorkers) || 3));
       const workers = await this.createWorkers(maxWorkers);
       if (!workers.ok) return workers;
