@@ -2,13 +2,18 @@
 
 importScripts(
   "../content/message-types.js",
+  "../protocol/orchestra-protocol.js",
   "tab-registry.js",
+  "event-store.js",
+  "event-bus.js",
   "orchestrator.js"
 );
 
 const root = globalThis.ChatGPTOrchestra;
 const registry = new root.TabRegistry();
-const orchestrator = new root.ServiceWorkerOrchestrator({ registry });
+const eventStore = new root.EventStore();
+const eventBus = new root.EventBus({ registry, store: eventStore });
+const orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus });
 let readyPromise = orchestrator.init();
 
 function withReady(callback) {

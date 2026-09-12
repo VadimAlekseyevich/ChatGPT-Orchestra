@@ -36,6 +36,15 @@
     return "CONNECTING";
   }
 
+  function normalizeProtocolContext(context = {}) {
+    const normalized = {};
+    for (const field of ["projectId", "taskId", "runId"]) {
+      const value = String(context?.[field] || "").trim();
+      if (value) normalized[field] = value;
+    }
+    return Object.keys(normalized).length ? normalized : null;
+  }
+
   class TabRegistry {
     constructor({
       storageArea = globalThis.chrome?.storage?.local,
@@ -69,19 +78,9 @@
       return this.snapshot();
     }
 
-    snapshot() {
-      return clone(this.state);
-    }
-
-    listAgents() {
-      return Object.values(this.state.agents).map((agent) => clone(agent));
-    }
-
-    getAgent(agentId) {
-      const agent = this.state.agents[agentId];
-      return agent ? clone(agent) : null;
-    }
-
+    snapshot() { return clone(this.state); }
+    listAgents() { return Object.values(this.state.agents).map((agent) => clone(agent)); }
+    getAgent(agentId) { const agent = this.state.agents[agentId]; return agent ? clone(agent) : null; }
     getAgentByTabId(tabId) {
       const numeric = Number(tabId);
       const agent = Object.values(this.state.agents).find((item) => item.tabId === numeric);
@@ -91,11 +90,8 @@
     async persist() {
       this.state.updatedAt = this.clock();
       if (!this.storageArea?.set) return this.snapshot();
-
       const payload = clone(this.state);
-      this.writeChain = this.writeChain
-        .catch(() => {})
-        .then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
+      this.writeChain = this.writeChain.catch(() => {}).then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
       await this.writeChain;
       return this.snapshot();
     }
@@ -115,6 +111,7 @@
         tabId: Number.isInteger(tabId) ? tabId : null,
         chatUrl: String(chatUrl || ""),
         status,
+        protocolContext: null,
         lastSeenAt: 0,
         createdAt: now,
         updatedAt: now,
@@ -127,7 +124,6 @@
     async bindAgent(agentId, { tabId, chatUrl, status = "CONNECTING" } = {}) {
       const agent = this.state.agents[agentId];
       if (!agent) return null;
-
       agent.tabId = Number.isInteger(tabId) ? tabId : agent.tabId;
       agent.chatUrl = String(chatUrl || agent.chatUrl || "");
       agent.status = status;
@@ -137,19 +133,29 @@
       return this.getAgent(agentId);
     }
 
+    async setProtocolContext(agentId, context) {
+      const agent = this.state.agents[agentId];
+      if (!agent) return null;
+      agent.protocolContext = normalizeProtocolContext(context);
+      agent.updatedAt = this.clock();
+      await this.persist();
+      return this.getAgent(agentId);
+    }
+
+    async clearProtocolContext(agentId) {
+      return this.setProtocolContext(agentId, null);
+    }
+
     async updateHeartbeat(tabId, payload = {}, chatUrl = "") {
       const existing = this.getAgentByTabId(tabId);
       if (!existing) return null;
-
       const agent = this.state.agents[existing.agentId];
       const now = this.clock();
       agent.status = deriveAgentStatus(payload);
       agent.chatUrl = String(chatUrl || payload.chatUrl || agent.chatUrl || "");
       agent.lastSeenAt = now;
       agent.updatedAt = now;
-      agent.lastError = agent.status === "ERROR"
-        ? String(payload.error || payload.availability || "chat_unavailable")
-        : null;
+      agent.lastError = agent.status === "ERROR" ? String(payload.error || payload.availability || "chat_unavailable") : null;
       agent.chatState = {
         generating: Boolean(payload.generating),
         availability: payload.availability || "unknown",
@@ -164,7 +170,6 @@
     async markOfflineByTabId(tabId, reason = "tab_unavailable") {
       const existing = this.getAgentByTabId(tabId);
       if (!existing) return null;
-
       const agent = this.state.agents[existing.agentId];
       agent.status = "OFFLINE";
       agent.lastError = reason;
@@ -177,11 +182,9 @@
     async updateNavigation(tabId, url) {
       const existing = this.getAgentByTabId(tabId);
       if (!existing) return null;
-
       const agent = this.state.agents[existing.agentId];
       agent.chatUrl = String(url || agent.chatUrl || "");
       agent.updatedAt = this.clock();
-
       if (!isChatGPTUrl(url)) {
         agent.status = "ERROR";
         agent.lastError = "navigated_outside_chatgpt";
@@ -189,7 +192,6 @@
         agent.status = "CONNECTING";
         agent.lastError = null;
       }
-
       await this.persist();
       return this.getAgent(existing.agentId);
     }
@@ -213,8 +215,9 @@
   root.TAB_REGISTRY_STORAGE_KEY = STORAGE_KEY;
   root.isChatGPTUrl = isChatGPTUrl;
   root.deriveAgentStatus = deriveAgentStatus;
+  root.normalizeProtocolContext = normalizeProtocolContext;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { TabRegistry, STORAGE_KEY, isChatGPTUrl, deriveAgentStatus };
+    module.exports = { TabRegistry, STORAGE_KEY, isChatGPTUrl, deriveAgentStatus, normalizeProtocolContext };
   }
 })();
