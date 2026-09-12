@@ -15,6 +15,14 @@ test("detects nested file-scope overlap conservatively", () => {
   assert.equal(Policy.fileScopeOverlap(left, other), false);
 });
 
+test("broad wildcard scope conflicts with every scoped task", () => {
+  const broad = task("ALL", ["**/*"]);
+  const narrow = task("N", ["src/payments/**"]);
+  assert.deepEqual(Policy.scopePrefixes(broad), [Policy.GLOBAL_SCOPE]);
+  assert.equal(Policy.fileScopeOverlap(broad, narrow), true);
+  assert.equal(Policy.conflictScore(broad, narrow).mutuallyExclusive, true);
+});
+
 test("explicit and inferred shared resources are mutually exclusive", () => {
   const migration = task("M1", ["db/migrations/001.sql"], { title: "Database schema migration" });
   const schema = task("M2", ["db/schema/**"], { objective: "Update schema contract" });
