@@ -137,6 +137,13 @@
             messageCount: snapshot.messageCount,
             stableFor: event.stableFor
           });
+        } else if (event.type === "response_changed") {
+          this.logger?.debug?.("response_changed", {
+            reason,
+            fingerprint: snapshot.fingerprint,
+            messageCount: snapshot.messageCount,
+            detectorState: this.machine.state
+          });
         } else if (event.type === "generation_started" || event.type === "generation_stopped") {
           this.logger?.debug?.(event.type, { reason, fingerprint: snapshot.fingerprint });
         }
