@@ -97,6 +97,7 @@
 
   function parseCompact(body) {
     const object = {};
+    const seen = new Set();
     const parts = body.split("|").filter(Boolean);
     for (const part of parts) {
       const equals = part.indexOf("=");
@@ -104,6 +105,8 @@
       const key = part.slice(0, equals).trim();
       let value = part.slice(equals + 1).trim();
       if (!key) return { ok: false, reason: "invalid_compact_field" };
+      if (seen.has(key)) return { ok: false, reason: "duplicate_compact_field", field: key };
+      seen.add(key);
       try { value = decodeURIComponent(value); } catch (_) {}
       object[key] = value;
     }
