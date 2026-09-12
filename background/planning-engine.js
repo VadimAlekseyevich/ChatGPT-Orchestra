@@ -4,6 +4,7 @@
   const NEXT = { DISCOVERY: "PLAN_V1", PLAN_V1: "CRITIQUE", CRITIQUE: "PLAN_V2", PLAN_V2: "DECOMPOSE", DECOMPOSE: "DAG_CRITIC" };
 
   function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+  function hasItems(value) { return Array.isArray(value) && value.length > 0; }
 
   class PlanningEngine {
     constructor({ projectStore, registry, eventBus, sendPrompt, idFactory = null } = {}) {
@@ -78,6 +79,24 @@
 
     artifactCheck(stage, artifact) {
       if (!isObject(artifact)) return "stage_artifact_not_object";
+      if (stage === "DISCOVERY") {
+        const access = artifact.repositoryAccess;
+        if (!isObject(access) || !["ok", "partial", "unavailable"].includes(String(access.status || ""))) return "repository_access_status_missing";
+        if (access.status === "unavailable") return "repository_access_unavailable";
+        if (!hasItems(access.inspectedPaths)) return "repository_inspection_evidence_missing";
+        if (!isObject(artifact.commands)) return "repository_commands_missing";
+      }
+      if (stage === "PLAN_V1") {
+        if (!hasItems(artifact.milestones)) return "plan_milestones_missing";
+        if (!String(artifact.completionDefinition || "").trim()) return "completion_definition_missing";
+      }
+      if (stage === "CRITIQUE" && !Array.isArray(artifact.findings)) return "critique_findings_missing";
+      if (stage === "PLAN_V2") {
+        if (!hasItems(artifact.milestones)) return "revised_plan_milestones_missing";
+        if (!String(artifact.completionDefinition || "").trim()) return "completion_definition_missing";
+        const action = String(artifact.agentsMdProposal?.action || "");
+        if (!["preserve_existing", "propose_new", "no_change"].includes(action)) return "agents_md_proposal_invalid";
+      }
       if ((stage === "DECOMPOSE" || stage === "DAG_CRITIC") && !Array.isArray(artifact.tasks)) return "task_graph_tasks_missing";
       return null;
     }
