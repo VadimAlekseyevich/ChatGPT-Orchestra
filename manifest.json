@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT DONE Auto-Continue",
-  "version": "1.2.0",
-  "description": "Handles configurable response flags in ChatGPT: continue automatically, retry after errors, or notify the user.",
+  "name": "ChatGPT Orchestra",
+  "version": "2.0.0",
+  "version_name": "2.0.0-alpha.1",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Current alpha preserves the legacy flag-driven automation foundation while the orchestration core is built.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -15,7 +16,7 @@
     "128": "icon.png"
   },
   "action": {
-    "default_title": "ChatGPT DONE Auto-Continue",
+    "default_title": "ChatGPT Orchestra",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icon.png",
