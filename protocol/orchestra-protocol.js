@@ -51,6 +51,11 @@
   function normalizeEnvelope(input) {
     if (!isPlainObject(input)) return null;
 
+    const hasPayload = input.payload !== undefined && input.payload !== null;
+    const normalizedPayload = hasPayload
+      ? (isPlainObject(input.payload) ? { ...input.payload } : input.payload)
+      : {};
+
     const normalized = {
       v: Number(input.v),
       event: String(input.event || "").trim().toUpperCase(),
@@ -60,12 +65,14 @@
       agentId: input.agentId ?? input.agent,
       eventId: input.eventId,
       sequence: Number(input.sequence),
-      payload: isPlainObject(input.payload) ? input.payload : {}
+      payload: normalizedPayload
     };
 
-    for (const key of ["commit", "branch", "summary", "reason", "message"]) {
-      if (input[key] != null && normalized.payload[key] == null) {
-        normalized.payload[key] = input[key];
+    if (isPlainObject(normalized.payload)) {
+      for (const key of ["commit", "branch", "summary", "reason", "message"]) {
+        if (input[key] != null && normalized.payload[key] == null) {
+          normalized.payload[key] = input[key];
+        }
       }
     }
 
