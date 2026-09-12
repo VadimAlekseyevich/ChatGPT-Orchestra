@@ -14,6 +14,7 @@
       logger = root.Logger,
       quietMs = 700,
       pollMs = 500,
+      hydrationGraceMs = 2000,
       clock = () => Date.now()
     } = {}) {
       this.documentRef = documentRef;
@@ -23,6 +24,7 @@
       this.logger = logger;
       this.clock = clock;
       this.pollMs = Math.max(200, Number(pollMs) || 500);
+      this.hydrationGraceMs = Math.max(0, Number(hydrationGraceMs) || 0);
       this.machine = new GenerationStateMachine({ quietMs });
       this.listeners = new Set();
       this.observer = null;
@@ -30,6 +32,7 @@
       this.framePending = false;
       this.started = false;
       this.lastPathname = null;
+      this.fingerprintFallbackNotBefore = 0;
     }
 
     setQuietMs(quietMs) {
@@ -58,6 +61,22 @@
       }
     }
 
+    establishBaseline(snapshot, busy, now, reason) {
+      this.machine.reset({
+        busy,
+        fingerprint: snapshot.fingerprint,
+        now
+      });
+      this.fingerprintFallbackNotBefore = now + this.hydrationGraceMs;
+      this.logger?.debug?.("generation_baseline_established", {
+        reason,
+        pathname: snapshot.pathname,
+        busy,
+        fingerprint: snapshot.fingerprint,
+        fallbackNotBefore: this.fingerprintFallbackNotBefore
+      });
+    }
+
     inspect(reason = "poll") {
       if (!this.started) return;
 
@@ -67,18 +86,17 @@
 
       if (this.lastPathname === null) {
         this.lastPathname = snapshot.pathname;
-      } else if (snapshot.pathname !== this.lastPathname) {
+        this.establishBaseline(snapshot, busy, now, "startup");
+        if (busy) {
+          this.emit({ type: "generation_started", reason: "busy_at_start" }, snapshot);
+        }
+        return;
+      }
+
+      if (snapshot.pathname !== this.lastPathname) {
         const previousPathname = this.lastPathname;
         this.lastPathname = snapshot.pathname;
-
-        // ChatGPT is an SPA. Navigating to another existing conversation changes
-        // the rendered response without creating a new generation. Treat that
-        // response as a new baseline instead of falsely emitting completion.
-        this.machine.reset({
-          busy,
-          fingerprint: snapshot.fingerprint,
-          now
-        });
+        this.establishBaseline(snapshot, busy, now, "navigation");
         this.logger?.debug?.("conversation_navigation_baseline", {
           reason,
           from: previousPathname,
@@ -87,6 +105,21 @@
           fingerprint: snapshot.fingerprint
         });
         this.emit({ type: "conversation_changed" }, snapshot);
+        return;
+      }
+
+      // During startup/navigation hydration, idle text can appear late even when
+      // no new answer was generated. Refresh the baseline instead of treating
+      // those DOM changes as a completion candidate. An explicit busy signal is
+      // trusted immediately and bypasses this grace period.
+      if (
+        !busy
+        && now < this.fingerprintFallbackNotBefore
+        && this.machine.state !== "GENERATING"
+      ) {
+        if (snapshot.fingerprint !== this.machine.lastFingerprint) {
+          this.establishBaseline(snapshot, false, now, "hydration_update");
+        }
         return;
       }
 
@@ -128,9 +161,6 @@
     start() {
       if (this.started || !this.documentRef?.documentElement) return;
       this.started = true;
-
-      // Establish a baseline immediately. An already completed response must not
-      // be treated as a fresh completion merely because the extension loaded.
       this.inspect("startup");
 
       if (typeof MutationObserver === "function") {
@@ -147,7 +177,8 @@
       this.pollHandle = setInterval(() => this.inspect("poll"), this.pollMs);
       this.logger?.info?.("generation_detector_started", {
         pollMs: this.pollMs,
-        quietMs: this.machine.quietMs
+        quietMs: this.machine.quietMs,
+        hydrationGraceMs: this.hydrationGraceMs
       });
     }
 
@@ -159,6 +190,7 @@
       this.pollHandle = null;
       this.framePending = false;
       this.lastPathname = null;
+      this.fingerprintFallbackNotBefore = 0;
     }
   }
 
