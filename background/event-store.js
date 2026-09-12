@@ -13,6 +13,28 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function canonicalize(value) {
+    if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  function eventSignature(event) {
+    return canonicalize({
+      v: event.v,
+      event: event.event,
+      projectId: event.projectId,
+      taskId: event.taskId,
+      runId: event.runId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+      sequence: event.sequence,
+      payload: event.payload || {}
+    });
+  }
+
   function defaultState() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -38,13 +60,7 @@
   }
 
   class EventStore {
-    constructor({
-      storageArea = globalThis.chrome?.storage?.local,
-      clock = () => Date.now(),
-      maxEvents = DEFAULT_MAX_EVENTS,
-      maxRejections = DEFAULT_MAX_REJECTIONS,
-      maxProcessed = DEFAULT_MAX_PROCESSED
-    } = {}) {
+    constructor({ storageArea = globalThis.chrome?.storage?.local, clock = () => Date.now(), maxEvents = DEFAULT_MAX_EVENTS, maxRejections = DEFAULT_MAX_REJECTIONS, maxProcessed = DEFAULT_MAX_PROCESSED } = {}) {
       this.storageArea = storageArea;
       this.clock = clock;
       this.maxEvents = Math.max(100, Number(maxEvents) || DEFAULT_MAX_EVENTS);
@@ -56,10 +72,7 @@
     }
 
     async load() {
-      if (!this.storageArea?.get) {
-        this.loaded = true;
-        return this.snapshot();
-      }
+      if (!this.storageArea?.get) { this.loaded = true; return this.snapshot(); }
       const stored = await this.storageArea.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
       if (candidate?.schemaVersion === SCHEMA_VERSION) {
@@ -77,10 +90,7 @@
       return this.snapshot();
     }
 
-    snapshot() {
-      return clone(this.state);
-    }
-
+    snapshot() { return clone(this.state); }
     summary() {
       return {
         schemaVersion: this.state.schemaVersion,
@@ -96,9 +106,7 @@
       this.state.updatedAt = this.clock();
       if (!this.storageArea?.set) return this.snapshot();
       const payload = clone(this.state);
-      this.writeChain = this.writeChain
-        .catch(() => {})
-        .then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
+      this.writeChain = this.writeChain.catch(() => {}).then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
       await this.writeChain;
       return this.snapshot();
     }
@@ -122,6 +130,7 @@
 
       this.state.processedEvents[event.eventId] = {
         ...identity,
+        signature: eventSignature(event),
         cursor,
         acceptedAt: now
       };
@@ -132,17 +141,8 @@
       }
 
       this.state.sequences[runKey] = event.sequence;
-      this.state.events.push({
-        cursor,
-        receivedAt: now,
-        route,
-        tabId: Number.isInteger(tabId) ? tabId : null,
-        event: clone(event)
-      });
-      if (this.state.events.length > this.maxEvents) {
-        this.state.events.splice(0, this.state.events.length - this.maxEvents);
-      }
-
+      this.state.events.push({ cursor, receivedAt: now, route, tabId: Number.isInteger(tabId) ? tabId : null, event: clone(event) });
+      if (this.state.events.length > this.maxEvents) this.state.events.splice(0, this.state.events.length - this.maxEvents);
       await this.persist();
       return { cursor, runKey };
     }
@@ -156,28 +156,20 @@
         eventId: event?.eventId || null,
         details: details && typeof details === "object" ? clone(details) : null
       });
-      if (this.state.rejections.length > this.maxRejections) {
-        this.state.rejections.splice(0, this.state.rejections.length - this.maxRejections);
-      }
+      if (this.state.rejections.length > this.maxRejections) this.state.rejections.splice(0, this.state.rejections.length - this.maxRejections);
       await this.persist();
       return { ok: false, reason };
     }
 
-    recentEvents(limit = 50) {
-      const count = Math.max(1, Math.min(200, Number(limit) || 50));
-      return clone(this.state.events.slice(-count));
-    }
-
-    recentRejections(limit = 25) {
-      const count = Math.max(1, Math.min(100, Number(limit) || 25));
-      return clone(this.state.rejections.slice(-count));
-    }
+    recentEvents(limit = 50) { const count = Math.max(1, Math.min(200, Number(limit) || 50)); return clone(this.state.events.slice(-count)); }
+    recentRejections(limit = 25) { const count = Math.max(1, Math.min(100, Number(limit) || 25)); return clone(this.state.rejections.slice(-count)); }
   }
 
   root.EventStore = EventStore;
   root.EVENT_STORE_STORAGE_KEY = STORAGE_KEY;
+  root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity };
+    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize };
   }
 })();
