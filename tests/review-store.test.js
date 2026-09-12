@@ -26,17 +26,22 @@ test("persists review queue and forbids self-review assignment", async () => {
   assert.equal(restored.summary().settings.maxReviewIterations, 4);
 });
 
-test("requeue releases reviewer identity without losing review provenance", async () => {
-  const store = new ReviewStore({ storageArea: fakeStorage(), idFactory: () => "REV1" });
+test("lost reviewer run is abandoned and retried with a fresh protocol identity", async () => {
+  let id = 0;
+  const store = new ReviewStore({ storageArea: fakeStorage(), idFactory: () => `REV${++id}` });
   await store.load();
   await store.ensureProject("P1");
   await store.enqueue({ taskId: "T1", workerRunId: "R1", authorAgentId: "A1", iteration: 2, packetSeed: { workerReport: { summary: "done" } } });
   await store.assign("REV1", "A2");
-  const requeued = await store.requeue("REV1", "tab_closed");
-  assert.equal(requeued.status, "PENDING");
-  assert.equal(requeued.reviewerAgentId, null);
-  assert.equal(requeued.authorAgentId, "A1");
-  assert.equal(requeued.workerRunId, "R1");
-  assert.equal(requeued.iteration, 2);
-  assert.equal(requeued.packetSeed.workerReport.summary, "done");
+  const replacement = await store.requeue("REV1", "tab_closed");
+
+  assert.equal(store.get("REV1").status, "ABANDONED");
+  assert.equal(replacement.reviewId, "REV2");
+  assert.equal(replacement.retryOf, "REV1");
+  assert.equal(replacement.status, "PENDING");
+  assert.equal(replacement.reviewerAgentId, null);
+  assert.equal(replacement.authorAgentId, "A1");
+  assert.equal(replacement.workerRunId, "R1");
+  assert.equal(replacement.iteration, 2);
+  assert.equal(replacement.packetSeed.workerReport.summary, "done");
 });
