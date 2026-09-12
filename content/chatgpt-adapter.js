@@ -71,6 +71,7 @@
         }
 
         let planningArtifact = null;
+        let submittedEvent = parsed.event;
         if (String(parsed.event.taskId || "").startsWith("planning:") && parsed.event.event === "DONE") {
           const artifactResult = root.PlanningArtifactParser?.parsePlanningArtifact(snapshot.text);
           if (!artifactResult?.ok) {
@@ -82,18 +83,25 @@
             return;
           }
           planningArtifact = artifactResult.artifact;
+          submittedEvent = {
+            ...parsed.event,
+            payload: {
+              ...(parsed.event.payload || {}),
+              artifactSignature: artifactResult.signature
+            }
+          };
         }
 
         const response = await this.messenger.request(root.MESSAGE_TYPES.ORCHESTRA_EVENT, {
-          event: parsed.event,
+          event: submittedEvent,
           responseFingerprint: snapshot.fingerprint,
           pathname: snapshot.pathname,
           messageCount: snapshot.messageCount,
           planningArtifact
         });
         this.logger?.info?.("orchestra_protocol_event_submitted", {
-          eventId: parsed.event.eventId,
-          event: parsed.event.event,
+          eventId: submittedEvent.eventId,
+          event: submittedEvent.event,
           accepted: Boolean(response?.accepted),
           duplicate: Boolean(response?.duplicate),
           reason: response?.reason || null
