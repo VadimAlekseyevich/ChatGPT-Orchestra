@@ -31,4 +31,5 @@ Date: YYYY-MM-DD
 ## Index
 
 - [`0001-versioning-policy.md`](0001-versioning-policy.md) — versioning policy для перехода от legacy baseline к Orchestra 2.x;
-- [`0002-orchestra-protocol-v1.md`](0002-orchestra-protocol-v1.md) — versioned `@@ORCH` envelope, persisted event identity и idempotency semantics.
+- [`0002-orchestra-protocol-v1.md`](0002-orchestra-protocol-v1.md) — versioned `@@ORCH` envelope, persisted event identity и idempotency semantics;
+- [`0003-persisted-planning-pipeline.md`](0003-persisted-planning-pipeline.md) — staged persisted planning, separate large artifacts and deterministic DAG readiness gate.

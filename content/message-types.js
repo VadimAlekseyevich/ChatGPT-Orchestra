@@ -18,6 +18,8 @@
 
     ORCHESTRATOR_GET_STATE: "orchestra/orchestrator-get-state",
     ORCHESTRATOR_GET_EVENTS: "orchestra/orchestrator-get-events",
+    ORCHESTRATOR_GET_PROJECT: "orchestra/orchestrator-get-project",
+    ORCHESTRATOR_START_PROJECT: "orchestra/orchestrator-start-project",
     ORCHESTRATOR_REGISTER_ACTIVE_LEAD: "orchestra/orchestrator-register-active-lead",
     ORCHESTRATOR_CREATE_WORKERS: "orchestra/orchestrator-create-workers",
     ORCHESTRATOR_BIND_PROTOCOL_CONTEXT: "orchestra/orchestrator-bind-protocol-context",

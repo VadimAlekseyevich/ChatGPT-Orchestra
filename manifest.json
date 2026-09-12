@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.4",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 4 adds Orchestra Protocol v1, persisted event routing and idempotency.",
+  "version_name": "2.0.0-alpha.5",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 5 adds persisted project bootstrap, planning pipeline and deterministic DAG validation.",
   "permissions": ["storage", "tabs"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   "background": {
@@ -23,6 +23,7 @@
       "content/logger.js",
       "content/message-types.js",
       "protocol/orchestra-protocol.js",
+      "content/planning-artifact-parser.js",
       "content/generation-state.js",
       "content/protocol-parser.js",
       "content/assistant-message-reader.js",
