@@ -64,6 +64,7 @@
         currentRunId: project.currentRunId || null,
         taskCount: project.taskGraph?.tasks?.length || 0,
         validation: project.validation || null,
+        execution: project.execution || null,
         updatedAt: project.updatedAt
       };
     }
@@ -84,7 +85,7 @@
       if (normalizedGoal.length > 12000) return { ok: false, reason: "goal_too_long" };
       if (!repository) return { ok: false, reason: "invalid_repository_url" };
       const active = this.getActiveProject();
-      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER"].includes(active.status)) {
+      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER", "COMPLETED_UNVERIFIED"].includes(active.status)) {
         return { ok: false, reason: "active_project_in_progress", projectId: active.projectId };
       }
 
@@ -102,6 +103,7 @@
         taskGraph: null,
         validation: null,
         currentRunId: null,
+        execution: null,
         createdAt: now,
         updatedAt: now
       };
@@ -130,9 +132,7 @@
         entry.stage === stage && entry.runId === runId && entry.status === "completed"
       ));
       project.artifacts[stage] = clone(artifact);
-      if (!alreadyCompleted) {
-        project.stageHistory.push({ stage, runId, status: "completed", at: this.clock() });
-      }
+      if (!alreadyCompleted) project.stageHistory.push({ stage, runId, status: "completed", at: this.clock() });
       project.updatedAt = this.clock();
       await this.persist();
       return this.getProject(projectId);
@@ -146,7 +146,25 @@
       project.status = "READY";
       project.stage = "READY";
       project.currentRunId = null;
+      project.execution = null;
       project.updatedAt = this.clock();
+      await this.persist();
+      return this.getProject(projectId);
+    }
+
+    async setExecutionStatus(projectId, status, details = null) {
+      const project = this.state.projects[projectId];
+      if (!project) return null;
+      const now = this.clock();
+      project.status = String(status || "RUNNING");
+      project.stage = project.status === "COMPLETED_UNVERIFIED" ? "EXECUTION_COMPLETE" : "EXECUTION";
+      project.currentRunId = null;
+      project.execution = {
+        status: project.status,
+        details: details && typeof details === "object" ? clone(details) : null,
+        updatedAt: now
+      };
+      project.updatedAt = now;
       await this.persist();
       return this.getProject(projectId);
     }
