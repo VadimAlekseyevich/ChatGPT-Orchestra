@@ -93,18 +93,17 @@
       return { ok: true, review: this.summary() };
     }
 
-    async enqueue({ taskId, workerRunId, authorAgentId, iteration, packetSeed = null } = {}) {
-      const existing = this.list().find((review) => review.workerRunId === workerRunId && ["PENDING", "ASSIGNED", "REVIEWING"].includes(review.status));
-      if (existing) return { ok: true, duplicate: true, review: existing };
+    makeReview({ taskId, workerRunId, authorAgentId, iteration, packetSeed = null, retryOf = null }) {
       const reviewId = this.idFactory();
       const now = this.clock();
-      const review = {
+      return {
         reviewId,
         taskId: String(taskId || ""),
         workerRunId: String(workerRunId || ""),
         authorAgentId: String(authorAgentId || ""),
         reviewerAgentId: null,
         iteration: Math.max(1, Number(iteration) || 1),
+        retryOf: retryOf || null,
         status: "PENDING",
         packetSeed: packetSeed ? clone(packetSeed) : null,
         assignedAt: null,
@@ -115,10 +114,16 @@
         createdAt: now,
         updatedAt: now
       };
-      this.state.reviews[reviewId] = review;
-      this.state.order.push(reviewId);
+    }
+
+    async enqueue({ taskId, workerRunId, authorAgentId, iteration, packetSeed = null } = {}) {
+      const existing = this.list().find((review) => review.workerRunId === workerRunId && ["PENDING", "ASSIGNED", "REVIEWING"].includes(review.status));
+      if (existing) return { ok: true, duplicate: true, review: existing };
+      const review = this.makeReview({ taskId, workerRunId, authorAgentId, iteration, packetSeed });
+      this.state.reviews[review.reviewId] = review;
+      this.state.order.push(review.reviewId);
       await this.persist();
-      return { ok: true, review: this.get(reviewId) };
+      return { ok: true, review: this.get(review.reviewId) };
     }
 
     async assign(reviewId, reviewerAgentId) {
@@ -149,14 +154,24 @@
     async requeue(reviewId, reason) {
       const review = this.state.reviews[reviewId];
       if (!review) return null;
-      review.status = "PENDING";
-      review.reviewerAgentId = null;
-      review.assignedAt = null;
-      review.startedAt = null;
+      const now = this.clock();
+      review.status = "ABANDONED";
       review.lastError = String(reason || "reviewer_unavailable");
-      review.updatedAt = this.clock();
+      review.completedAt = now;
+      review.updatedAt = now;
+
+      const replacement = this.makeReview({
+        taskId: review.taskId,
+        workerRunId: review.workerRunId,
+        authorAgentId: review.authorAgentId,
+        iteration: review.iteration,
+        packetSeed: review.packetSeed,
+        retryOf: review.reviewId
+      });
+      this.state.reviews[replacement.reviewId] = replacement;
+      this.state.order.push(replacement.reviewId);
       await this.persist();
-      return this.get(reviewId);
+      return this.get(replacement.reviewId);
     }
 
     async complete(reviewId, eventType, payload) {
