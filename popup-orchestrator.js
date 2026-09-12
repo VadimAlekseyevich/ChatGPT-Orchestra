@@ -71,7 +71,7 @@
     const done = Number(counts.DONE_UNVERIFIED) || 0;
     const needsUser = Number(counts.NEEDS_USER) || 0;
     ui.executionStatus.textContent = `${scheduler.status} · ${done}/${scheduler.taskCount} done · ${scheduler.activeRuns} active${needsUser ? ` · ${needsUser} needs user` : ""}`;
-    ui.startExecution.disabled = scheduler.status !== "IDLE" && scheduler.status !== "NEEDS_USER";
+    ui.startExecution.disabled = true;
   }
 
   function renderState(state) {
