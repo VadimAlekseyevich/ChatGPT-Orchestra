@@ -1,0 +1,7 @@
+{
+  "legacyDone": "Работа завершена.\n\nDONE\n",
+  "legacyFail": "Нужно решение пользователя.\nFAIL",
+  "punctuatedDone": "DONE.",
+  "lowercaseDone": "done",
+  "orchestraCandidate": "готово\n@@ORCH {\"v\":1,\"event\":\"DONE\"}"
+}
