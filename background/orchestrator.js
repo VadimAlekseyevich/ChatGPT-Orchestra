@@ -10,9 +10,16 @@
   }
 
   class ServiceWorkerOrchestrator {
-    constructor({ chromeApi = globalThis.chrome, registry, logger = console, workerUrl = CHATGPT_HOME } = {}) {
+    constructor({
+      chromeApi = globalThis.chrome,
+      registry,
+      eventBus = null,
+      logger = console,
+      workerUrl = CHATGPT_HOME
+    } = {}) {
       this.chrome = chromeApi;
       this.registry = registry;
+      this.eventBus = eventBus;
       this.logger = logger;
       this.workerUrl = workerUrl;
       this.initialized = false;
@@ -21,6 +28,7 @@
     async init() {
       if (this.initialized) return this.getPublicState();
       await this.registry.load();
+      if (this.eventBus) await this.eventBus.load();
       await this.reconcileRegisteredTabs();
       this.initialized = true;
       return this.getPublicState();
@@ -34,7 +42,8 @@
         runtimeStatus: snapshot.runtimeStatus,
         updatedAt: snapshot.updatedAt,
         lead: agents.find((agent) => agent.role === "lead") || null,
-        workers: agents.filter((agent) => agent.role === "worker")
+        workers: agents.filter((agent) => agent.role === "worker"),
+        protocol: this.eventBus?.summary?.() || null
       };
     }
 
@@ -207,20 +216,41 @@
       return { ok: true, agent: updated };
     }
 
+    async handleProtocolEvent(message, sender) {
+      if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
+      return this.eventBus.handleEvent(message?.payload?.event, sender);
+    }
+
+    async handleProtocolError(message, sender) {
+      if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
+      return this.eventBus.handleProtocolError(message?.payload || {}, sender);
+    }
+
     async handleRuntimeMessage(message, sender) {
       const type = message?.type;
       const payload = message?.payload || {};
+
+      if (type === root.MESSAGE_TYPES.ORCHESTRA_EVENT) {
+        return this.handleProtocolEvent(message, sender);
+      }
+      if (type === root.MESSAGE_TYPES.PROTOCOL_ERROR) {
+        return this.handleProtocolError(message, sender);
+      }
+
       const contentTypes = new Set([
         root.MESSAGE_TYPES.CONTENT_READY,
         root.MESSAGE_TYPES.CONTENT_HEARTBEAT,
         root.MESSAGE_TYPES.CHAT_STATE,
         root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
       ]);
-
       if (contentTypes.has(type)) return this.handleContentMessage(message, sender);
+
       if (sender?.tab) return { ok: false, reason: "orchestrator_command_forbidden_from_tab" };
 
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_EVENTS) {
+        return { ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) };
+      }
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD) return this.registerActiveLead();
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS) return this.createWorkers(payload.count);
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_SEND_AGENT_PROMPT) return this.sendPromptToAgent(payload.agentId, payload.prompt);
