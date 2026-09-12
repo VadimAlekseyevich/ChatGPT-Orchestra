@@ -1,0 +1,13 @@
+{
+  "name": "chatgpt-orchestra",
+  "version": "2.0.0-alpha.2",
+  "private": true,
+  "description": "Development and deterministic-core tests for ChatGPT Orchestra.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

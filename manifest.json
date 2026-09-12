@@ -2,37 +2,33 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.1",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Current alpha preserves the legacy flag-driven automation foundation while the orchestration core is built.",
+  "version_name": "2.0.0-alpha.2",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 2 introduces the deterministic ChatGPT adapter core while preserving legacy flag automation.",
   "permissions": ["storage"],
-  "host_permissions": [
-    "https://chatgpt.com/*",
-    "https://chat.openai.com/*"
-  ],
-  "icons": {
-    "16": "icon.png",
-    "32": "icon.png",
-    "48": "icon.png",
-    "128": "icon.png"
-  },
+  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+  "icons": {"16":"icon.png","32":"icon.png","48":"icon.png","128":"icon.png"},
   "action": {
     "default_title": "ChatGPT Orchestra",
     "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icon.png",
-      "32": "icon.png",
-      "48": "icon.png",
-      "128": "icon.png"
-    }
+    "default_icon": {"16":"icon.png","32":"icon.png","48":"icon.png","128":"icon.png"}
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
-      ],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  "content_scripts": [{
+    "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+    "js": [
+      "content/selectors.js",
+      "content/utils.js",
+      "content/logger.js",
+      "content/message-types.js",
+      "content/generation-state.js",
+      "content/protocol-parser.js",
+      "content/assistant-message-reader.js",
+      "content/composer-adapter.js",
+      "content/generation-detector.js",
+      "content/runtime-messenger.js",
+      "content/chatgpt-adapter.js",
+      "content/legacy-controller.js",
+      "content.js"
+    ],
+    "run_at": "document_idle"
+  }]
 }

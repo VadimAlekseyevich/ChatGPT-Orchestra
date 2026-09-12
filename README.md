@@ -5,7 +5,7 @@
 Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 [![Platform](https://img.shields.io/badge/platform-Microsoft%20Edge-0A7EA4?style=for-the-badge)](#требования)
-[![Version](https://img.shields.io/badge/version-2.0.0--alpha.1-orange?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0--alpha.2-orange?style=for-the-badge)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/VadimAlekseyevich/ChatGPT-Orchestra?style=for-the-badge&label=license)](LICENSE)
 
 [Roadmap](ROADMAP.md) ·
@@ -41,28 +41,30 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 ## Текущий статус
 
-Проект находится в начале новой архитектурной линии **`2.0.0-alpha.1`**.
+Текущая prerelease-версия — **`2.0.0-alpha.2`**.
 
-Сейчас репозиторий содержит рабочий legacy foundation: single-tab механизм, который наблюдает завершение генерации ChatGPT, распознаёт служебные флаги и выполняет привязанные действия.
+Phase 1 выделила ChatGPT DOM automation в отдельный adapter layer. Legacy `DONE/FAIL/ERROR` runner по-прежнему является compatibility foundation, но теперь работает поверх детерминированных компонентов вместо монолитного `content.js`.
 
-Это **не конечный продукт Orchestra** и пока не multi-agent orchestrator. Legacy-механизм сохраняется специально как проверенный baseline, поверх которого будут строиться adapter layer, service-worker orchestrator, tab registry, event protocol, scheduler и остальные части системы.
+Это **ещё не multi-agent orchestrator**: service worker, tab registry, event bus, scheduler, Git isolation и recovery относятся к следующим фазам.
 
 | Область | Статус |
 |---|---|
-| Legacy `DONE/FAIL/ERROR` runner | Реализован |
+| Legacy `DONE/FAIL/ERROR` runner | Реализован поверх adapter layer |
 | Пользовательские флаги | Реализованы |
 | Автоматическая отправка follow-up | Реализована |
 | Уведомление пользователя | Реализовано |
-| Duplicate-response guard внутри вкладки | Реализован |
-| ChatGPT adapter layer | Следующий этап |
-| Service Worker Orchestrator | Запланирован |
-| Multi-tab agent registry | Запланирован |
-| Orchestra Protocol | Запланирован |
-| Planner/Critic/DAG | Запланирован |
-| Parallel workers | Запланированы |
-| Git isolation/review/integration | Запланированы |
-| Pause/Resume + crash recovery | Запланированы |
-| CI и automated tests | Запланированы |
+| ChatGPT adapter layer | Реализован — Phase 1 |
+| Deterministic generation state | Реализован — Phase 1 |
+| Missed-busy completion fallback | Реализован — Phase 1 |
+| SPA stale-response baseline | Реализован — Phase 1 |
+| Core unit tests | Добавлены — Phase 1 |
+| Service Worker Orchestrator | Следующий этап — Phase 2 |
+| Multi-tab agent registry | Phase 2 |
+| Orchestra Protocol | Phase 3 |
+| Planner/Critic/DAG | Phase 4 |
+| Parallel workers | Phase 5 |
+| Git isolation/review/integration | Phase 6–8 |
+| Pause/Resume + crash recovery | Phase 9 |
 
 ---
 
@@ -70,18 +72,28 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 Текущая реализация умеет:
 
-- обнаруживать начало и окончание наблюдаемой генерации ChatGPT;
-- читать последнюю непустую строку ответа;
-- сопоставлять её с включёнными правилами;
+- обнаруживать начало и окончание генерации ChatGPT;
+- читать последний assistant response;
+- сопоставлять последнюю непустую строку с legacy rules;
 - автоматически отправлять follow-up prompt;
 - уведомлять пользователя для блокирующего состояния;
 - поддерживать базовые `DONE`, `FAIL`, `ERROR` и пользовательские флаги;
-- защищаться от повторной обработки уже обработанного ответа внутри текущей вкладки;
 - не перезаписывать текст, который пользователь уже ввёл в composer;
 - хранить настройки через `chrome.storage.local`;
-- применять изменения настроек к открытым вкладкам без перезагрузки.
+- применять изменения настроек без перезагрузки вкладки.
 
-Эти возможности будут сохранены как compatibility mode во время перехода к Orchestra Protocol.
+### Что изменилось в alpha.2
+
+Раньше completion практически зависел от перехода `stop-button visible -> stop-button hidden`. Если расширение не успевало увидеть busy-состояние, завершённый `DONE` мог остаться необработанным.
+
+Теперь `GenerationDetector` использует два сигнала:
+
+1. явный generation/busy signal через fallback selectors;
+2. изменение fingerprint последнего assistant response.
+
+Если busy-сигнал был пропущен, новый response всё равно становится кандидатом на completion после quiet/stability window. При этом старый ответ при загрузке и response из другого уже существующего чата после SPA-navigation используются как baseline и не вызывают автоматическое действие.
+
+Это уменьшает вероятность пропущенного `DONE`, не превращая любой DOM mutation в completion.
 
 ### Базовые правила
 
@@ -95,23 +107,46 @@ Legacy-флаг должен находиться в последней непу
 
 ---
 
+## Архитектура content layer
+
+Phase 1 разделила прежний монолитный `content.js`:
+
+```text
+content/
+  selectors.js
+  utils.js
+  logger.js
+  message-types.js
+  generation-state.js
+  generation-detector.js
+  assistant-message-reader.js
+  composer-adapter.js
+  protocol-parser.js
+  runtime-messenger.js
+  chatgpt-adapter.js
+  legacy-controller.js
+content.js                 # bootstrap only
+```
+
+`ChatGPTAdapter` является границей между DOM ChatGPT и будущим Orchestrator Core. DOM selectors, чтение response и отправка prompt больше не должны проникать в scheduler/orchestration code.
+
+---
+
 ## Roadmap
 
 Разработка идёт по фазам, описанным в [`ROADMAP.md`](ROADMAP.md).
 
 Ближайшие этапы:
 
-- **Phase 0 — Repository reset / Rename hygiene** — новое имя, документация, versioning policy;
-- **Phase 1 — Adapter extraction and deterministic core** — отделение DOM automation от orchestration logic;
-- **Phase 2 — Service Worker Orchestrator + Tab Registry** — централизованное управление несколькими вкладками;
+- **Phase 0 — Repository reset / Rename hygiene** — завершена;
+- **Phase 1 — Adapter extraction and deterministic core** — завершена в `2.0.0-alpha.2`;
+- **Phase 2 — Service Worker Orchestrator + Tab Registry** — следующий этап;
 - **Phase 3 — Orchestra Protocol v1 + Event Bus** — machine-readable events, idempotency и routing;
 - **Phase 4+** — Planner/Critic, DAG, scheduler, Git isolation, review, integration и recovery.
 
-Главный принцип разработки: каждая новая фаза должна оставлять систему в проверяемом и восстанавливаемом состоянии, а не наращивать автономность ценой недетерминированности.
-
 ---
 
-## Быстрый старт legacy foundation
+## Быстрый старт
 
 1. Клонируй репозиторий:
 
@@ -129,10 +164,16 @@ edge://extensions/
 3. Включи **Режим разработчика / Developer mode**.
 4. Нажми **Загрузить распакованное / Load unpacked**.
 5. Выбери папку репозитория, где находится `manifest.json`.
-6. Обнови уже открытые вкладки ChatGPT.
+6. После обновления исходников нажми **Reload** у расширения и обнови открытые ChatGPT tabs.
 7. Открой popup расширения и настрой legacy-флаги.
 
-На текущем этапе сборка, Node.js и установка зависимостей не требуются.
+Для запуска core tests нужен Node.js 18+:
+
+```powershell
+npm test
+```
+
+Runtime extension по-прежнему не требует npm dependencies или build step.
 
 ---
 
@@ -140,7 +181,8 @@ edge://extensions/
 
 - Microsoft Edge с поддержкой Manifest V3 extensions;
 - Developer mode для установки из исходников;
-- доступ к `https://chatgpt.com/` или `https://chat.openai.com/`.
+- доступ к `https://chatgpt.com/` или `https://chat.openai.com/`;
+- Node.js 18+ только для development tests.
 
 Другие Chromium-браузеры потенциально совместимы, но пока не являются официально протестированной платформой.
 
@@ -151,15 +193,10 @@ edge://extensions/
 | Параметр | Назначение | Значение по умолчанию |
 |---|---|---:|
 | Обработка флагов | Глобальное включение automation | Включено |
-| Базовая задержка | Пауза после завершения генерации | `1200 мс` |
+| Базовая задержка | Пауза после завершения generation event | `1200 мс` |
 | Случайная добавка | Дополнительная задержка | `0…1200 мс` |
+| Stability window | Дополнительная проверка неизменности response | `650 мс` |
 | Правила | Флаг + действие + payload | `DONE`, `FAIL`, `ERROR` |
-
-Фактическая задержка рассчитывается как:
-
-```text
-base delay + random value from 0 to configured random window
-```
 
 Старые настройки `marker` и `followUp` автоматически мигрируют в текущий формат `rules`.
 
@@ -167,14 +204,16 @@ base delay + random value from 0 to configured random window
 
 ## Безопасность текущего baseline
 
-Legacy foundation намеренно консервативен:
+Compatibility runner намеренно консервативен:
 
 - не перезаписывает непустой composer;
-- проверяет стабильность ответа перед обработкой;
-- не реагирует на старый завершённый ответ только из-за открытия страницы;
+- не отправляет prompt пока ChatGPT генерирует ответ;
+- проверяет стабильность response перед side effect;
+- старый response при загрузке становится baseline;
+- navigation в существующий chat не считается новым response completion;
 - хранит настройки локально;
 - не требует API-ключа или внешнего backend;
-- имеет доступ только к доменам ChatGPT, указанным в manifest.
+- имеет доступ только к доменам ChatGPT из manifest.
 
 Будущая Orchestra-архитектура дополнит это persisted state, idempotent events, state machines, retry budgets, reconciliation и circuit breakers.
 
@@ -195,23 +234,27 @@ Legacy foundation намеренно консервативен:
 
 ## Диагностика
 
-Открой DevTools (`F12`) на вкладке ChatGPT и найди сообщения с префиксом:
+Открой DevTools (`F12`) на вкладке ChatGPT и найди записи с префиксом:
 
 ```text
 [ChatGPT Orchestra]
 ```
 
-Типичные события legacy runner:
+С alpha.2 логи структурированы. Полезные event names:
 
 ```text
-Generation detected.
-Generation finished. Checking flag after randomized delay.
-Flag check scheduled in 1847 ms.
-Follow-up sent: Делай следующее задание
-User notified for marker: FAIL
+generation_detector_started
+generation_started
+generation_stopped
+assistant_response_completed
+conversation_navigation_baseline
+legacy_flag_check_scheduled
+legacy_follow_up_sent
+legacy_follow_up_skipped
+legacy_duplicate_suppressed
 ```
 
-Текущая реализация всё ещё зависит от DOM ChatGPT и набора fallback selectors. Выделение этой логики в отдельный adapter — задача Phase 1.
+Если `DONE` снова будет пропущен, особенно полезны события `response_changed`, `assistant_response_completed` и `legacy_flag_not_matched` вокруг проблемного ответа.
 
 ---
 
@@ -228,7 +271,7 @@ User notified for marker: FAIL
 А человекочитаемый prerelease хранится в:
 
 ```json
-"version_name": "2.0.0-alpha.1"
+"version_name": "2.0.0-alpha.2"
 ```
 
 Подробное решение зафиксировано в [`docs/adr/0001-versioning-policy.md`](docs/adr/0001-versioning-policy.md).
@@ -249,13 +292,12 @@ User notified for marker: FAIL
 ## Ограничения текущей версии
 
 - multi-agent orchestration ещё не реализована;
-- extension зависит от DOM ChatGPT;
-- legacy rule обрабатывается только после генерации, наблюдаемой текущей вкладкой;
-- duplicate protection пока локален для content script, а не глобален для project event bus;
+- extension всё ещё зависит от production DOM ChatGPT;
+- selector fallback снижает, но не устраняет риск UI breakage;
+- duplicate protection legacy runner пока локален для content script, а не глобален для project event bus;
 - отсутствуют scheduler, persisted project state, Git isolation и crash recovery;
-- автоматическая обработка флага не доказывает корректность ответа модели.
-
-Эти ограничения являются предметом следующих фаз roadmap, а не скрываются как готовые возможности.
+- автоматическая обработка флага не доказывает корректность ответа модели;
+- browser E2E against real ChatGPT пока остаётся ручным smoke test.
 
 ---
 
