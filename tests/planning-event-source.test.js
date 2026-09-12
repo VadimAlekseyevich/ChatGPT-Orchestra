@@ -25,10 +25,10 @@ function event() {
   };
 }
 
-test("persists a bounded planning artifact with accepted event provenance", async () => {
+test("persists a bounded planning artifact and returns the same normalized source", async () => {
   const store = new EventStore({ storageArea: fakeStorage() });
   await store.load();
-  await store.accept(event(), {
+  const accepted = await store.accept(event(), {
     route: "completion",
     tabId: 7,
     source: {
@@ -39,17 +39,19 @@ test("persists a bounded planning artifact with accepted event provenance", asyn
     }
   });
   const record = store.recentEvents(1)[0];
+  assert.deepEqual(accepted.source, record.source);
   assert.equal(record.source.responseFingerprint, "fp1");
   assert.equal(record.source.planningArtifact.stack, "JavaScript");
   assert.deepEqual(record.source.planningArtifact.commands, ["npm test"]);
 });
 
-test("drops oversized planning artifact from event source instead of growing storage without bound", async () => {
+test("drops oversized planning artifact consistently from persisted and emitted source", async () => {
   const store = new EventStore({ storageArea: fakeStorage() });
   await store.load();
-  await store.accept(event(), {
+  const accepted = await store.accept(event(), {
     route: "completion",
     source: { planningArtifact: { text: "x".repeat(300000) } }
   });
+  assert.equal(accepted.source.planningArtifact, null);
   assert.equal(store.recentEvents(1)[0].source.planningArtifact, null);
 });
