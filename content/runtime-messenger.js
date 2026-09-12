@@ -11,11 +11,8 @@
 
     send(type, payload = {}) {
       if (!this.runtime?.sendMessage) return;
-
       try {
         this.runtime.sendMessage({ type, payload }, () => {
-          // Phase 1 has no background listener yet. Reading lastError prevents
-          // the expected "receiving end does not exist" warning from leaking.
           void this.runtime?.lastError;
         });
       } catch (error) {
@@ -24,6 +21,31 @@
           message: error?.message || String(error)
         });
       }
+    }
+
+    request(type, payload = {}) {
+      if (!this.runtime?.sendMessage) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        try {
+          this.runtime.sendMessage({ type, payload }, (response) => {
+            if (this.runtime?.lastError) {
+              this.logger?.debug?.("runtime_request_failed", {
+                type,
+                message: this.runtime.lastError.message
+              });
+              resolve(null);
+              return;
+            }
+            resolve(response || null);
+          });
+        } catch (error) {
+          this.logger?.debug?.("runtime_request_skipped", {
+            type,
+            message: error?.message || String(error)
+          });
+          resolve(null);
+        }
+      });
     }
   }
 
