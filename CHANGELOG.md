@@ -4,6 +4,65 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.8] - 2026-09-12
+
+### Added
+
+- persisted `ReviewStore` с independent review identities и review history;
+- dynamic Reviewer role поверх свободных Worker tabs без permanent fifth agent;
+- hard invariant `reviewerAgentId != authorAgentId`;
+- versioned `ReviewPrompts` contract с structured acceptance-criteria verdict;
+- bounded review packet: task, acceptance criteria, architecture rules, Worker summary/tests/limitations, validated artifact и provider-derived diff;
+- `DONE_BY_WORKER -> REVIEW_PENDING -> REVIEWING -> APPROVED | CHANGES_REQUIRED` task lifecycle;
+- dependency unlocking только после `APPROVED`;
+- structured review issues и concrete `requiredChanges`;
+- rework context с previous artifact/commit и review findings;
+- new Worker run + unique branch для каждого rework attempt;
+- rework branch start from previous reviewed artifact commit;
+- configurable bounded review iterations, default `3`;
+- `READY_FOR_INTEGRATION` terminal status для успешно reviewed Phase 7 execution;
+- reviewer replacement с fresh `reviewId` после tab loss;
+- optional reviewer capability matching hook;
+- Phase 7 architecture doc, smoke test, ADR 0006 и regression tests;
+- `npm run test:phase7`.
+
+### Reliability and safety
+
+- Worker `DONE` и даже Git-valid artifact больше не считаются acceptance;
+- author не может review собственный Worker run;
+- incomplete `REVIEW_APPROVED` без каждого acceptance criterion/evidence fail closed;
+- `CHANGES_REQUIRED` никогда не разблокирует dependency;
+- exhausted review loop переводит task/scheduler/project в `NEEDS_USER`;
+- lost Reviewer run помечается abandoned, а retry получает fresh protocol identity, поэтому late stale response не может принять replacement review;
+- upgrade с alpha.7 не превращает старый `DONE_UNVERIFIED` напрямую в `APPROVED`;
+- mutating legacy completion без canonical Git provenance остаётся fail-closed;
+- Phase 7 не выполняет merge/rebase/cherry-pick и не пишет в target branch.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.8`;
+- `DONE_UNVERIFIED` execution semantics заменены на `DONE_BY_WORKER` + mandatory independent review;
+- `SchedulerStore.dependenciesSatisfied()` теперь требует `APPROVED`;
+- scheduler capacity учитывает active Reviewer slots;
+- reviews получают первую возможность занять свободный slot перед dispatch нового runnable work;
+- `maxWorkers=1` сохраняет concurrency 1, но Orchestra держит второй connected Worker tab для independent review;
+- popup показывает approved count и active/pending review progress;
+- all-approved execution завершается как `READY_FOR_INTEGRATION`, а не `MERGED`/`VERIFIED`.
+
+### Known limitation
+
+Approved task branches всё ещё остаются изолированными. `APPROVED` означает independent task acceptance, но не доказывает, что несколько approved branches семантически совместимы после объединения. Это ответственность Phase 8 Integrator.
+
+### Not yet implemented
+
+- integration branch and deterministic merge ordering;
+- merge/rebase/cherry-pick execution;
+- semantic cross-task conflict classification and repair;
+- final target-branch policy;
+- full project Pause/Resume/reconciliation.
+
+---
+
 ## [2.0.0-alpha.7] - 2026-09-12
 
 ### Added
