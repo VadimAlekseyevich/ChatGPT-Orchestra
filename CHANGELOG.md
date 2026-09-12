@@ -4,6 +4,51 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.4] - 2026-09-12
+
+### Added
+
+- Orchestra Protocol v1 с префиксом `@@ORCH`;
+- JSON envelope и compact fallback syntax;
+- обязательные `projectId`, `taskId`, `runId`, `agentId`, `eventId`, `sequence`;
+- persisted `EventStore` и `EventBus` в `chrome.storage.local`;
+- route classification для lifecycle/progress/completion/blocker/review/integration/user events;
+- persisted `processedEvents`, monotonic sequence tracking и event cursor;
+- exact duplicate suppression после перезапуска service worker;
+- rejection log для malformed/stale/foreign protocol events;
+- protocol context binding `projectId/taskId/runId` к конкретному agent;
+- regression tests для parser, duplicate replay, eventId collision, stale sequence, sender mismatch и persisted replay.
+
+### Safety
+
+- protocol обрабатывается только из последней непустой строки assistant response;
+- неизвестная версия/event type отклоняется без side effect;
+- незарегистрированный tab не может публиковать Orchestra events;
+- `agentId` в envelope обязан совпадать с registry identity sender tab;
+- если agent имеет protocol context, stale/чужие `projectId/taskId/runId` отклоняются;
+- одинаковый `eventId` с другим payload считается collision, а не duplicate;
+- sequence, идущий назад или повторяющийся в рамках run, отклоняется;
+- malformed protocol сохраняется в rejection audit вместо автоматического действия.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.4`;
+- `ProtocolParser` сначала распознаёт Orchestra Protocol и только затем legacy rules;
+- `ChatGPTAdapter` публикует protocol result после подтверждённого generation completion;
+- service worker загружает protocol/event store до обработки runtime events;
+- legacy `DONE/FAIL/ERROR` остаётся compatibility fallback.
+
+### Not yet implemented
+
+- project bootstrap и Planner/Critic;
+- task DAG/scheduler;
+- автоматическое назначение protocol context scheduler'ом;
+- Git branch isolation;
+- review/integration loops;
+- Pause/Resume и full project recovery.
+
+---
+
 ## [2.0.0-alpha.3] - 2026-09-12
 
 ### Added
