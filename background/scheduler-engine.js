@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const TERMINAL_SUCCESS = "DONE_UNVERIFIED";
+  const TERMINAL_SUCCESS = "APPROVED";
   const GIT_FRESHNESS_TTL_MS = 2 * 60 * 1000;
   const FATAL_GIT_REASONS = new Set([
     "target_branch_moved",
@@ -23,12 +23,13 @@
   }
 
   class SchedulerEngine {
-    constructor({ store, projectStore, registry, eventBus, gitProvider = null, sendPrompt, clock = () => Date.now(), idFactory = null, logger = console } = {}) {
+    constructor({ store, projectStore, registry, eventBus, gitProvider = null, reviewEngine = null, sendPrompt, clock = () => Date.now(), idFactory = null, logger = console } = {}) {
       this.store = store;
       this.projectStore = projectStore;
       this.registry = registry;
       this.eventBus = eventBus;
       this.gitProvider = gitProvider;
+      this.reviewEngine = reviewEngine;
       this.sendPrompt = sendPrompt;
       this.clock = clock;
       this.idFactory = idFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -38,12 +39,15 @@
       this.tickPromise = Promise.resolve();
     }
 
-    getPublicState() { return this.store.summary(); }
+    getPublicState() {
+      return { ...this.store.summary(), review: this.reviewEngine?.getPublicState?.() || null };
+    }
     getRecentDecisions(limit) { return this.store.recentDecisions(limit); }
 
     async init() {
       if (this.initialized) return this.getPublicState();
       await this.store.load();
+      if (this.reviewEngine) await this.reviewEngine.init();
       if (!this.unsubscribers.length) {
         this.unsubscribers.push(this.eventBus.subscribe("lifecycle", (record) => this.handleLifecycle(record)));
         this.unsubscribers.push(this.eventBus.subscribe("progress", (record) => this.handleProgress(record)));
@@ -53,7 +57,14 @@
       }
       await this.restoreActiveContexts();
       this.initialized = true;
-      if (this.store.summary().status === "RUNNING") await this.tick({ reason: "service_worker_init" });
+      if (this.store.summary().status === "RUNNING") {
+        const project = this.projectStore.getActiveProject();
+        if (project?.status === "COMPLETED_UNVERIFIED") {
+          await this.projectStore.setExecutionStatus?.(project.projectId, "RUNNING", { phase: 7, upgradeFrom: "COMPLETED_UNVERIFIED" });
+        }
+        await this.reviewEngine?.recoverReviewableTasks?.();
+        await this.tick({ reason: "service_worker_init" });
+      }
       return this.getPublicState();
     }
 
@@ -100,9 +111,7 @@
       const lastCheckedAt = Number(snapshot.lastCheckedAt) || 0;
       if (!force && lastCheckedAt && this.clock() - lastCheckedAt < GIT_FRESHNESS_TTL_MS) {
         const cachedStatus = String(snapshot.lastFreshnessStatus || "fresh");
-        if (cachedStatus === "fresh") {
-          return { ok: true, cached: true, currentTargetSha: snapshot.currentTargetSha || snapshot.baseSha };
-        }
+        if (cachedStatus === "fresh") return { ok: true, cached: true, currentTargetSha: snapshot.currentTargetSha || snapshot.baseSha };
         return { ok: false, reason: cachedStatus, cached: true, currentTargetSha: snapshot.currentTargetSha || null };
       }
       const result = await this.gitProvider.checkBaseFresh(project, snapshot);
@@ -114,13 +123,11 @@
       return result;
     }
 
-    async start({ maxWorkers = 4, maxRetries = 2, runTimeoutMs = null } = {}) {
+    async start({ maxWorkers = 4, maxRetries = 2, runTimeoutMs = null, maxReviewIterations = 3 } = {}) {
       const project = this.projectStore.getActiveProject();
       if (!project) return { ok: false, reason: "no_active_project" };
       if (!project.taskGraph?.tasks?.length) return { ok: false, reason: "project_task_graph_missing" };
-      if (!["READY", "RUNNING"].includes(project.status)) {
-        return { ok: false, reason: "project_not_ready_for_execution", status: project.status };
-      }
+      if (!["READY", "RUNNING"].includes(project.status)) return { ok: false, reason: "project_not_ready_for_execution", status: project.status };
 
       const current = this.store.summary();
       if (current.projectId !== project.projectId || current.taskCount === 0) {
@@ -139,7 +146,7 @@
           baseSha: captured.snapshot.baseSha
         });
       } else {
-        if (current.status === "COMPLETED_UNVERIFIED") return { ok: false, reason: "scheduler_already_complete" };
+        if (current.status === "READY_FOR_INTEGRATION") return { ok: false, reason: "scheduler_already_reviewed" };
         if (current.status === "NEEDS_USER") return { ok: false, reason: "scheduler_needs_user" };
         const snapshot = await this.ensureGitSnapshot(project);
         if (!snapshot.ok) return { ok: false, reason: snapshot.reason || "git_base_capture_failed", git: snapshot };
@@ -147,12 +154,14 @@
         await this.store.setStatus("RUNNING");
       }
 
+      await this.reviewEngine?.configureProject?.(project.projectId, { maxReviewIterations });
       const git = this.store.getGitSnapshot?.();
       await this.projectStore.setExecutionStatus?.(project.projectId, "RUNNING", {
-        phase: 6,
-        git: git ? { provider: git.provider, targetBranch: git.defaultBranch, baseSha: git.baseSha } : null
+        phase: 7,
+        git: git ? { provider: git.provider, targetBranch: git.defaultBranch, baseSha: git.baseSha } : null,
+        review: { maxReviewIterations: Math.max(1, Number(maxReviewIterations) || 3) }
       });
-      await this.store.logDecision("scheduler_started", { settings: this.store.summary().settings, phase: 6 });
+      await this.store.logDecision("scheduler_started", { settings: this.store.summary().settings, phase: 7, maxReviewIterations });
       await this.tick({ reason: "start_execution" });
       return { ok: true, scheduler: this.getPublicState() };
     }
@@ -184,6 +193,7 @@
 
     availableWorkers() {
       const activeAgentIds = new Set(this.store.activeRuns().map((run) => run.agentId));
+      for (const agentId of this.reviewEngine?.activeReviewerAgentIds?.() || []) activeAgentIds.add(agentId);
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
         && Number.isInteger(agent.tabId)
@@ -208,13 +218,15 @@
       const snapshot = this.store.getGitSnapshot?.();
       const definition = task.definition || task;
       const required = root.GitProvider?.requiresGitArtifact?.(definition) !== false;
-      if (!snapshot) return { required, provider: "", branch: "", targetBranch: "", baseSha: "" };
+      const startSha = task.reworkContext?.previousCommit || snapshot?.baseSha || "";
+      if (!snapshot) return { required, provider: "", branch: "", targetBranch: "", baseSha: "", startSha };
       return {
         required,
         provider: snapshot.provider,
         branch: required ? this.gitProvider.branchName(project.projectId, task.id, runId) : "",
         targetBranch: snapshot.defaultBranch,
         baseSha: snapshot.baseSha,
+        startSha,
         cleanupPolicy: snapshot.cleanupPolicy || root.GitProvider?.CLEANUP_POLICY || "retain_until_review_or_manual_cleanup"
       };
     }
@@ -234,7 +246,14 @@
         return { ok: false, reason: "agent_context_bind_failed" };
       }
       const definition = task.definition || task;
-      const prompt = root.WorkerPrompts.buildWorkerPrompt({ project, task: definition, runId, agentId: agent.agentId, gitAssignment: git });
+      const prompt = root.WorkerPrompts.buildWorkerPrompt({
+        project,
+        task: definition,
+        runId,
+        agentId: agent.agentId,
+        gitAssignment: git,
+        reworkContext: task.reworkContext || null
+      });
       const result = await this.sendPrompt(agent.agentId, prompt);
       if (!result?.ok) {
         const failed = await this.store.markFailure(runId, "dispatch_failed", { retryable: true });
@@ -252,6 +271,8 @@
         branch: git.branch || null,
         targetBranch: git.targetBranch || null,
         baseSha: git.baseSha || null,
+        startSha: git.startSha || null,
+        rework: Boolean(task.reworkContext),
         downstream: this.downstreamCount(task.id),
         priority: task.priority
       });
@@ -270,10 +291,14 @@
       await this.checkWatchdog();
       if (this.store.summary().status !== "RUNNING") return { ok: false, reason: "scheduler_stopped_by_watchdog", scheduler: this.getPublicState() };
 
+      await this.reviewEngine?.tick?.({ reason: `scheduler:${reason}` });
+      if (this.store.summary().status !== "RUNNING") return { ok: false, reason: "scheduler_stopped_by_review", scheduler: this.getPublicState() };
+
       const maxWorkers = this.store.summary().settings.maxWorkers;
       let workers = this.availableWorkers();
       let active = this.activeTasks();
-      let capacity = Math.max(0, maxWorkers - this.store.activeRuns().length);
+      const reviewActive = Number(this.reviewEngine?.activeCount?.()) || 0;
+      let capacity = Math.max(0, maxWorkers - this.store.activeRuns().length - reviewActive);
       let candidates = this.sortCandidates(this.store.runnableTasks());
       const assigned = [];
 
@@ -313,19 +338,25 @@
       }
 
       if (this.store.isComplete()) {
-        await this.store.setStatus("COMPLETED_UNVERIFIED");
+        await this.store.setStatus("READY_FOR_INTEGRATION");
         const projectId = this.store.summary().projectId;
         const git = this.store.getGitSnapshot?.();
-        await this.projectStore.setExecutionStatus?.(projectId, "COMPLETED_UNVERIFIED", {
-          phase: 6,
-          git: git ? { provider: git.provider, targetBranch: git.defaultBranch, baseSha: git.baseSha } : null
+        await this.projectStore.setExecutionStatus?.(projectId, "READY_FOR_INTEGRATION", {
+          phase: 7,
+          git: git ? { provider: git.provider, targetBranch: git.defaultBranch, baseSha: git.baseSha } : null,
+          review: this.reviewEngine?.getPublicState?.() || null
         });
-        await this.store.logDecision("scheduler_completed", { policy: TERMINAL_SUCCESS, artifactPolicy: "git_validated_then_unreviewed" });
+        await this.store.logDecision("review_phase_completed", { policy: TERMINAL_SUCCESS, nextPhase: "integration" });
       } else if (!assigned.length && !this.store.activeRuns().length && !this.store.runnableTasks().length) {
-        await this.store.logDecision("scheduler_stalled", {
-          trigger: reason,
-          unfinished: this.store.listTasks().filter((task) => task.status !== TERMINAL_SUCCESS).map((task) => ({ id: task.id, status: task.status }))
-        });
+        const reviewState = this.reviewEngine?.getPublicState?.();
+        if (reviewState?.pending || reviewState?.active) {
+          await this.store.logDecision("scheduler_waiting_for_review", { trigger: reason, review: reviewState });
+        } else {
+          await this.store.logDecision("scheduler_stalled", {
+            trigger: reason,
+            unfinished: this.store.listTasks().filter((task) => ![TERMINAL_SUCCESS, "CANCELLED"].includes(task.status)).map((task) => ({ id: task.id, status: task.status }))
+          });
+        }
       }
 
       return { ok: true, assigned, scheduler: this.getPublicState() };
@@ -368,8 +399,8 @@
         await this.store.recordArtifactValidation?.(run.runId, validation);
 
         if (!validation.ok) {
-          const reason = String(validation.reason || "artifact_invalid");
-          const fatal = FATAL_GIT_REASONS.has(reason) || reason.startsWith("git_provider_");
+          const gitReason = String(validation.reason || "artifact_invalid");
+          const fatal = FATAL_GIT_REASONS.has(gitReason) || gitReason.startsWith("git_provider_");
           const result = await this.store.markFailure(run.runId, "artifact_invalid", { retryable: !fatal, needsUser: fatal });
           await this.registry.clearProtocolContext(run.agentId);
           await this.store.logDecision("git_artifact_invalid", {
@@ -377,11 +408,11 @@
             runId: run.runId,
             agentId: run.agentId,
             branch: run.git?.branch || null,
-            reason,
+            reason: gitReason,
             fatal,
             validation
           });
-          if (fatal || result?.task?.status === "NEEDS_USER") await this.escalate(reason, result?.task || task, validation);
+          if (fatal || result?.task?.status === "NEEDS_USER") await this.escalate(gitReason, result?.task || task, validation);
           else await this.tick({ reason: "artifact_invalid_retry" });
           return;
         }
@@ -396,19 +427,29 @@
         });
       }
 
-      const done = await this.store.markDone(run.runId);
+      const done = await this.store.markDone(run.runId, record.event.payload || {});
       if (!done || done.ok === false) {
         await this.escalate(done?.reason || "task_completion_persistence_failed", task, done || null);
         return;
       }
       await this.registry.clearProtocolContext(run.agentId);
-      await this.store.logDecision("task_done_unverified", {
+      await this.store.logDecision("task_done_by_worker", {
         taskId: run.taskId,
         runId: run.runId,
         agentId: run.agentId,
         artifact: done.task?.lastArtifact || null
       });
-      await this.tick({ reason: "task_done" });
+
+      if (!this.reviewEngine) {
+        await this.escalate("review_engine_unavailable", done.task);
+        return;
+      }
+      const queued = await this.reviewEngine.enqueueForWorkerCompletion({ task: done.task, run: done.run, workerReport: record.event.payload || {} });
+      if (!queued?.ok) {
+        await this.escalate(queued?.reason || "review_enqueue_failed", done.task, queued || null);
+        return;
+      }
+      await this.tick({ reason: "worker_done_review_queued" });
     }
 
     async handleBlocker(record) {
@@ -443,12 +484,12 @@
       await this.store.setStatus("NEEDS_USER");
       const projectId = this.store.summary().projectId;
       await this.projectStore.setExecutionStatus?.(projectId, "NEEDS_USER", {
-        phase: 6,
+        phase: 7,
         reason,
         taskId: task?.id || null,
         details
       });
-      await this.store.logDecision("needs_user", { reason, taskId: task?.id || null, details });
+      await this.store.logDecision("needs_user", { phase: 7, reason, taskId: task?.id || null, details });
     }
 
     async checkWatchdog() {
@@ -456,12 +497,7 @@
       const timeout = this.store.summary().settings.runTimeoutMs;
       for (const run of this.store.activeRuns()) {
         const agentHeartbeat = Number(this.registry.getAgent(run.agentId)?.lastSeenAt) || 0;
-        const reference = Math.max(
-          Number(run.lastEventAt) || 0,
-          Number(run.startedAt) || 0,
-          Number(run.assignedAt) || 0,
-          agentHeartbeat
-        );
+        const reference = Math.max(Number(run.lastEventAt) || 0, Number(run.startedAt) || 0, Number(run.assignedAt) || 0, agentHeartbeat);
         if (!reference || now - reference < timeout) continue;
         const result = await this.store.markFailure(run.runId, "timeout", { retryable: true });
         await this.registry.clearProtocolContext(run.agentId);
@@ -474,6 +510,11 @@
     }
 
     async handleAgentUnavailable(agentId, reason = "agent_unavailable") {
+      const reviewResult = await this.reviewEngine?.handleAgentUnavailable?.(agentId, reason);
+      if (reviewResult?.handled) {
+        await this.tick({ reason: "reviewer_unavailable" });
+        return { ok: true, reviewHandled: true };
+      }
       const run = this.store.activeRuns().find((item) => item.agentId === agentId);
       if (!run) return { ok: true, ignored: true };
       const result = await this.store.markFailure(run.runId, reason, { retryable: true });
@@ -486,12 +527,13 @@
 
     async handleAgentStateChanged(agent) {
       if (this.store.summary().status !== "RUNNING") return;
+      await this.reviewEngine?.handleAgentStateChanged?.(agent);
       if (agent?.role === "worker" && agent.status === "IDLE") await this.tick({ reason: "worker_idle" });
     }
   }
 
   root.SchedulerEngine = SchedulerEngine;
-  root.PHASE5_DEPENDENCY_SUCCESS = TERMINAL_SUCCESS;
+  root.PHASE7_DEPENDENCY_SUCCESS = TERMINAL_SUCCESS;
   root.PHASE6_GIT_FRESHNESS_TTL_MS = GIT_FRESHNESS_TTL_MS;
 
   if (typeof module !== "undefined" && module.exports) module.exports = { SchedulerEngine, TERMINAL_SUCCESS, GIT_FRESHNESS_TTL_MS, FATAL_GIT_REASONS, riskRank };
