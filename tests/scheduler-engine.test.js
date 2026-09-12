@@ -9,6 +9,7 @@ const { SchedulerEngine } = require("../background/scheduler-engine.js");
 function fakeStorage() {
   const data = {};
   return {
+    data,
     async get(key) { return { [key]: data[key] }; },
     async set(values) { Object.assign(data, values); }
   };
@@ -30,7 +31,8 @@ function registry(count = 3) {
     role: "worker",
     tabId: index + 10,
     status: "IDLE",
-    protocolContext: null
+    protocolContext: null,
+    lastSeenAt: 0
   }));
   return {
     agents,
@@ -38,6 +40,7 @@ function registry(count = 3) {
     getAgent(agentId) { const agent = agents.find((item) => item.agentId === agentId); return agent ? { ...agent } : null; },
     async setProtocolContext(agentId, context) {
       const agent = agents.find((item) => item.agentId === agentId);
+      if (!agent) return null;
       agent.protocolContext = { ...context };
       return { ...agent };
     },
@@ -195,4 +198,52 @@ test("watchdog retries then escalates when retry budget is exhausted", async () 
   assert.equal(store.getTask("T1").status, "NEEDS_USER");
   assert.equal(store.summary().status, "NEEDS_USER");
   assert.equal(projects.state.project.status, "NEEDS_USER");
+});
+
+test("recent content heartbeat keeps a long-running Worker alive", async () => {
+  let now = 100000;
+  const graph = project([task("T1", [], ["src/a/**"])]);
+  const store = new SchedulerStore({ storageArea: fakeStorage(), clock: () => now });
+  const workers = registry(1);
+  const engine = new SchedulerEngine({
+    store,
+    projectStore: projectStore(graph),
+    registry: workers,
+    eventBus: new FakeEventBus(),
+    clock: () => now,
+    idFactory: () => "R1",
+    sendPrompt: async () => ({ ok: true })
+  });
+  await engine.init();
+  await engine.start({ maxWorkers: 1, maxRetries: 0, runTimeoutMs: 60000 });
+  now += 61000;
+  workers.agents[0].lastSeenAt = now;
+  workers.agents[0].status = "BUSY";
+  await engine.tick({ reason: "heartbeat_watchdog" });
+  assert.equal(store.activeRuns().length, 1);
+  assert.notEqual(store.getTask("T1").status, "NEEDS_USER");
+});
+
+test("restart immediately retries an active run whose Worker disappeared", async () => {
+  const storage = fakeStorage();
+  const graph = project([task("T1", [], ["src/a/**"])]);
+  const seed = new SchedulerStore({ storageArea: storage });
+  await seed.load();
+  await seed.initializeProject(graph, { maxRetries: 2 });
+  await seed.createRun({ taskId: "T1", runId: "R-old", agentId: "A1" });
+
+  const workers = registry(1);
+  workers.agents[0].tabId = null;
+  workers.agents[0].status = "OFFLINE";
+  const engine = new SchedulerEngine({
+    store: new SchedulerStore({ storageArea: storage }),
+    projectStore: projectStore({ ...graph, status: "RUNNING" }),
+    registry: workers,
+    eventBus: new FakeEventBus(),
+    sendPrompt: async () => ({ ok: true })
+  });
+  await engine.init();
+  assert.equal(engine.store.getRun("R-old").status, "AGENT_UNAVAILABLE_AFTER_RESTART");
+  assert.equal(engine.store.getTask("T1").status, "READY");
+  assert.ok(engine.store.recentDecisions(20).some((entry) => entry.type === "recovered_agent_unavailable"));
 });
