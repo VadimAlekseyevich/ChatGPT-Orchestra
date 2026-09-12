@@ -21,6 +21,7 @@
       const payload = message?.payload || {};
 
       if (type === root.MESSAGE_TYPES.PING) {
+        adapter.enableHeartbeat();
         sendResponse({
           type: root.MESSAGE_TYPES.PONG,
           payload: adapter.getStatus()
@@ -54,6 +55,5 @@
     root.Logger?.error?.("bootstrap_start_failed", error);
   });
 
-  // Deliberately exposed only as a debug/recovery hook during the alpha.
   root.runtime = { adapter, controller };
 })();
