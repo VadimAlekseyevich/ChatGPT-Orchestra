@@ -11,25 +11,30 @@
     if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
     return serialized.length;
   }
+  function sameJson(left, right) { return JSON.stringify(left ?? null) === JSON.stringify(right ?? null); }
   function hasStructuralTruncation(value) {
     if (!value || typeof value !== "object") return false;
     if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
     if (Array.isArray(value)) return value.some(hasStructuralTruncation);
     return Object.values(value).some(hasStructuralTruncation);
   }
-  function packetCompleteness(packet) {
+  function packetCompleteness(packet, { task = null, gitAssignment = null, reworkContext = null } = {}) {
     if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
     const maxBytes = Number(root.ContextPackets?.BUDGETS?.task || 26000);
     const actualBytes = bytes(packet);
     const incompleteSections = ["task", "dependencies", "assignment", "artifactRefs"]
       .filter((key) => hasStructuralTruncation(packet?.[key]));
+    if (task && !sameJson(task, packet?.task)) incompleteSections.push("task_compacted");
+    if (gitAssignment && !sameJson(gitAssignment, packet?.assignment?.git)) incompleteSections.push("git_assignment_compacted");
+    if (reworkContext && !sameJson(reworkContext, packet?.assignment?.rework)) incompleteSections.push("rework_context_compacted");
     const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    const unique = [...new Set(incompleteSections)];
     return {
-      ok: budgetOk && incompleteSections.length === 0,
-      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      ok: budgetOk && unique.length === 0,
+      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
       actualBytes,
       maxBytes,
-      incompleteSections
+      incompleteSections: unique
     };
   }
   function failClosedPacket(packet, gate) {
@@ -55,7 +60,7 @@
       assignment: { git: gitAssignment, rework: reworkContext },
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
-    const completeness = packetCompleteness(contextPacket);
+    const completeness = packetCompleteness(contextPacket, { task, gitAssignment, reworkContext });
     const eventBase = { v: 1, projectId: project.projectId, taskId: task.id, runId, agentId };
     if (!completeness.ok) {
       return [
@@ -135,7 +140,7 @@
       `PORTABLE TASK PACKET:\n${json(contextPacket)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check.",
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks.",
       "",
       ...gitInstructions,
       ...reworkInstructions,
