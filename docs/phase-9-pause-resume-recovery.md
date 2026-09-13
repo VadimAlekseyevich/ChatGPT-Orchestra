@@ -58,17 +58,20 @@ Pending review или integration work, которое ещё не было disp
 `Stop Now` — immediate interruption boundary:
 
 1. status → `STOPPING`;
-2. dispatch закрывается;
-3. каждому active agent отправляется `STOP_GENERATION` best-effort;
-4. active Worker runs становятся `INTERRUPTED`, но не completed;
-5. task возвращается в `READY`, attempt может быть refunded;
-6. active review requeue'ится с fresh `reviewId`;
-7. active integration run abandon'ится и получит fresh integration identity после Resume;
-8. active planning stage помечается `interrupted` и при Resume запускается заново с fresh runId;
-9. protocol contexts перестраиваются;
-10. сохраняется snapshot, status → `STOPPED`.
+2. persisted `stopBoundaryActive=true` выставляется до best-effort stop commands;
+3. dispatch закрывается;
+4. каждому active agent отправляется `STOP_GENERATION` best-effort;
+5. active Worker runs становятся `INTERRUPTED`, но не completed;
+6. task возвращается в `READY`, attempt может быть refunded;
+7. active review requeue'ится с fresh `reviewId`;
+8. active integration run abandon'ится и получит fresh integration identity после Resume;
+9. active planning stage помечается `interrupted` и при Resume запускается заново с fresh runId;
+10. protocol contexts перестраиваются;
+11. сохраняется snapshot, status → `STOPPED`.
 
-Во время `STOPPING/STOPPED` late `DONE`, `REVIEW_*`, `CONFLICT` и blocker events могут остаться в Event Bus audit, но state-machine handlers их не применяют. Это закрывает race между `STOP_GENERATION` и последним ответом модели.
+`stopBoundaryActive` не зависит от текущей строки lifecycle status. Он переживает `STOPPING -> RECOVERING -> RECOVERY_REQUIRED` при crash/restart и снимается только после успешного reconcile, когда control plane атомарно возвращается в `RUNNING` с `reconciled=true`.
+
+Пока boundary активен, late `DONE`, `REVIEW_*`, `CONFLICT` и blocker events могут остаться в Event Bus audit, но state-machine handlers их не применяют. Это закрывает не только race между `STOP_GENERATION` и последним ответом модели, но и crash-window, когда service worker перезапустился прямо посреди `STOPPING`.
 
 ## Resume
 
@@ -99,7 +102,7 @@ issues? ── yes → RECOVERY_REQUIRED
   │
   no
   ↓
-RUNNING
+RUNNING + clear stopBoundaryActive
   ↓
 kick Planning / Review / Scheduler / Integration
 ```
@@ -142,6 +145,10 @@ Phase 8 target policy сохраняется: target branch не изменяе�
 ### MV3 service-worker restart, tabs живы
 
 RecoveryStore RUNNING переводится во временный `RECOVERING`. Tab registry подтверждает живые tabs, protocol contexts перестраиваются, после чего Orchestra автоматически возвращается в `RUNNING` без повторной выдачи уже active work.
+
+### Crash во время Stop Now
+
+Если service worker/browser падает после фиксации `STOPPING`, persisted stop boundary остаётся активным после boot. Recovery может перейти в `RECOVERY_REQUIRED`, но late state-changing events старых run identities всё ещё не применяются. Boundary снимается только успешным Resume reconciliation.
 
 ### Browser restart / tabs потеряны
 
