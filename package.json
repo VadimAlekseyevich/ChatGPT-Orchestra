@@ -40,6 +40,7 @@
     },
     "files": [
       "apps/desktop/**/*",
+      "apps/companion/**/*",
       "background/**/*",
       "content/message-types.js",
       "context/**/*",
