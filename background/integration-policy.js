@@ -23,6 +23,12 @@
 
   function deterministicIntegrationOrder(tasks = []) {
     const entries = tasks.map((task) => ({ ...clone(task), definition: clone(taskDefinition(task)) }));
+    for (const task of entries) {
+      const requiresGit = root.GitProvider?.requiresGitArtifact?.(taskDefinition(task)) !== false;
+      if (String(task.status || "") === "APPROVED" && requiresGit && (!task.lastArtifact?.commit || !task.lastArtifact?.branch)) {
+        return { ok: false, reason: "integration_approved_task_artifact_missing", taskId: String(task.id || "") };
+      }
+    }
     const byId = new Map(entries.map((task) => [String(task.id), task]));
     const indegree = new Map(entries.map((task) => [String(task.id), 0]));
     const children = new Map(entries.map((task) => [String(task.id), []]));
