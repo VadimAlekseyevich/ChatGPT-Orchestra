@@ -7,9 +7,13 @@ const { LocalValidatingGitProvider } = require("../apps/desktop/main/local-valid
 const BASE = "a".repeat(40);
 const COMMIT = "b".repeat(40);
 
-function remoteProvider() {
+function remoteProvider(calls = []) {
   return {
     branchName(projectId, taskId, runId) { return `orchestra/${projectId}/${taskId}/${runId}`; },
+    async request(path) { calls.push(["request", path]); return { ok: true, data: { path } }; },
+    async getRepository(project) { calls.push(["getRepository", project?.projectId]); return { ok: true, repository: { id: 1 } }; },
+    async getBranchHead(project, branch) { calls.push(["getBranchHead", project?.projectId, branch]); return { ok: true, branch, sha: COMMIT }; },
+    async compare(project, base, head) { calls.push(["compare", project?.projectId, base, head]); return { ok: true, comparison: { base, head } }; },
     async captureBase() { return { ok: true, snapshot: { baseSha: BASE } }; },
     async checkBaseFresh() { return { ok: true, currentTargetSha: BASE }; },
     async validateArtifact({ run }) {
@@ -31,6 +35,17 @@ function input({ bound = true } = {}) {
     payload: {}
   };
 }
+
+test("local validating provider preserves the remote Git provider surface used by integration", async () => {
+  const calls = [];
+  const provider = new LocalValidatingGitProvider({ remoteProvider: remoteProvider(calls), repositoryService: {}, logger: { warn() {} } });
+  const project = { projectId: "P1" };
+  assert.equal((await provider.request("/x")).ok, true);
+  assert.equal((await provider.getRepository(project)).ok, true);
+  assert.equal((await provider.getBranchHead(project, "main")).sha, COMMIT);
+  assert.equal((await provider.compare(project, BASE, COMMIT)).ok, true);
+  assert.deepEqual(calls.map((item) => item[0]), ["request", "getRepository", "getBranchHead", "compare"]);
+});
 
 test("local validating provider replaces changed-file provenance with local startSha..artifactSha evidence", async () => {
   const calls = [];
