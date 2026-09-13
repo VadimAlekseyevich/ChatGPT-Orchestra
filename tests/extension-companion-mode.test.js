@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { FakeAgentRuntime, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
-const { ExtensionCompanionModeController, COMPANION_MODE_KEY, RECONNECT_TIMER } = require("../platform/extension-companion-mode.js");
+const { ExtensionCompanionModeController, COMPANION_MODE_KEY, LEGACY_PROJECTS_KEY, RECONNECT_TIMER } = require("../platform/extension-companion-mode.js");
 
 class MemoryStorageArea {
   constructor(initial = {}) { this.data = { ...initial }; }
@@ -68,6 +68,28 @@ test("companion mode is disabled by default and persists explicit enable/disable
   assert.equal(disabled.state, "DISABLED");
   assert.equal(storageArea.data[COMPANION_MODE_KEY], false);
   assert.equal(timerRuntime.list().includes(RECONNECT_TIMER), false);
+});
+
+test("active extension project blocks companion cutover until migration exists", async () => {
+  const { controller, storageArea, transports } = controllerFixture({
+    initial: {
+      [LEGACY_PROJECTS_KEY]: {
+        schemaVersion: 1,
+        activeProjectId: "project-local",
+        projects: { "project-local": { projectId: "project-local" } }
+      }
+    }
+  });
+  await controller.load();
+  const status = await controller.setEnabled(true);
+
+  assert.equal(status.ok, false);
+  assert.equal(status.enableRejected, true);
+  assert.equal(status.reason, "companion_enable_requires_project_migration");
+  assert.equal(status.activeProjectId, "project-local");
+  assert.equal(controller.isEnabled(), false);
+  assert.equal(storageArea.data[COMPANION_MODE_KEY], undefined);
+  assert.equal(transports.length, 0);
 });
 
 test("reconnect timer rebuilds a dropped companion endpoint without changing mode", async () => {
