@@ -115,10 +115,10 @@
       return { ok: true, bundle, projectId, schemaVersion: stateCheck.schemaVersion };
     }
 
-    async importBundle(input, { replace = false } = {}) {
+    async importBundle(input, { replace = false, freezeAfter = false } = {}) {
       const checked = this.validateBundle(input);
       if (!checked.ok) return checked;
-      const imported = await this.portableStateManager.import(checked.bundle.state, { replace });
+      const imported = await this.portableStateManager.import(checked.bundle.state, { replace, freezeAfter });
       if (!imported.ok) return imported;
       return {
         ok: true,
