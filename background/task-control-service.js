@@ -7,7 +7,7 @@
     constructor({ schedulerStore, schedulerEngine, projectStore = null, reviewStore, reviewEngine, integrationEngine, registry, recoveryController = null, clock = () => Date.now() } = {}) {
       this.schedulerStore = schedulerStore;
       this.schedulerEngine = schedulerEngine;
-      this.projectStore = projectStore;
+      this.projectStore = projectStore || schedulerEngine?.projectStore || null;
       this.reviewStore = reviewStore;
       this.reviewEngine = reviewEngine;
       this.integrationEngine = integrationEngine;
@@ -125,6 +125,12 @@
         if (!agent || agent.role !== "worker" || !this.registry?.isAgentConnected?.(agent) || agent.status !== "IDLE") return { ok: false, reason: "target_agent_not_idle", agentId };
         const available = (this.schedulerEngine?.availableWorkers?.() || []).some((item) => item.agentId === agent.agentId);
         if (!available) return { ok: false, reason: "target_agent_unavailable", agentId };
+        if (!this.schedulerStore.dependenciesSatisfied(task)) return { ok: false, reason: "task_dependencies_not_satisfied" };
+        const conflict = this.schedulerEngine?.conflictsWithAny?.(task, this.schedulerEngine?.activeTasks?.() || []);
+        if (conflict?.conflict) return { ok: false, reason: "task_conflicts_with_active_work", conflict };
+        const maxWorkers = Number(this.schedulerStore.summary().settings?.maxWorkers) || 1;
+        const activeRoles = (this.schedulerStore.activeRuns?.().length || 0) + (this.reviewEngine?.activeCount?.() || 0);
+        if (activeRoles >= maxWorkers) return { ok: false, reason: "worker_capacity_full" };
         if (task.status === "NEEDS_USER") {
           const mutable = this.mutableTask(task.id);
           mutable.status = "READY";
@@ -135,12 +141,6 @@
           task = this.schedulerStore.getTask(task.id);
           await this.reopenExecution("manual_task_reassign", { taskId: task.id, agentId: agent.agentId });
         }
-        if (!this.schedulerStore.dependenciesSatisfied(task)) return { ok: false, reason: "task_dependencies_not_satisfied" };
-        const conflict = this.schedulerEngine?.conflictsWithAny?.(task, this.schedulerEngine?.activeTasks?.() || []);
-        if (conflict?.conflict) return { ok: false, reason: "task_conflicts_with_active_work", conflict };
-        const maxWorkers = Number(this.schedulerStore.summary().settings?.maxWorkers) || 1;
-        const activeRoles = (this.schedulerStore.activeRuns?.().length || 0) + (this.reviewEngine?.activeCount?.() || 0);
-        if (activeRoles >= maxWorkers) return { ok: false, reason: "worker_capacity_full" };
         const dispatched = await this.schedulerEngine?.dispatch?.(task, agent);
         if (!dispatched?.ok) return dispatched || { ok: false, reason: "task_dispatch_failed" };
         await this.schedulerStore.logDecision("task_reassigned", { taskId: task.id, agentId: agent.agentId, runId: dispatched.runId || dispatched.run?.runId || null });
