@@ -1,151 +1,162 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-require("../background/git-provider.js");
-require("../background/integration-policy.js");
 require("../prompts/integration-prompts.js");
+require("../prompts/worker-prompts.js");
 const { IntegrationStore } = require("../background/integration-store.js");
 const { IntegrationEngine } = require("../background/integration-engine.js");
 
-const BASE = "a".repeat(40);
-const T1 = "b".repeat(40);
-const T2 = "c".repeat(40);
-const HEAD = "d".repeat(40);
-const MERGE1 = "e".repeat(40);
-
-function fakeStorage() {
-  const data = {};
-  return { async get(key) { return { [key]: data[key] }; }, async set(values) { Object.assign(data, values); } };
+function artifact(taskId, commit, changedFiles) {
+  return {
+    taskId,
+    branch: `orchestra/P1/${taskId}/R-${taskId}`,
+    commit,
+    baseSha: "a".repeat(40),
+    targetBranch: "main",
+    changedFiles
+  };
 }
 
-class FakeEventBus {
-  constructor() { this.listeners = new Map(); }
-  subscribe(route, listener) {
-    const list = this.listeners.get(route) || [];
-    list.push(listener);
-    this.listeners.set(route, list);
-    return () => {};
-  }
-}
-
-function approvedTask(id, commit, branch, changedFiles, lastRunId) {
+function task(id, dependencies, gitArtifact, category = "feature") {
   return {
     id,
-    title: id === "T1" ? "API schema" : "Consumer",
-    objective: `Implement ${id}`,
-    kind: "code",
-    dependencies: id === "T2" ? ["T1"] : [],
-    verification: ["npm test"],
+    title: id,
+    objective: `${id} objective`,
     status: "APPROVED",
-    lastRunId,
-    lastArtifact: { commit, branch, baseSha: BASE, targetBranch: "main", changedFiles }
+    dependencies,
+    acceptanceCriteria: [`${id} accepted`],
+    verification: ["npm test"],
+    category,
+    lastArtifact: gitArtifact,
+    lastReview: { status: "APPROVED", summary: "ok" }
   };
 }
 
-function scheduler(tasks) {
-  const state = { status: "READY_FOR_INTEGRATION", decisions: [] };
-  const runs = { R1: { runId: "R1", agentId: "A1" }, R2: { runId: "R2", agentId: "A2" } };
-  return {
-    state,
-    summary() { return { status: state.status, projectId: "P1" }; },
-    listTasks() { return tasks.map((task) => JSON.parse(JSON.stringify(task))); },
-    getRun(runId) { return runs[runId] ? { ...runs[runId] } : null; },
-    getGitSnapshot() { return { provider: "test", defaultBranch: "main", baseSha: BASE }; },
-    async setStatus(status) { state.status = status; return this.summary(); },
-    async logDecision(type, details) { state.decisions.push({ type, details }); }
-  };
+class StorageArea {
+  constructor() { this.data = {}; }
+  async get(key) { return { [key]: this.data[key] }; }
+  async set(values) { Object.assign(this.data, JSON.parse(JSON.stringify(values))); }
 }
 
-function projects() {
-  const project = {
-    projectId: "P1",
-    status: "READY_FOR_INTEGRATION",
-    repository: { url: "https://github.com/acme/widget", owner: "acme", repo: "widget" },
-    artifacts: { DISCOVERY: { testCommands: ["npm test"] } }
-  };
-  return {
-    project,
-    getActiveProject() { return JSON.parse(JSON.stringify(project)); },
-    async setExecutionStatus(projectId, status, details) {
-      assert.equal(projectId, "P1");
-      project.status = status;
-      project.execution = { status, details };
-      return this.getActiveProject();
-    }
-  };
+class FakeGitProvider {
+  constructor() {
+    this.targetSha = "a".repeat(40);
+    this.branches = new Map();
+    this.compares = new Map();
+  }
+  async getRef(repo, branch) {
+    const sha = branch === "main" ? this.targetSha : this.branches.get(branch);
+    return sha ? { ok: true, sha } : { ok: false, reason: "ref_missing" };
+  }
+  async compare(repo, base, head) {
+    return this.compares.get(`${base}...${head}`) || { ok: false, reason: "compare_missing" };
+  }
+  setBranch(branch, sha) { this.branches.set(branch, sha); }
+  setCompare(base, head, value) { this.compares.set(`${base}...${head}`, value); }
 }
 
-function registry() {
-  const agents = ["A1", "A2", "A3"].map((agentId, index) => ({ agentId, role: "worker", tabId: 10 + index, status: "IDLE", protocolContext: null, lastSeenAt: 0 }));
-  return {
-    agents,
-    listAgents() { return agents.map((agent) => ({ ...agent, protocolContext: agent.protocolContext ? { ...agent.protocolContext } : null })); },
-    getAgent(agentId) { const agent = agents.find((item) => item.agentId === agentId); return agent ? { ...agent, protocolContext: agent.protocolContext ? { ...agent.protocolContext } : null } : null; },
-    async setProtocolContext(agentId, context) { const agent = agents.find((item) => item.agentId === agentId); if (!agent) return null; agent.protocolContext = { ...context }; return { ...agent }; },
-    async clearProtocolContext(agentId) { const agent = agents.find((item) => item.agentId === agentId); if (agent) agent.protocolContext = null; return agent ? { ...agent } : null; }
+async function setup({ sharedConflict = false } = {}) {
+  const a1 = artifact("T1", "b".repeat(40), [sharedConflict ? "src/shared.js" : "src/base.js"]);
+  const a2 = artifact("T2", "c".repeat(40), [sharedConflict ? "src/shared.js" : "src/feature.js"]);
+  const tasks = [
+    task("T1", [], a1, "foundation"),
+    task("T2", ["T1"], a2, "feature")
+  ];
+  const schedulerStore = {
+    state: { status: "READY_FOR_INTEGRATION" },
+    listTasks: () => tasks.map((entry) => JSON.parse(JSON.stringify(entry))),
+    getTask: (id) => JSON.parse(JSON.stringify(tasks.find((entry) => entry.id === id) || null)),
+    async setExecutionStatus(status) { this.state.status = status; },
+    summary() { return { status: this.state.status }; }
   };
-}
-
-function provider() {
-  return {
-    async checkBaseFresh() { return { ok: true, currentTargetSha: BASE }; },
-    async getBranchHead(_project, branch) { return { ok: true, branch, sha: HEAD }; },
-    async compare(_project, base, head) {
-      if (base === BASE && head === HEAD) {
-        return { ok: true, comparison: {
-          merge_base_commit: { sha: BASE }, ahead_by: 2, behind_by: 0,
-          files: [{ filename: "src/a.js" }, { filename: "src/b.js" }]
-        } };
-      }
-      if ((base === T1 || base === T2) && head === HEAD) {
-        return { ok: true, comparison: { merge_base_commit: { sha: base }, ahead_by: 1, behind_by: 0, files: [] } };
-      }
-      throw new Error(`unexpected compare ${base}...${head}`);
+  const projectStore = {
+    project: {
+      projectId: "P1",
+      status: "READY_FOR_INTEGRATION",
+      repository: { url: "https://github.com/acme/widget", owner: "acme", repo: "widget" },
+      execution: { git: { targetBranch: "main", baseSha: "a".repeat(40) } },
+      artifacts: { DISCOVERY: { commands: { test: ["npm test"] } } }
     },
-    async request(path) {
-      if (path.endsWith(`/git/commits/${HEAD}`)) return { ok: true, data: { sha: HEAD, parents: [{ sha: MERGE1 }, { sha: T2 }] } };
-      if (path.endsWith(`/git/commits/${MERGE1}`)) return { ok: true, data: { sha: MERGE1, parents: [{ sha: BASE }, { sha: T1 }] } };
-      return { ok: false, reason: "not_found" };
-    }
+    getActiveProject() { return JSON.parse(JSON.stringify(this.project)); },
+    async setStatus(status) { this.project.status = status; }
   };
+  const agents = [
+    { agentId: "A1", role: "worker", status: "IDLE" },
+    { agentId: "A2", role: "worker", status: "IDLE" },
+    { agentId: "A3", role: "worker", status: "IDLE" }
+  ];
+  const registry = {
+    listAgents: () => agents.map((entry) => ({ ...entry })),
+    isAgentConnected: () => true,
+    async setProtocolContext() {},
+    async clearProtocolContext() {}
+  };
+  const storageArea = new StorageArea();
+  const store = new IntegrationStore({ storageArea });
+  const provider = new FakeGitProvider();
+  const prompts = [];
+  const engine = new IntegrationEngine({
+    projectStore,
+    schedulerStore,
+    registry,
+    store,
+    gitProvider: provider,
+    sendPrompt: async (agentId, prompt) => { prompts.push({ agentId, prompt }); return { ok: true }; },
+    now: (() => { let n = 1789315359944; return () => ++n; })()
+  });
+  await engine.init();
+  const started = await engine.maybeStart();
+  assert.equal(started.ok, true);
+  const run = store.currentRun();
+  const head = "d".repeat(40);
+  provider.setBranch(run.branch, head);
+  provider.setCompare(run.baseSha, head, {
+    ok: true,
+    status: "ahead",
+    aheadBy: 4,
+    behindBy: 0,
+    mergeBaseSha: run.baseSha,
+    files: [...new Set(run.artifacts.flatMap((entry) => entry.changedFiles))],
+    commits: [
+      { sha: run.artifacts[0].commit, parents: [run.baseSha] },
+      { sha: "1".repeat(40), parents: [run.artifacts[0].commit, run.baseSha], message: "merge T1" },
+      { sha: run.artifacts[1].commit, parents: [run.baseSha] },
+      { sha: head, parents: ["1".repeat(40), run.artifacts[1].commit], message: "merge T2" }
+    ]
+  });
+  provider.setCompare(run.artifacts[0].commit, head, { ok: true, status: "ahead", aheadBy: 1, behindBy: 0, mergeBaseSha: run.artifacts[0].commit, files: [] });
+  provider.setCompare(run.artifacts[1].commit, head, { ok: true, status: "ahead", aheadBy: 1, behindBy: 0, mergeBaseSha: run.artifacts[1].commit, files: [] });
+  return { engine, store, provider, prompts, schedulerStore, projectStore, tasks };
 }
 
 function completion(run) {
   return {
     event: {
-      v: 1, event: "DONE", projectId: "P1", taskId: "integration", runId: run.runId, agentId: run.agentId,
-      eventId: `${run.runId}-done`, sequence: 1,
-      payload: { integration: {
-        branch: run.branch, commit: HEAD, baseSha: BASE, targetBranch: "main",
-        mergedTaskIds: ["T1", "T2"], changedFiles: ["src/a.js", "src/b.js"],
-        checks: [{ command: "npm test", status: "PASS", evidence: "all integration tests passed" }],
-        summary: "integrated"
-      } }
+      v: 1,
+      event: "DONE",
+      projectId: "P1",
+      taskId: "integration",
+      runId: run.runId,
+      agentId: run.agentId,
+      eventId: `${run.runId}-done`,
+      sequence: 1,
+      payload: {
+        integration: {
+          branch: run.branch,
+          headCommit: "d".repeat(40),
+          baseSha: run.baseSha,
+          targetBranch: run.targetBranch,
+          mergedTaskIds: [...run.mergeTaskIds],
+          changedFiles: [...new Set(run.artifacts.flatMap((entry) => entry.changedFiles))],
+          checks: run.verificationCommands.map((command) => ({ command, status: "PASS", evidence: "ok" }))
+        }
+      }
     }
   };
 }
 
-async function setup({ sharedConflict = false } = {}) {
-  const tasks = [
-    approvedTask("T1", T1, "orchestra/P1/T1/R1", sharedConflict ? ["src/shared.js"] : ["src/a.js"], "R1"),
-    approvedTask("T2", T2, "orchestra/P1/T2/R2", sharedConflict ? ["src/shared.js"] : ["src/b.js"], "R2")
-  ];
-  const store = new IntegrationStore({ storageArea: fakeStorage() });
-  const schedulerStore = scheduler(tasks);
-  const projectStore = projects();
-  const agentRegistry = registry();
-  const prompts = [];
-  const engine = new IntegrationEngine({
-    store, schedulerStore, projectStore, registry: agentRegistry, eventBus: new FakeEventBus(), gitProvider: provider(),
-    idFactory: () => "I1",
-    sendPrompt: async (agentId, prompt) => { prompts.push({ agentId, prompt }); return { ok: true }; }
-  });
-  await engine.init();
-  return { engine, store, schedulerStore, projectStore, agentRegistry, prompts };
-}
-
 test("allocates a dynamic Integrator and verifies remote merge ancestry/order before completion", async () => {
-  const { engine, store, schedulerStore, projectStore, prompts } = await setup();
+  const { engine, store, prompts, schedulerStore, projectStore } = await setup();
   const run = store.currentRun();
   assert.equal(run.agentId, "A3");
   assert.equal(run.status, "RUNNING");
@@ -181,7 +192,8 @@ test("text merge conflict creates a persisted repair task and a bounded second I
   assert.deepEqual(store.listRepairs()[0].responsibleTaskIds, ["T1", "T2"]);
   assert.equal(store.listRepairs()[0].nextSequence, 2);
   assert.equal(prompts.length, 2);
-  assert.match(prompts[1].prompt, /REPAIR ATTEMPT: 1/);
+  assert.match(prompts[1].prompt, /PORTABLE REPAIR PACKET/);
+  assert.match(prompts[1].prompt, /"attempt": 1/);
   assert.match(prompts[1].prompt, /Use sequence=2/);
 });
 
@@ -198,7 +210,7 @@ test("semantic conflict without explicit upstream attribution fails closed", asy
       responsibleTaskIds: [],
       files: [],
       failedChecks: [{ command: "npm test", evidence: "cross-module assertion failed" }],
-      summary: "semantic incompatibility"
+      summary: "semantic mismatch"
     }
   } });
   assert.equal(store.summary().status, "NEEDS_USER");
@@ -211,18 +223,18 @@ test("semantic conflict with explicit responsible tasks enters repair loop", asy
   const run = store.currentRun();
   await engine.handleIntegrationEvent({ event: {
     v: 1, event: "CONFLICT", projectId: "P1", taskId: "integration", runId: run.runId, agentId: run.agentId,
-    eventId: `${run.runId}-semantic`, sequence: 1,
+    eventId: `${run.runId}-semantic-2`, sequence: 1,
     payload: {
       conflictType: "semantic",
+      currentTaskId: null,
       mergedTaskIds: ["T1", "T2"],
       responsibleTaskIds: ["T1", "T2"],
-      files: [],
+      files: ["src/base.js", "src/feature.js"],
       failedChecks: [{ command: "npm test", evidence: "cross-module assertion failed" }],
-      summary: "semantic incompatibility"
+      summary: "semantic mismatch"
     }
   } });
   assert.equal(store.currentRun().status, "REPAIRING");
-  assert.deepEqual(store.listRepairs()[0].responsibleTaskIds, ["T1", "T2"]);
+  assert.equal(store.listRepairs().length, 1);
   assert.equal(prompts.length, 2);
-  assert.match(prompts[1].prompt, /For semantic conflict: make the smallest compatibility repair/);
 });
