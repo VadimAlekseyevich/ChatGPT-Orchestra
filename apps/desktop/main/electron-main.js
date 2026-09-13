@@ -3,14 +3,22 @@
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { createDesktopHost } = require("./desktop-host.js");
+const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
 const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
 
 let host = null;
 let unregisterIpc = null;
 let mainWindow = null;
 
+function companionRequested() {
+  return process.argv.includes("--companion") || process.env.ORCHESTRA_COMPANION === "1";
+}
+
 async function createMainWindow() {
-  host = await createDesktopHost({ dataDirectory: app.getPath("userData") });
+  const dataDirectory = app.getPath("userData");
+  host = companionRequested()
+    ? await createNativeCompanionDesktopHost({ dataDirectory })
+    : await createDesktopHost({ dataDirectory });
   unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
 
   mainWindow = new BrowserWindow({
@@ -18,7 +26,7 @@ async function createMainWindow() {
     height: 860,
     minWidth: 900,
     minHeight: 640,
-    title: "ChatGPT Orchestra",
+    title: companionRequested() ? "ChatGPT Orchestra · Companion" : "ChatGPT Orchestra",
     webPreferences: {
       preload: path.join(__dirname, "..", "preload.js"),
       contextIsolation: true,
@@ -57,3 +65,5 @@ app.on("before-quit", () => {
   host?.close?.().catch((error) => console.warn("[ChatGPT Orchestra] desktop_close_failed", error));
   host = null;
 });
+
+module.exports = { companionRequested };
