@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.14",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 14 adds bounded portable context packets and fresh-session role bootstrap.",
+  "version_name": "2.0.0-alpha.15",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 15 adds contract conformance suites and CI release gates.",
   "permissions": ["storage", "tabs", "alarms"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
