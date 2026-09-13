@@ -7,6 +7,7 @@
   const ExtensionCompanionEndpoint = root.ExtensionCompanionEndpoint || (typeof require === "function" ? require("./extension-companion-endpoint.js").ExtensionCompanionEndpoint : null);
 
   const COMPANION_MODE_KEY = "orchestraCompanionModeV1";
+  const LEGACY_PROJECTS_KEY = "orchestra.projects.v1";
   const RECONNECT_TIMER = "orchestra-companion-reconnect";
 
   class ExtensionCompanionModeController {
@@ -60,6 +61,14 @@
         transport,
         lastError: this.lastError
       };
+    }
+
+    async legacyProjectGuard() {
+      const stored = await this.storageArea?.get?.(LEGACY_PROJECTS_KEY);
+      const state = stored?.[LEGACY_PROJECTS_KEY];
+      const activeProjectId = state?.activeProjectId ? String(state.activeProjectId) : null;
+      if (!activeProjectId) return { ok: true };
+      return { ok: false, reason: "companion_enable_requires_project_migration", activeProjectId };
     }
 
     async persistEnabled() {
@@ -122,7 +131,13 @@
     }
 
     async setEnabled(enabled) {
-      this.enabled = enabled === true;
+      const requested = enabled === true;
+      if (requested && !this.enabled) {
+        const guard = await this.legacyProjectGuard();
+        if (!guard.ok) return { ...this.getStatus(), ...guard, enableRejected: true };
+      }
+
+      this.enabled = requested;
       await this.persistEnabled();
       if (!this.enabled) {
         await this.stopReconnectTimer();
@@ -170,6 +185,6 @@
   root.COMPANION_MODE_KEY = COMPANION_MODE_KEY;
   root.COMPANION_RECONNECT_TIMER = RECONNECT_TIMER;
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { ExtensionCompanionModeController, COMPANION_MODE_KEY, RECONNECT_TIMER };
+    module.exports = { ExtensionCompanionModeController, COMPANION_MODE_KEY, LEGACY_PROJECTS_KEY, RECONNECT_TIMER };
   }
 })();
