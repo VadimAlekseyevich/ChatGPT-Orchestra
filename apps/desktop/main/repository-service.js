@@ -2,7 +2,7 @@
 
 const path = require("node:path");
 const { LocalRepositoryRegistry, TRUST_STATES } = require("../../../platform/local-repository-registry.js");
-const { GitCliWorkspace } = require("../../../platform/git-cli-workspace.js");
+const { SystemGitWorkspace } = require("../../../platform/system-git-workspace.js");
 
 class DesktopRepositoryService {
   constructor({ stateStore, paths, clock = () => Date.now(), workspaceFactory = null } = {}) {
@@ -11,7 +11,7 @@ class DesktopRepositoryService {
     this.paths = paths;
     this.clock = clock;
     this.registry = new LocalRepositoryRegistry({ stateStore, clock });
-    this.workspaceFactory = workspaceFactory || ((options) => new GitCliWorkspace(options));
+    this.workspaceFactory = workspaceFactory || ((options) => new SystemGitWorkspace(options));
     this.adapters = new Map();
   }
 
@@ -85,12 +85,12 @@ class DesktopRepositoryService {
 
   async createTaskWorkspace(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    return { ok: true, workspace: await adapter.createTaskWorkspace(payload.taskId, payload.runId, payload.startSha || "HEAD") };
+    return { ok: true, workspace: await adapter.createTaskWorkspace(payload) };
   }
 
   async createIntegrationWorkspace(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    return { ok: true, workspace: await adapter.createIntegrationWorkspace(payload.runId, payload.startSha || "HEAD") };
+    return { ok: true, workspace: await adapter.createIntegrationWorkspace(payload) };
   }
 
   async workspaceStatus(payload = {}) {
@@ -105,7 +105,7 @@ class DesktopRepositoryService {
 
   async workspaceScope(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    return { ok: true, scope: await adapter.validateScope(payload.workspaceId, payload.allowedPaths || payload.allow || []) };
+    return { ok: true, scope: await adapter.validateScope(payload.workspaceId, { allow: payload.allowedPaths || payload.allow || [] }) };
   }
 
   async verifyWorkspace(payload = {}) {
@@ -123,7 +123,7 @@ class DesktopRepositoryService {
 
   async commitWorkspace(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    const commit = await adapter.commit(payload.workspaceId, payload.message);
+    const commit = await adapter.commit(payload.workspaceId, { message: payload.message });
     return commit?.ok === false ? commit : { ok: true, commit };
   }
 
