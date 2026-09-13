@@ -33,6 +33,22 @@
       if (projectId) await this.projectStore?.setExecutionStatus?.(projectId, "RUNNING", { phase: 12, reason, ...details });
     }
 
+    async finalizeCancellation(details = {}) {
+      const tasks = this.schedulerStore?.listTasks?.() || [];
+      const allTerminal = tasks.length > 0 && tasks.every((task) => ["APPROVED", "CANCELLED"].includes(task.status));
+      const approvedCount = tasks.filter((task) => task.status === "APPROVED").length;
+      if (allTerminal && approvedCount === 0) {
+        await this.schedulerStore?.setStatus?.("CANCELLED");
+        const projectId = this.schedulerStore?.summary?.().projectId;
+        if (projectId) await this.projectStore?.setExecutionStatus?.(projectId, "CANCELLED", { phase: 12, reason: "all_tasks_cancelled", ...details });
+        await this.schedulerStore?.logDecision?.("project_cancelled_all_tasks", { ...details, taskCount: tasks.length });
+        return { terminal: true, status: "CANCELLED" };
+      }
+      await this.reopenExecution("tasks_cancelled", details);
+      if (this.recoveryStatus() === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "tasks_cancelled" });
+      return { terminal: false, status: this.schedulerStore?.summary?.().status || "RUNNING" };
+    }
+
     downstreamTaskIds(taskId) {
       const tasks = this.schedulerStore?.listTasks?.() || [];
       const direct = new Map(tasks.map((task) => [task.id, []]));
@@ -92,10 +108,10 @@
           mutable.updatedAt = now;
         }
         await this.schedulerStore.persist();
-        await this.schedulerStore.logDecision("tasks_cancelled", { taskId: task.id, cascade: Boolean(cascade), cancelledTaskIds: ids });
-        await this.reopenExecution("tasks_cancelled", { taskId: task.id, cascade: Boolean(cascade), cancelledTaskIds: ids });
-        if (this.recoveryStatus() === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "tasks_cancelled" });
-        return { ok: true, cancelledTaskIds: ids, scheduler: this.schedulerEngine?.getPublicState?.() || this.schedulerStore.summary() };
+        const details = { taskId: task.id, cascade: Boolean(cascade), cancelledTaskIds: ids };
+        await this.schedulerStore.logDecision("tasks_cancelled", details);
+        const terminal = await this.finalizeCancellation(details);
+        return { ok: true, cancelledTaskIds: ids, terminal: terminal.terminal, scheduler: this.schedulerEngine?.getPublicState?.() || this.schedulerStore.summary() };
       });
     }
 

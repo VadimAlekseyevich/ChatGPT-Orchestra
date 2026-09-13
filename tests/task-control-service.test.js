@@ -82,6 +82,29 @@ test("cancel refuses downstream graph mutation unless cascade is explicit", asyn
   assert.equal(state.status, "RUNNING");
 });
 
+test("cancelling every task terminates project as CANCELLED instead of integration-ready", async () => {
+  const { service, state, projectUpdates, ticks } = harness();
+  state.tasks.T1.status = "READY";
+  state.tasks.T4.status = "READY";
+  state.tasks.T4.activeRunId = null;
+  state.runs = {};
+
+  const first = await service.cancelTask("T4");
+  assert.equal(first.ok, true);
+  assert.equal(first.terminal, false);
+
+  const tickCountBeforeTerminalCancel = ticks.length;
+  const result = await service.cancelTask("T1", { cascade: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.terminal, true);
+  assert.equal(state.status, "CANCELLED");
+  assert.equal(Object.values(state.tasks).every((task) => task.status === "CANCELLED"), true);
+  assert.equal(projectUpdates.at(-1).status, "CANCELLED");
+  assert.equal(projectUpdates.at(-1).details.reason, "all_tasks_cancelled");
+  assert.equal(ticks.length, tickCountBeforeTerminalCancel);
+  assert.equal(state.decisionLog.some((item) => item.type === "project_cancelled_all_tasks"), true);
+});
+
 test("active task cancellation fails closed", async () => {
   const { service, state } = harness();
   const result = await service.cancelTask("T4");
