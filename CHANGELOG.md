@@ -4,6 +4,48 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.15] - 2026-09-13
+
+### Added
+
+- GitHub Actions CI для pull requests и pushes в `main`;
+- full Core test matrix на Node 18 и Node 22;
+- reusable contract/conformance suites для `AgentRuntime`, `StateStore`, transactional state, `TimerRuntime`, `GitWorkspace` и Orchestrator API;
+- `FakeGitWorkspace` как reference implementation будущего local Git/worktree contract;
+- deterministic ChatGPT browser fixture corpus для idle/generating/completed/composer-occupied/error/login/navigation states;
+- manifest/package/version/permission release validator;
+- aggregate `npm run test:phase14` release gate;
+- Phase 14 architecture doc и ADR 0014.
+
+### Reliability and safety
+
+- PR больше не считается green без автоматических Core + contract + persistence + browser fixture + release checks;
+- CI использует read-only repository permissions и не получает write credentials для runtime tests;
+- contract manifest синхронизирован с Orchestrator API v4, включая `contextSummary` и `contextPacket`;
+- `GitWorkspace` contract добавлен до появления реального desktop Git runtime, чтобы Phase 15–17 implementations сразу проходили общий parity suite;
+- первый CI rollout обнаружил реальный GenerationDetector regression: explicit busy внутри hydration grace мог не завершить busy → idle settling; detector исправлен так, что explicit generation signal отключает hydration grace для текущей generation;
+- Phase 13 optional-first packet compaction и portable repair prompt expectations синхронизированы с regression suite без ослабления fail-closed packet gates;
+- extension permissions и target-branch policy не изменились.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.15`;
+- Platform Contracts обновлены до v4;
+- Phase 15 — Desktop Shell Bootstrap — становится следующим roadmap этапом.
+
+### Validation
+
+- PR #25 final Actions run #5 на exact head прошёл полностью: Core Node 18/22, Contracts Node 18/22, SQLite/persistence Node 22, browser fixtures Node 18, release contract Node 18 и aggregate Phase 14 Node 22 — success;
+- после squash merge push-to-`main` Actions run #6 повторил те же восемь green jobs;
+- PR перед merge был `behind=0` и `mergeable=true`;
+- production ChatGPT DOM остаётся отдельным manual smoke gate, как и предусмотрено roadmap.
+
+### Next
+
+- Phase 15 — Desktop Shell Bootstrap.
+
+---
+
 ## [2.0.0-alpha.14] - 2026-09-13
 
 ### Added
