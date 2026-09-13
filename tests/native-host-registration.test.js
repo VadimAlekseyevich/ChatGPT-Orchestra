@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   validateExtensionId,
+  validateHostPath,
   createNativeHostManifest,
   manifestDirectoryForBrowser,
   windowsRegistryKey,
@@ -22,11 +23,17 @@ function tempExecutable(root, name = "ChatGPT Orchestra.exe") {
   return filename;
 }
 
-test("extension ids and generated native-host origins are fail-closed", () => {
+test("extension ids and native host executable paths are fail-closed", () => {
   assert.equal(validateExtensionId(EXTENSION_ID), EXTENSION_ID);
   assert.throws(() => validateExtensionId("not-an-extension"), /invalid_extension_id/);
+  assert.throws(() => validateHostPath(""), /native_host_path_invalid/);
 
-  const manifest = createNativeHostManifest({ hostPath: "/opt/orchestra/ChatGPT Orchestra", extensionId: EXTENSION_ID });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-native-path-"));
+  assert.throws(() => validateHostPath(directory), /native_host_path_invalid/);
+  const hostPath = tempExecutable(directory);
+  assert.equal(validateHostPath(hostPath), path.resolve(hostPath));
+
+  const manifest = createNativeHostManifest({ hostPath, extensionId: EXTENSION_ID });
   assert.equal(manifest.name, "com.chatgptorchestra.companion");
   assert.equal(manifest.type, "stdio");
   assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${EXTENSION_ID}/`]);
@@ -115,10 +122,13 @@ test("Linux registration writes browser-specific manifests with the packaged hos
   }
 });
 
-test("electron main checks native-host mode before loading Electron GUI APIs", () => {
+test("electron main handles registration/native-host modes before loading Electron GUI APIs", () => {
   const source = fs.readFileSync(path.resolve(__dirname, "../apps/desktop/main/electron-main.js"), "utf8");
-  const branchIndex = source.indexOf("if (nativeMessagingRequested())");
+  const registrationIndex = source.indexOf("if (registrationRequest)");
+  const nativeIndex = source.indexOf("nativeMessagingRequested())");
   const electronIndex = source.indexOf('require("electron")');
-  assert.ok(branchIndex >= 0);
-  assert.ok(electronIndex > branchIndex);
+  assert.ok(registrationIndex >= 0);
+  assert.ok(nativeIndex > registrationIndex);
+  assert.ok(electronIndex > nativeIndex);
+  assert.match(source, /hostPath:\s*executable/);
 });
