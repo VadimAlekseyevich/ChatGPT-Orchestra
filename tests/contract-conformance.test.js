@@ -3,12 +3,14 @@ const Contracts = require("../platform/contracts.js");
 const { MemoryStateStore, FakeAgentRuntime, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
 const { FakeGitWorkspace } = require("../platform/fake-git-workspace.js");
 const { TransactionalStateStore } = require("../platform/transactional-state-store.js");
+const { OrchestratorApi } = require("../background/orchestrator-api.js");
 const {
   agentRuntimeConformance,
   stateStoreConformance,
   transactionalStateStoreConformance,
   timerRuntimeConformance,
-  gitWorkspaceConformance
+  gitWorkspaceConformance,
+  orchestratorApiConformance
 } = require("./contracts/conformance.js");
 
 test("Platform contract version exposes Phase 14 parity surfaces", () => {
@@ -37,6 +39,10 @@ test("DeterministicTimerRuntime passes reusable TimerRuntime conformance", async
 
 test("FakeGitWorkspace passes reusable GitWorkspace conformance", async () => {
   await gitWorkspaceConformance(new FakeGitWorkspace());
+});
+
+test("OrchestratorApi recognizes every declared platform command/query", async () => {
+  await orchestratorApiConformance(new OrchestratorApi({}));
 });
 
 test("contract assertions fail closed for partial GitWorkspace implementations", () => {
