@@ -4,6 +4,7 @@ const path = require("node:path");
 const { LocalRepositoryRegistry, TRUST_STATES } = require("../../../platform/local-repository-registry.js");
 const { SystemGitWorkspace } = require("../../../platform/system-git-workspace.js");
 const { WorkspaceLifecyclePolicy } = require("./workspace-lifecycle.js");
+const { changeSetSummary } = require("../../../platform/local-change-set.js");
 
 class DesktopRepositoryService {
   constructor({ stateStore, paths, clock = () => Date.now(), workspaceFactory = null, logger = null, lifecyclePolicy = null } = {}) {
@@ -24,9 +25,7 @@ class DesktopRepositoryService {
     this.logger?.info?.("repository_audit", { event: String(event || "unknown"), ...details, at: this.clock() });
   }
 
-  adapterKey(projectId, repositoryId) {
-    return `${String(projectId || "")}::${String(repositoryId || "")}`;
-  }
+  adapterKey(projectId, repositoryId) { return `${String(projectId || "")}::${String(repositoryId || "")}`; }
 
   createAdapter(projectId, repositoryId) {
     return this.workspaceFactory({
@@ -52,10 +51,7 @@ class DesktopRepositoryService {
     return adapter;
   }
 
-  async listRepositories() {
-    return { ok: true, repositories: await this.registry.list() };
-  }
-
+  async listRepositories() { return { ok: true, repositories: await this.registry.list() }; }
   async getRepository(repositoryId) {
     const repository = await this.registry.get(repositoryId);
     return repository ? { ok: true, repository } : { ok: false, reason: "repository_not_registered" };
@@ -121,6 +117,31 @@ class DesktopRepositoryService {
     return { ok: true, scope: await adapter.validateScope(payload.workspaceId, { allow: payload.allowedPaths || payload.allow || [] }) };
   }
 
+  async applyWorkerChanges(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    if (typeof adapter.applyChangeSet !== "function") return { ok: false, reason: "local_change_set_unsupported" };
+    const summary = changeSetSummary(payload.changeSet);
+    if (!summary.ok) return summary;
+    const applied = await adapter.applyChangeSet(payload.workspaceId, payload.changeSet);
+    this.audit("worker_changes_applied", {
+      projectId: payload.projectId,
+      repositoryId: payload.repositoryId,
+      workspaceId: payload.workspaceId,
+      format: summary.format,
+      fileCount: summary.fileCount,
+      writeCount: summary.writeCount,
+      deleteCount: summary.deleteCount,
+      totalBytes: summary.totalBytes
+    });
+    return { ok: applied?.ok === true, applied, summary };
+  }
+
+  async workspaceReviewComparison(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    if (typeof adapter.reviewComparison !== "function") return { ok: false, reason: "local_review_comparison_unsupported" };
+    return adapter.reviewComparison(payload.workspaceId);
+  }
+
   async workspaceRecoveryReport(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
     return this.lifecyclePolicy.scan(adapter, { activeWorkspaceIds: payload.activeWorkspaceIds || [], retentionMs: payload.retentionMs });
@@ -129,13 +150,7 @@ class DesktopRepositoryService {
   async cleanupAbandonedWorkspaces(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
     const result = await this.lifecyclePolicy.cleanup(adapter, { activeWorkspaceIds: payload.activeWorkspaceIds || [], retentionMs: payload.retentionMs });
-    this.audit("abandoned_workspaces_cleanup", {
-      projectId: payload.projectId,
-      repositoryId: payload.repositoryId,
-      cleanedCount: result.cleaned.length,
-      salvageCount: result.salvage.length,
-      failedCount: result.failed.length
-    });
+    this.audit("abandoned_workspaces_cleanup", { projectId: payload.projectId, repositoryId: payload.repositoryId, cleanedCount: result.cleaned.length, salvageCount: result.salvage.length, failedCount: result.failed.length });
     return result;
   }
 
@@ -147,25 +162,13 @@ class DesktopRepositoryService {
   }
 
   verificationMetadata(payload = {}, runId) {
-    return {
-      projectId: payload.projectId,
-      repositoryId: payload.repositoryId,
-      workspaceId: payload.workspaceId,
-      runId,
-      command: String(payload.command || ""),
-      argCount: Array.isArray(payload.args) ? payload.args.length : 0,
-      timeoutMs: Number(payload.timeoutMs) || null,
-      startedAt: this.clock()
-    };
+    return { projectId: payload.projectId, repositoryId: payload.repositoryId, workspaceId: payload.workspaceId, runId, command: String(payload.command || ""), argCount: Array.isArray(payload.args) ? payload.args.length : 0, timeoutMs: Number(payload.timeoutMs) || null, startedAt: this.clock() };
   }
 
   listActiveVerificationRuns(payload = {}) {
     const projectId = payload.projectId ? String(payload.projectId) : null;
     const repositoryId = payload.repositoryId ? String(payload.repositoryId) : null;
-    const runs = [...this.activeVerificationRuns.values()].filter((item) => (
-      (!projectId || item.projectId === projectId)
-      && (!repositoryId || item.repositoryId === repositoryId)
-    )).map((item) => ({ ...item }));
+    const runs = [...this.activeVerificationRuns.values()].filter((item) => ((!projectId || item.projectId === projectId) && (!repositoryId || item.repositoryId === repositoryId))).map((item) => ({ ...item }));
     return { ok: true, runs };
   }
 
@@ -177,12 +180,9 @@ class DesktopRepositoryService {
     if (payload.projectId && String(payload.projectId) !== active.projectId) return { ok: false, reason: "verification_run_project_mismatch", runId };
     if (payload.repositoryId && String(payload.repositoryId) !== active.repositoryId) return { ok: false, reason: "verification_run_repository_mismatch", runId };
     const adapter = await this.adapterFor(active.projectId, active.repositoryId);
-    const cancelled = typeof adapter.cancelVerification === "function"
-      ? adapter.cancelVerification(runId)
-      : adapter.commandRunner?.cancel?.(runId) === true;
+    const cancelled = typeof adapter.cancelVerification === "function" ? adapter.cancelVerification(runId) : adapter.commandRunner?.cancel?.(runId) === true;
     if (!cancelled) return { ok: false, reason: "verification_cancel_failed", runId };
-    const updated = { ...active, cancelRequestedAt: this.clock() };
-    this.activeVerificationRuns.set(runId, updated);
+    this.activeVerificationRuns.set(runId, { ...active, cancelRequestedAt: this.clock() });
     this.audit("verification_cancel_requested", { projectId: active.projectId, repositoryId: active.repositoryId, workspaceId: active.workspaceId, runId });
     return { ok: true, runId };
   }
@@ -195,22 +195,8 @@ class DesktopRepositoryService {
     this.activeVerificationRuns.set(runId, metadata);
     this.audit("verification_started", metadata);
     try {
-      const verification = await adapter.runVerification(payload.workspaceId, {
-        command: payload.command,
-        args: payload.args,
-        runId,
-        timeoutMs: payload.timeoutMs,
-        maxOutputBytes: payload.maxOutputBytes
-      });
-      this.audit("verification_finished", {
-        ...metadata,
-        status: verification.status,
-        exitCode: verification.exitCode,
-        stdoutTruncated: verification.stdoutTruncated === true,
-        stderrTruncated: verification.stderrTruncated === true,
-        startedAt: verification.startedAt,
-        finishedAt: verification.finishedAt
-      });
+      const verification = await adapter.runVerification(payload.workspaceId, { command: payload.command, args: payload.args, runId, timeoutMs: payload.timeoutMs, maxOutputBytes: payload.maxOutputBytes });
+      this.audit("verification_finished", { ...metadata, status: verification.status, exitCode: verification.exitCode, stdoutTruncated: verification.stdoutTruncated === true, stderrTruncated: verification.stderrTruncated === true, startedAt: verification.startedAt, finishedAt: verification.finishedAt });
       return { ok: verification.ok === true, verification };
     } catch (error) {
       const reason = String(error?.message || "verification_failed");
