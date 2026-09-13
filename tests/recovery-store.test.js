@@ -35,6 +35,41 @@ test("recovery control plane persists pause and resume transitions", async () =>
   assert.equal(restored.summary().snapshotCursor, 2);
 });
 
+test("Stop Now boundary survives crash recovery and clears only after reconciled RUNNING", async () => {
+  const storage = fakeStorage();
+  const store = new RecoveryStore({ storageArea: storage });
+  await store.load();
+  await store.attachProject("P1", { status: "RUNNING" });
+  await store.transition("STOPPING", { reason: "user_stop_now" });
+  assert.equal(store.summary().stopBoundaryActive, true);
+
+  const afterCrash = new RecoveryStore({ storageArea: storage });
+  await afterCrash.load();
+  assert.equal(afterCrash.summary().status, "STOPPING");
+  assert.equal(afterCrash.summary().stopBoundaryActive, true);
+
+  await afterCrash.transition("RECOVERING", { reason: "service_worker_restart" });
+  assert.equal(afterCrash.summary().stopBoundaryActive, true);
+  await afterCrash.transition("RECOVERY_REQUIRED", { reason: "interrupted_stop" });
+  assert.equal(afterCrash.summary().stopBoundaryActive, true);
+  await afterCrash.transition("RUNNING", { reason: "resume_reconciled", reconciled: true });
+  assert.equal(afterCrash.summary().stopBoundaryActive, false);
+});
+
+test("legacy persisted STOPPING state restores stop boundary fail-closed", async () => {
+  const storage = fakeStorage();
+  storage.data["orchestra.recovery.v1"] = {
+    schemaVersion: 1,
+    projectId: "P1",
+    status: "STOPPING",
+    previousStatus: "RUNNING",
+    issues: []
+  };
+  const store = new RecoveryStore({ storageArea: storage });
+  await store.load();
+  assert.equal(store.summary().stopBoundaryActive, true);
+});
+
 test("unknown persisted control state fails closed as recovery required", async () => {
   const storage = fakeStorage();
   storage.data["orchestra.recovery.v1"] = {
