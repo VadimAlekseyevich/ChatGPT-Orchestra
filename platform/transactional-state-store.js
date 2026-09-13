@@ -14,10 +14,14 @@
       if (!store?.get || !store?.set) throw new TypeError("transactional_state_store_backend_invalid");
       this.store = store;
       this.chain = Promise.resolve();
+      this.writeFrozen = false;
     }
 
-    enqueue(operation) {
-      const next = this.chain.catch(() => {}).then(operation);
+    enqueue(operation, { allowFrozen = false } = {}) {
+      const next = this.chain.catch(() => {}).then(() => {
+        if (this.writeFrozen && !allowFrozen) throw new Error("state_store_writes_frozen");
+        return operation();
+      });
       this.chain = next.then(() => undefined, () => undefined);
       return next;
     }
@@ -31,7 +35,7 @@
     async remove(keys) { return this.enqueue(() => this.store.remove?.(keys)); }
     async clear() { return this.enqueue(() => this.store.clear?.()); }
 
-    async transaction(callback) {
+    async transaction(callback, { freezeAfter = false } = {}) {
       if (typeof callback !== "function") throw new TypeError("transaction_callback_required");
       return this.enqueue(async () => {
         const base = await this.store.get(null);
@@ -76,9 +80,12 @@
         if (cleared) await this.store.clear?.();
         if (removed.size) await this.store.remove?.([...removed]);
         if (staged.size) await this.store.set(Object.fromEntries(staged));
+        if (freezeAfter) this.writeFrozen = true;
         return result;
-      });
+      }, { allowFrozen: true });
     }
+
+    writesFrozen() { return this.writeFrozen; }
   }
 
   root.TransactionalStateStore = TransactionalStateStore;
