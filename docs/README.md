@@ -17,6 +17,8 @@
 - [`phase-7-smoke-test.md`](phase-7-smoke-test.md) — local Node + Edge acceptance checks для independent review;
 - [`phase-8-integrator.md`](phase-8-integrator.md) — dynamic Integrator role, deterministic merge composition, remote provenance verification и semantic conflict remediation;
 - [`phase-8-smoke-test.md`](phase-8-smoke-test.md) — local Node + Edge acceptance checks для verified integration, text conflicts и semantic conflicts;
+- [`phase-9-pause-resume-recovery.md`](phase-9-pause-resume-recovery.md) — recovery control plane, safe-point Pause, Stop Now, Resume и crash reconciliation;
+- [`phase-9-smoke-test.md`](phase-9-smoke-test.md) — browser/service-worker crash, Pause/Resume и Stop Now acceptance checks;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
