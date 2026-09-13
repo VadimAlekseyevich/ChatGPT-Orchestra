@@ -3,8 +3,8 @@
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
   "version_name": "2.0.0-alpha.15",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 15 adds contract conformance suites and CI release gates.",
-  "permissions": ["storage", "tabs", "alarms"],
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Desktop companion bridge development is in progress.",
+  "permissions": ["storage", "tabs", "alarms", "nativeMessaging"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
     "service_worker": "background/service-worker.js"
