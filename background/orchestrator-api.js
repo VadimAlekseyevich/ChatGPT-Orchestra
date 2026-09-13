@@ -110,7 +110,24 @@
       else if (command === "startExecution") result = await this.orchestrator?.startExecution?.(payload);
       else if (command === "registerActiveLead") {
         const beforeLead = this.orchestrator?.getPublicState?.()?.lead || null;
-        const replacementCandidate = !beforeLead || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || ""));
+        const projectBefore = this.planningEngine?.getPublicState?.() || null;
+        const expectedContext = projectBefore?.status === "PLANNING" && projectBefore.currentRunId
+          ? {
+              projectId: projectBefore.projectId,
+              taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`,
+              runId: projectBefore.currentRunId
+            }
+          : null;
+        const bound = beforeLead?.protocolContext || null;
+        const missingExpectedContext = Boolean(expectedContext && (
+          !bound
+          || bound.projectId !== expectedContext.projectId
+          || bound.taskId !== expectedContext.taskId
+          || bound.runId !== expectedContext.runId
+        ));
+        const replacementCandidate = !beforeLead
+          || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || ""))
+          || missingExpectedContext;
         result = await this.orchestrator?.registerActiveLead?.();
         const project = this.planningEngine?.getPublicState?.();
         if (result?.ok && replacementCandidate && project?.status === "PLANNING") {
