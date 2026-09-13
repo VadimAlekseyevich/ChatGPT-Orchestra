@@ -146,6 +146,7 @@ function initializeRuntime() {
 }
 
 let readyPromise = initializeRuntime();
+let portableReloadPending = false;
 
 function withReady(callback) {
   return Promise.resolve(readyPromise)
@@ -159,10 +160,21 @@ function withReady(callback) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
+    if (portableReloadPending) return { ok: false, reason: "portable_reload_pending" };
     const senderContext = agentRuntime.normalizeSender(sender);
-    const result = senderContext.sessionId
-      ? await orchestrator.handleRuntimeMessage(message, senderContext)
-      : await orchestratorApi.handleLegacyMessage(message, senderContext);
+    const isPortableImport = !senderContext.sessionId && message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT;
+    if (isPortableImport) portableReloadPending = true;
+
+    let result;
+    try {
+      result = senderContext.sessionId
+        ? await orchestrator.handleRuntimeMessage(message, senderContext)
+        : await orchestratorApi.handleLegacyMessage(message, senderContext);
+    } catch (error) {
+      if (isPortableImport) portableReloadPending = false;
+      throw error;
+    }
+    if (isPortableImport && !result?.ok) portableReloadPending = false;
 
     if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT && result?.ok) {
       const projectId = projectStore.getActiveProject()?.projectId;
@@ -173,7 +185,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
     }
 
-    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT && result?.ok && result?.reloadRequired) return result;
+    if (isPortableImport && result?.ok && result?.reloadRequired) return result;
 
     if (senderContext.agentId) {
       const agent = agentRuntime.getAgent(senderContext.agentId);
@@ -192,6 +204,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (portableReloadPending) return;
   withReady(async () => {
     const sessionId = String(tabId);
     const agent = agentRuntime.getAgentBySessionId(sessionId);
@@ -204,6 +217,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (portableReloadPending) return;
   withReady(async () => {
     const sessionId = String(tabId);
     const session = { id: sessionId, url: tab?.url || changeInfo?.url || "", active: Boolean(tab?.active) };
@@ -217,10 +231,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
-timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => withReady(async () => {
-  await schedulerEngine.tick({ reason: "watchdog_alarm" });
-  await integrationEngine.tick({ reason: "watchdog_alarm" });
-  await recoveryController.tick({ reason: "watchdog_alarm" });
-}).catch((error) => {
-  console.warn("[ChatGPT Orchestra] watchdog_failed", error);
-}));
+timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => {
+  if (portableReloadPending) return;
+  return withReady(async () => {
+    await schedulerEngine.tick({ reason: "watchdog_alarm" });
+    await integrationEngine.tick({ reason: "watchdog_alarm" });
+    await recoveryController.tick({ reason: "watchdog_alarm" });
+  }).catch((error) => {
+    console.warn("[ChatGPT Orchestra] watchdog_failed", error);
+  });
+});
