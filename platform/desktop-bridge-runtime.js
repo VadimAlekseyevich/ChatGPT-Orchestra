@@ -149,10 +149,13 @@
     async sendPrompt(agentId, prompt) { return this.remote("sendPrompt", { agentId, prompt: String(prompt || "") }); }
     async stopAgent(agentId) { return this.remote("stopAgent", { agentId }); }
 
-    bindHostHandlers({ onRuntimeMessage, onSessionRemoved, onSessionUpdated } = {}) {
+    bindHostHandlers({ onRuntimeMessage, onApiMessage, onSessionRemoved, onSessionUpdated } = {}) {
       this.unbindHostHandlers();
       if (typeof onRuntimeMessage === "function") {
         this.hostHandlerDisposers.push(this.rpc.onRequest("orchestrator.runtimeMessage", ({ message, sender } = {}) => onRuntimeMessage(message, this.normalizeSender(sender))));
+      }
+      if (typeof onApiMessage === "function") {
+        this.hostHandlerDisposers.push(this.rpc.onRequest("orchestrator.apiMessage", ({ message, sender } = {}) => onApiMessage(message, this.normalizeSender(sender))));
       }
       if (typeof onSessionRemoved === "function") {
         this.hostHandlerDisposers.push(this.rpc.onRequest("orchestrator.sessionRemoved", ({ sessionId } = {}) => onSessionRemoved(String(sessionId ?? ""))));
