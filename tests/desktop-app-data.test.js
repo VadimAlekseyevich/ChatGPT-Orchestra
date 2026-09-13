@@ -12,10 +12,14 @@ test("desktop app data resolution is platform-specific and deterministic", () =>
   assert.equal(resolveDesktopDataDirectory({ platform: "linux", env: { XDG_DATA_HOME: "/data/u" }, home: "/home/u" }), path.join("/data/u", "chatgpt-orchestra"));
 });
 
-test("ensureDesktopPaths creates isolated state, logs and bundle directories", () => {
+test("ensureDesktopPaths creates isolated state, logs, bundles and companion directories", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-desktop-paths-"));
   const paths = ensureDesktopPaths({ dataDirectory: path.join(root, "app") });
-  for (const directory of [paths.root, paths.stateDirectory, paths.logsDirectory, paths.bundlesDirectory]) assert.equal(fs.statSync(directory).isDirectory(), true);
+  for (const directory of [paths.root, paths.stateDirectory, paths.logsDirectory, paths.bundlesDirectory, paths.companionDirectory]) {
+    assert.equal(fs.statSync(directory).isDirectory(), true);
+  }
   assert.equal(paths.stateDatabase, path.join(paths.stateDirectory, "orchestra.sqlite"));
   assert.equal(paths.logFile, path.join(paths.logsDirectory, "orchestra.jsonl"));
+  assert.equal(paths.companionSecretFile, path.join(paths.companionDirectory, "pairing-secret"));
+  assert.equal(paths.companionEndpointFile, path.join(paths.companionDirectory, "endpoint.json"));
 });
