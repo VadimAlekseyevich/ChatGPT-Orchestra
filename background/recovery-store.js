@@ -42,6 +42,7 @@
   function normalizeStopBoundary(candidate, status) {
     if (candidate?.stopBoundaryActive === true) return true;
     if (["STOPPING", "STOPPED"].includes(status)) return true;
+    if (candidate?.reason === "interrupted_control_transition" && status === "RECOVERY_REQUIRED") return true;
     return candidate?.previousStatus === "STOPPING" && ["RECOVERING", "RECOVERY_REQUIRED"].includes(status);
   }
 
