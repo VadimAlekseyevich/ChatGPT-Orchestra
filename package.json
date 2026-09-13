@@ -24,6 +24,7 @@
     "test:phase13": "node --test tests/context-store.test.js tests/context-packets.test.js tests/context-prompt-gates.test.js tests/context-replacement.test.js tests/context-lead-registration.test.js tests/orchestrator-api.test.js tests/portable-state.test.js tests/persistence-api.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js",
     "test:phase14": "npm run test:release && npm run test:contracts && npm run test:browser-fixtures && node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/project-bundle.test.js tests/context-packets.test.js tests/recovery-controller.test.js tests/integration-engine.test.js",
     "test:phase15": "node --test tests/node-timer-runtime.test.js tests/desktop-app-data.test.js tests/desktop-ipc-router.test.js tests/desktop-host.test.js tests/phase15/desktop-synthetic-e2e.test.js",
+    "test:phase16": "node --test tests/companion-protocol.test.js tests/companion-rpc.test.js tests/native-messaging-transport.test.js tests/desktop-bridge-runtime.test.js",
     "desktop:dev": "electron .",
     "desktop:pack": "electron-builder --dir"
   },
