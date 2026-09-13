@@ -5,7 +5,7 @@
 Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 [![Platform](https://img.shields.io/badge/platform-Microsoft%20Edge-0A7EA4?style=for-the-badge)](#требования-и-permissions)
-[![Version](https://img.shields.io/badge/version-2.0.0--alpha.10-orange?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0--alpha.11-orange?style=for-the-badge)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/VadimAlekseyevich/ChatGPT-Orchestra?style=for-the-badge&label=license)](LICENSE)
 
 [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Документация](docs/README.md) · [Issues](../../issues)
@@ -18,9 +18,9 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 **ChatGPT Orchestra** — Manifest V3 extension, которая превращает несколько ChatGPT-чатов в управляемый оркестр coding-agent'ов с централизованным состоянием, формальным event protocol, staged planning, conflict-aware scheduling, Git isolation, независимым review, verified integration и deterministic recovery.
 
-Ключевой принцип: **чаты — исполнители, а не источник истины**. Project state, task/run/review/integration state, recovery lifecycle, event identity, Git provenance и scheduler decisions принадлежат Orchestrator Core в service worker.
+Ключевой принцип: **чаты — исполнители, а не источник истины**. Project state, task/run/review/integration state, recovery lifecycle, event identity, Git provenance и scheduler decisions принадлежат Orchestrator Core.
 
-После alpha.10 дальнейший roadmap меняет направление развития: существующий Core постепенно отвязывается от MV3 APIs, затем переносится в отдельное desktop-приложение. Extension остаётся рабочей reference-реализацией и временным companion bridge до достижения desktop parity.
+Начиная с alpha.11 Core постепенно отвязывается от MV3 APIs через platform contracts и Orchestrator API, чтобы затем переноситься в отдельное desktop-приложение. Extension остаётся рабочей reference-реализацией и временным companion bridge до достижения desktop parity.
 
 Полная целевая архитектура: [`ROADMAP.md`](ROADMAP.md).
 
@@ -28,7 +28,7 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 ## Текущий статус
 
-Текущая prerelease-версия — **`2.0.0-alpha.10`**.
+Текущая prerelease-версия — **`2.0.0-alpha.11`**.
 
 Реализованы:
 
@@ -40,7 +40,8 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 - Phase 6 — per-run Git task isolation и independent artifact validation;
 - Phase 7 — independent Reviewer, structured approval и bounded rework loop;
 - Phase 8 — dynamic Integrator, deterministic branch composition и semantic conflict remediation;
-- Phase 9 — safe-point Pause, Stop Now, reconcile-before-resume и browser/service-worker crash recovery.
+- Phase 9 — safe-point Pause, Stop Now, reconcile-before-resume и browser/service-worker crash recovery;
+- Phase 10 — platform contracts, extension adapters и portable Orchestrator API v1.
 
 Текущий execution pipeline:
 
@@ -273,7 +274,7 @@ Squash/rebase/cherry-pick task commits запрещены. Это позволя
 
 ### Text conflict
 
-Integrator abort'ит конфликтующий merge и отправляет structured `CONFLICT` с exact merged prefix, current task и unresolved files. Orchestra атрибутирует upstream tasks по current task + approved file provenance и создаёт bounded `integration-repair-*` task.
+Integrator abort'ит конфликтующий merge и отправляет structured `CONFLICT` с exact merged prefix, current task и unresolved files. Orchestra атрибутирует upstream tasks по current task + approved artifact file ownership и создаёт bounded `integration-repair-*` task.
 
 ### Semantic conflict
 
@@ -294,7 +295,7 @@ Integrator abort'ит конфликтующий merge и отправляет s
 - first-parent merge order совпадает с deterministic order;
 - каждый required integration command имеет `PASS` evidence.
 
-Alpha.10 сохраняет policy `integration_branch_only`: target branch расширение напрямую не изменяет.
+Alpha.11 сохраняет policy `integration_branch_only`: target branch расширение напрямую не изменяет.
 
 Подробности: [`docs/phase-8-integrator.md`](docs/phase-8-integrator.md).
 
@@ -340,6 +341,39 @@ Resume всегда выполняет reconciliation **до** открытия 
 
 ---
 
+## Platform Boundary + Orchestrator API
+
+Phase 10 вводит переносимую границу между Core и browser host:
+
+```text
+Chrome / Edge
+    │
+    ├─ ExtensionAgentRuntime
+    ├─ ChromeStorageStateStore
+    └─ ChromeAlarmRuntime
+              │
+              ▼
+       Orchestrator API v1
+              │
+              ▼
+ Planning / Scheduler / Review / Integration / Recovery / EventBus
+```
+
+Основные contracts:
+
+- `AgentRuntime` — session lifecycle, prompt/stop routing, heartbeat и logical agent identity;
+- `StateStore` — key/value persistence backend;
+- `TimerRuntime` — recurring watchdog scheduling;
+- `OrchestratorApi` — platform-neutral command/query surface для popup и будущего desktop IPC.
+
+`ServiceWorkerOrchestrator` больше не вызывает `chrome.tabs` напрямую. Browser-specific APIs собраны в extension adapters и composition root. Для browser-free tests доступны `FakeAgentRuntime`, `MemoryStateStore` и `DeterministicTimerRuntime`.
+
+Persisted `tabId` пока остаётся compatibility metadata текущей extension schema. Его удаление из portable durable state и state migrations относятся к Phase 11.
+
+Подробности: [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md).
+
+---
+
 ## Orchestra Protocol v1
 
 Protocol event — последняя непустая строка assistant response:
@@ -359,7 +393,7 @@ eventId
 sequence
 ```
 
-Event Bus обеспечивает duplicate suppression, `event_id_collision`, monotonic sequence, sender tab ↔ agent validation, stale project/task/run rejection и persisted audit.
+Event Bus обеспечивает duplicate suppression, `event_id_collision`, monotonic sequence, runtime sender ↔ agent validation, stale project/task/run rejection и persisted audit.
 
 Review использует тот же Protocol v1, но `runId` равен отдельному `reviewId`, а event — `REVIEW_APPROVED` или `CHANGES_REQUIRED`.
 
@@ -388,7 +422,7 @@ Popup умеет:
 
 ---
 
-## Safety invariants alpha.10
+## Safety invariants alpha.11
 
 - boot reconciliation закрывает dispatch до `bootReady=true`;
 - Pause запрещает новые prompts до safe point и во всём `PAUSED`;
@@ -405,16 +439,18 @@ Popup умеет:
 - Integrator использует deterministic `--no-ff` merge order;
 - target branch movement останавливает execution/recovery fail-closed;
 - final integration report не принимается без remote ancestry/merge-history validation;
-- alpha.10 не пишет target branch напрямую.
+- runtime connectivity и agent health разделены: существующая `ERROR` session не считается исчезнувшей;
+- alpha.11 не пишет target branch напрямую.
 
 ---
 
-## Архитектура alpha.10
+## Архитектура alpha.11
 
 ```text
 background/
   service-worker.js
   orchestrator.js
+  orchestrator-api.js
   tab-registry.js
   event-store.js
   event-bus.js
@@ -436,6 +472,11 @@ background/
   recovery-hooks.js
   recovery-stop-guards.js
 
+platform/
+  contracts.js
+  extension-runtime.js
+  fake-runtime.js
+
 protocol/
   orchestra-protocol.js
 
@@ -446,7 +487,7 @@ prompts/
   integration-prompts.js
 ```
 
-`ProjectStore` хранит project/approved DAG. `SchedulerStore` — mutable task/run state. `ReviewStore` — review identities/history. `IntegrationStore` — integration attempts/conflicts/repairs/final summary. `RecoveryStore` — persisted lifecycle intent/snapshots. `EventBus` — protocol identity/idempotency. `GitProvider` — independent Git provenance. ChatGPT tabs остаются replaceable executor nodes.
+`ProjectStore` хранит project/approved DAG. `SchedulerStore` — mutable task/run state. `ReviewStore` — review identities/history. `IntegrationStore` — integration attempts/conflicts/repairs/final summary. `RecoveryStore` — persisted lifecycle intent/snapshots. `EventBus` — protocol identity/idempotency. `GitProvider` — independent Git provenance. Platform adapters инкапсулируют browser host, а `OrchestratorApi` становится общей control-plane границей для extension и будущего desktop runtime.
 
 ---
 
@@ -456,7 +497,7 @@ prompts/
 git clone https://github.com/VadimAlekseyevich/ChatGPT-Orchestra.git
 cd ChatGPT-Orchestra
 npm test
-npm run test:phase9
+npm run test:phase10
 ```
 
 Затем:
@@ -486,18 +527,18 @@ Runtime extension не требует npm dependencies или build step.
 Manifest permissions:
 
 - `storage` — registry/event/project/scheduler/review/integration/recovery persisted state;
-- `tabs` — agent tab lifecycle и targeted routing;
-- `alarms` — scheduler/integration/recovery watchdog;
+- `tabs` — extension `AgentRuntime` session lifecycle и targeted routing;
+- `alarms` — extension `TimerRuntime` watchdog;
 - ChatGPT host permissions — content adapter;
 - `https://api.github.com/*` — read-only Git artifact/review/integration/recovery validation.
 
-Extension не хранит GitHub credentials и alpha.10 не использует GitHub write API. Git branches/commits создаются назначенными ChatGPT agents через их рабочую Git-среду; extension независимо проверяет remote result.
+Extension не хранит GitHub credentials и alpha.11 не использует GitHub write API. Git branches/commits создаются назначенными ChatGPT agents через их рабочую Git-среду; extension независимо проверяет remote result.
 
 ---
 
 ## Roadmap
 
-Завершённый extension foundation:
+Завершённый extension foundation и первый migration step:
 
 - Phase 0 — Repository reset / Rename hygiene;
 - Phase 1 — Adapter core — `2.0.0-alpha.2`;
@@ -508,12 +549,12 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - Phase 6 — Git Task Isolation — `2.0.0-alpha.7`;
 - Phase 7 — Independent Review Loop — `2.0.0-alpha.8`;
 - Phase 8 — Integrator + Semantic Conflicts — `2.0.0-alpha.9`;
-- Phase 9 — Pause / Resume / Crash Recovery — `2.0.0-alpha.10`.
+- Phase 9 — Pause / Resume / Crash Recovery — `2.0.0-alpha.10`;
+- Phase 10 — Platform Boundary + Orchestrator API — `2.0.0-alpha.11`.
 
-Следующая линия — постепенная desktop migration:
+Следующие этапы постепенной desktop migration:
 
-- **Phase 10 — Platform Boundary + Orchestrator API — следующий этап;**
-- Phase 11 — Portable Persistence + Project Export/Import;
+- **Phase 11 — Portable Persistence + Project Export/Import — следующий этап;**
 - Phase 12 — Portable Dashboard + Observability API;
 - Phase 13 — Context Management + Portable Agent Packets;
 - Phase 14 — Contract Tests + CI Foundation;
@@ -529,7 +570,7 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 
 ---
 
-## Ограничения alpha.10
+## Ограничения alpha.11
 
 - `INTEGRATION_VERIFIED` означает verified integration branch, но не automatic promotion в target branch;
 - target branch policy остаётся `integration_branch_only`;
@@ -537,7 +578,8 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - recovery не пытается восстановить скрытый model context закрытой ChatGPT вкладки: вместо этого reconciles persisted artifacts и создаёт fresh run identity;
 - unauthenticated GitHub REST reconciliation ориентирован на public-readable repositories;
 - review и semantic attribution остаются LLM-based quality gates поверх deterministic structural/provenance checks;
-- platform-neutral contracts, SQLite persistence и desktop runtime ещё не реализованы;
+- portable persistence schema, SQLite и desktop runtime ещё не реализованы;
+- legacy `tabId` остаётся compatibility metadata extension persistence до Phase 11 migration;
 - текущий production runtime остаётся Edge extension до прохождения migration phases;
 - browser E2E against production ChatGPT DOM остаётся ручным smoke-test.
 
@@ -556,5 +598,8 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - [`docs/phase-8-smoke-test.md`](docs/phase-8-smoke-test.md)
 - [`docs/phase-9-pause-resume-recovery.md`](docs/phase-9-pause-resume-recovery.md)
 - [`docs/phase-9-smoke-test.md`](docs/phase-9-smoke-test.md)
+- [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md)
+- [`docs/phase-10-smoke-test.md`](docs/phase-10-smoke-test.md)
 - [`docs/adr/0009-gradual-desktop-migration.md`](docs/adr/0009-gradual-desktop-migration.md)
+- [`docs/adr/0010-platform-contracts-orchestrator-api.md`](docs/adr/0010-platform-contracts-orchestrator-api.md)
 - [`docs/adr/`](docs/adr/)
