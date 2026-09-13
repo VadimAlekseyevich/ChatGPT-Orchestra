@@ -11,26 +11,42 @@
     if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
     return serialized.length;
   }
+  function sameJson(left, right) { return JSON.stringify(left ?? null) === JSON.stringify(right ?? null); }
   function hasStructuralTruncation(value) {
     if (!value || typeof value !== "object") return false;
     if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
     if (Array.isArray(value)) return value.some(hasStructuralTruncation);
     return Object.values(value).some(hasStructuralTruncation);
   }
-  function packetCompleteness(packet, repair = false) {
+  function integrationManifest(run = {}) {
+    return {
+      runId: run.runId,
+      branch: run.branch,
+      baseSha: run.baseSha,
+      targetBranch: run.targetBranch,
+      taskOrder: run.taskOrder,
+      mergeTaskIds: run.mergeTaskIds,
+      artifacts: run.artifacts,
+      verificationCommands: run.verificationCommands
+    };
+  }
+  function packetCompleteness(packet, repair = false, { run = null, repairTask = null } = {}) {
     if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
     const type = repair ? "repair" : "integration";
     const maxBytes = Number(root.ContextPackets?.BUDGETS?.[type] || (repair ? 32000 : 36000));
     const actualBytes = bytes(packet);
     const required = repair ? ["integration", "approvedTasks", "artifactRefs", "repair"] : ["integration", "approvedTasks", "artifactRefs"];
     const incompleteSections = required.filter((key) => hasStructuralTruncation(packet?.[key]));
+    if (run && !sameJson(integrationManifest(run), packet?.integration)) incompleteSections.push("integration_manifest_compacted");
+    if (repair && repairTask && !sameJson(repairTask, packet?.repair)) incompleteSections.push("repair_context_compacted");
     const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    const unique = [...new Set(incompleteSections)];
     return {
-      ok: budgetOk && incompleteSections.length === 0,
-      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      ok: budgetOk && unique.length === 0,
+      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
       actualBytes,
       maxBytes,
-      incompleteSections
+      incompleteSections: unique
     };
   }
   function failClosedPacket(packet, gate, repair = false) {
@@ -59,7 +75,7 @@
       integration: run,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
-    const completeness = packetCompleteness(contextPacket, false);
+    const completeness = packetCompleteness(contextPacket, false, { run });
     const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness, false);
     if (!completeness.ok) {
       return [
@@ -87,7 +103,7 @@
       `PORTABLE INTEGRATION PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check.",
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks.",
       "",
       "GIT CONTRACT:",
       `1. Fetch ${run.targetBranch} and verify it is still exactly ${run.baseSha}. If it moved, stop with NEEDS_USER.`,
@@ -132,7 +148,7 @@
       repair: repairTask,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
-    const completeness = packetCompleteness(contextPacket, true);
+    const completeness = packetCompleteness(contextPacket, true, { run, repairTask });
     const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness, true);
     if (!completeness.ok) {
       return [
@@ -158,7 +174,7 @@
       `PORTABLE REPAIR PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check.",
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks.",
       "",
       "REPAIR RULES:",
       "- Work only on the integration branch. Never write the target branch.",
@@ -182,6 +198,6 @@
     ].join("\n");
   }
 
-  root.IntegrationPrompts = Object.freeze({ PROMPT_VERSION, buildIntegratorPrompt, buildRepairPrompt, packetCompleteness });
+  root.IntegrationPrompts = Object.freeze({ PROMPT_VERSION, buildIntegratorPrompt, buildRepairPrompt, packetCompleteness, integrationManifest });
   if (typeof module !== "undefined" && module.exports) module.exports = root.IntegrationPrompts;
 })();
