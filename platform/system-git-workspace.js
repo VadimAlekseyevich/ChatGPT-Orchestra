@@ -97,11 +97,7 @@ class SystemGitWorkspace extends GitCliWorkspace {
     if (branch !== record.branch) throw new Error("git_artifact_branch_mismatch");
 
     let commitAvailable = true;
-    try {
-      await this.verifyStartSha(expectedCommit);
-    } catch {
-      commitAvailable = false;
-    }
+    try { await this.verifyStartSha(expectedCommit); } catch { commitAvailable = false; }
     if (!commitAvailable) {
       await this.execGit(["fetch", "--no-tags", remote, branch], { cwd: record.path });
       const { stdout: fetchedHead } = await this.execGit(["rev-parse", "FETCH_HEAD"], { cwd: record.path });
@@ -109,11 +105,8 @@ class SystemGitWorkspace extends GitCliWorkspace {
       await this.verifyStartSha(expectedCommit);
     }
 
-    try {
-      await this.execGit(["merge-base", "--is-ancestor", record.startSha, expectedCommit], { cwd: record.path });
-    } catch {
-      throw new Error("git_artifact_not_descendant_of_start_sha");
-    }
+    try { await this.execGit(["merge-base", "--is-ancestor", record.startSha, expectedCommit], { cwd: record.path }); }
+    catch { throw new Error("git_artifact_not_descendant_of_start_sha"); }
 
     await this.execGit(["reset", "--hard", expectedCommit], { cwd: record.path });
     const state = await this.artifactState(workspaceId);
@@ -123,9 +116,7 @@ class SystemGitWorkspace extends GitCliWorkspace {
 
   async runVerification(workspaceId, verification = {}) {
     if (Array.isArray(verification)) {
-      if (verification.some((entry) => !entry || typeof entry !== "object" || Array.isArray(entry))) {
-        throw new Error("verification_command_requires_argv");
-      }
+      if (verification.some((entry) => !entry || typeof entry !== "object" || Array.isArray(entry))) throw new Error("verification_command_requires_argv");
       const results = [];
       for (const entry of verification) results.push(await super.runVerification(workspaceId, entry));
       return { ok: results.every((item) => item.ok === true), results };
@@ -154,17 +145,30 @@ class SystemGitWorkspace extends GitCliWorkspace {
 
     const message = String(options.message || `Integrate task artifact ${commit.slice(0, 12)}`).trim();
     if (!message || /\0/.test(message)) throw new Error("git_merge_message_invalid");
-    await this.execGit([
-      "-c",
-      `core.hooksPath=${this.hooksDirectory}`,
-      "merge",
-      "--no-ff",
-      "--no-edit",
-      "--no-gpg-sign",
-      "-m",
-      message,
-      commit
-    ], { cwd: record.path });
+    try {
+      await this.execGit([
+        "-c",
+        `core.hooksPath=${this.hooksDirectory}`,
+        "merge",
+        "--no-ff",
+        "--no-edit",
+        "--no-gpg-sign",
+        "-m",
+        message,
+        commit
+      ], { cwd: record.path });
+    } catch (error) {
+      let files = [];
+      try {
+        const { stdout } = await this.execGit(["diff", "--name-only", "--diff-filter=U", "-z", "--"], { cwd: record.path });
+        files = stdout.split("\0").filter(Boolean).map((item) => item.replace(/\\/g, "/")).sort();
+      } catch {}
+      if (files.length) {
+        try { await this.execGit(["merge", "--abort"], { cwd: record.path }); } catch {}
+        return { ok: false, reason: "git_merge_conflict", workspaceId: integrationWorkspaceId, taskCommit: commit, files };
+      }
+      throw error;
+    }
     const { stdout: head } = await this.execGit(["rev-parse", "HEAD"], { cwd: record.path });
     const { stdout: parents } = await this.execGit(["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: record.path });
     const parentShas = parents.trim().split(/\s+/).slice(1);
