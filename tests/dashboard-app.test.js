@@ -60,11 +60,14 @@ test("Dashboard exposes command errors while retaining current view", async () =
 
 test("standalone host loads same DashboardApp with Fake transport", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "dashboard", "standalone.html"), "utf8");
+  const bootstrap = fs.readFileSync(path.join(__dirname, "..", "dashboard", "standalone.js"), "utf8");
   assert.match(html, /fake-transport\.js/);
   assert.match(html, /dashboard-app\.js/);
-  assert.match(html, /FakeDashboardTransport/);
-  assert.match(html, /DashboardApp/);
-  assert.doesNotMatch(html, /chrome\.runtime/);
+  assert.match(html, /standalone\.js/);
+  assert.doesNotMatch(html, /<script>\s*const transport/);
+  assert.match(bootstrap, /FakeDashboardTransport/);
+  assert.match(bootstrap, /DashboardApp/);
+  assert.doesNotMatch(html + bootstrap, /chrome\.runtime/);
 });
 
 test("Extension Dashboard transport maps query/execute to generic API messages", async () => {
