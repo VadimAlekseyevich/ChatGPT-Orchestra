@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { FakeDashboardTransport } = require("../dashboard/fake-transport.js");
+const { FakeDashboardTransport, defaultDashboard } = require("../dashboard/fake-transport.js");
 const { DashboardApp, attributeSelector } = require("../dashboard/dashboard-app.js");
 const { ExtensionDashboardTransport } = require("../dashboard/extension-transport.js");
 const MESSAGE_TYPES = require("../content/message-types.js");
@@ -14,6 +14,16 @@ function fakeRoot() {
     addEventListener() {},
     removeEventListener() {},
     querySelector() { return null; }
+  };
+}
+
+function clickEvent(action, dataset = {}) {
+  return {
+    target: {
+      closest() {
+        return { disabled: false, dataset: { dashboardAction: action, ...dataset } };
+      }
+    }
   };
 }
 
@@ -56,6 +66,51 @@ test("Dashboard exposes command errors while retaining current view", async () =
   assert.equal(result.ok, false);
   assert.match(root.innerHTML, /not-a-command: unknown_api_command/);
   assert.match(root.innerHTML, /Tasks \/ DAG/);
+});
+
+test("Dashboard requires explicit confirmation before trusting a local repository and can disable execution", async () => {
+  const dashboard = defaultDashboard();
+  dashboard.project.repositoryRuntime = { repositoryId: "repo-1" };
+  let trust = "UNTRUSTED";
+  const mutations = [];
+  let confirmed = false;
+  const transport = {
+    async query(name, payload = {}) {
+      if (name === "dashboard") return { ok: true, dashboard: structuredClone(dashboard) };
+      if (name === "repository") {
+        assert.equal(payload.repositoryId, "repo-1");
+        return { ok: true, repository: { repositoryId: "repo-1", trust } };
+      }
+      return { ok: false, reason: "unknown_api_query" };
+    },
+    async execute(name, payload = {}) {
+      mutations.push({ name, payload: structuredClone(payload) });
+      if (name !== "setRepositoryTrust") return { ok: false, reason: "unknown_api_command" };
+      trust = payload.trust;
+      return { ok: true, repository: { repositoryId: payload.repositoryId, trust } };
+    }
+  };
+  const root = fakeRoot();
+  const app = new DashboardApp({ rootElement: root, transport, confirmAction: () => confirmed });
+  await app.refresh();
+  assert.match(root.innerHTML, /Local execution/);
+  assert.match(root.innerHTML, /UNTRUSTED/);
+  assert.match(root.innerHTML, /Enable Local Execution/);
+
+  await app.handleClick(clickEvent("enableLocalExecution", { repositoryId: "repo-1" }));
+  assert.equal(mutations.length, 0);
+  assert.equal(trust, "UNTRUSTED");
+
+  confirmed = true;
+  await app.handleClick(clickEvent("enableLocalExecution", { repositoryId: "repo-1" }));
+  assert.deepEqual(mutations.at(-1), { name: "setRepositoryTrust", payload: { repositoryId: "repo-1", trust: "TRUSTED" } });
+  assert.equal(trust, "TRUSTED");
+  assert.match(root.innerHTML, /Disable Local Execution/);
+
+  await app.handleClick(clickEvent("disableLocalExecution", { repositoryId: "repo-1" }));
+  assert.deepEqual(mutations.at(-1), { name: "setRepositoryTrust", payload: { repositoryId: "repo-1", trust: "UNTRUSTED" } });
+  assert.equal(trust, "UNTRUSTED");
+  assert.match(root.innerHTML, /Enable Local Execution/);
 });
 
 test("standalone host loads same DashboardApp with Fake transport", () => {
