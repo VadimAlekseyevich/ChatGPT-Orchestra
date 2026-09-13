@@ -5,7 +5,9 @@ This stacked Phase 16 slice establishes the transport/runtime boundary required 
 ## Implemented in this slice
 
 ```text
-Desktop Core
+Desktop Core / SQLite
+  CompanionDesktopHost
+       │
   DesktopBridgeAgentRuntime
        │
   Companion RPC v1
@@ -28,6 +30,8 @@ The RPC protocol is versioned, JSON-only and bounded to 256 KiB per frame. A ver
 `DesktopBridgeAgentRuntime` implements the existing AgentRuntime contract. It keeps only a logical mirror of remote agents and routes session/prompt/stop/context operations through companion RPC. Browser handles do not cross into Core DTOs beyond the existing portable logical session metadata.
 
 `ExtensionCompanionEndpoint` wraps the existing ExtensionAgentRuntime rather than replacing ChatGPT DOM automation. It exposes browser-agent operations to desktop and forwards content/runtime and tab lifecycle events back to desktop handlers.
+
+`CompanionDesktopHost` is the Phase 16 composition root. The reverse bridge handlers feed browser runtime/session messages into the existing Orchestrator, Integration and Recovery paths, so desktop remains the domain owner instead of duplicating service-worker orchestration logic.
 
 ## Authentication
 
@@ -57,12 +61,11 @@ It contains only loopback host/port, protocol versions and a transient instance 
 
 This foundation does **not** switch the existing MV3 service worker into companion mode by default. Phase 15 extension behavior remains unchanged. The next Phase 16 slice must:
 
-1. wire `DesktopHost` companion handlers to real Orchestrator runtime/session events;
-2. add explicit extension companion-mode bootstrap/reconnect logic;
-3. add Native Messaging permission/host installation only when the companion path is ready;
-4. surface connection status in popup/Desktop Dashboard;
-5. migrate canonical project state from Chrome storage to SQLite through the existing Project Bundle path;
-6. add disconnect/reconnect recovery tests with a real service-worker-shaped fixture.
+1. add explicit extension companion-mode bootstrap/reconnect logic around `ExtensionCompanionEndpoint`;
+2. add Native Messaging permission/host installation only when the companion path is ready;
+3. surface connection status in popup/Desktop Dashboard;
+4. migrate canonical project state from Chrome storage to SQLite through the existing Project Bundle path;
+5. add disconnect/reconnect recovery tests with a real service-worker-shaped fixture.
 
 ## Test gate
 
@@ -70,4 +73,4 @@ This foundation does **not** switch the existing MV3 service worker into compani
 npm run test:phase16
 ```
 
-The gate covers protocol bounds/versioning, bidirectional RPC, bridged AgentRuntime behavior, Native Messaging transport framing, pairing-secret persistence, mutual HMAC authentication and authenticated desktop loopback transport.
+The gate covers protocol bounds/versioning, bidirectional RPC, bridged AgentRuntime behavior, Native Messaging transport framing, pairing-secret persistence, mutual HMAC authentication, authenticated desktop loopback transport and browser-event routing into a desktop-owned Core host.
