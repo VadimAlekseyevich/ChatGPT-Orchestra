@@ -17,11 +17,11 @@ function loadDatabaseSync() {
 }
 
 class SQLiteStateStore {
-  constructor({ filename = ":memory:", database = null, table = "orchestra_kv", clock = () => Date.now(), ownsDatabase = true } = {}) {
+  constructor({ filename = ":memory:", database = null, table = "orchestra_kv", clock = () => Date.now(), ownsDatabase = null } = {}) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) throw new TypeError("invalid_sqlite_table_name");
     this.table = table;
     this.clock = clock;
-    this.ownsDatabase = Boolean(database ? ownsDatabase : true);
+    this.ownsDatabase = database ? ownsDatabase === true : true;
     this.db = database || new (loadDatabaseSync())(filename);
     this.transactionDepth = 0;
     this.ensureSchema();
