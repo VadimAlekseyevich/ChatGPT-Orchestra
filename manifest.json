@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.11",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 11 adds platform contracts, extension adapters and a portable Orchestrator API.",
+  "version_name": "2.0.0-alpha.12",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 12 adds portable persistence, project bundles and a Node SQLite StateStore.",
   "permissions": ["storage", "tabs", "alarms"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
