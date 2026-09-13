@@ -1,6 +1,7 @@
 "use strict";
 
 const CompanionNativeHost = require("../../companion/native-host.js");
+const NativeHostRegistration = require("../../companion/native-host-registration.js");
 
 function companionRequested(argv = process.argv, env = process.env) {
   return argv.includes("--companion") || env.ORCHESTRA_COMPANION === "1";
@@ -10,11 +11,53 @@ function nativeMessagingRequested(argv = process.argv.slice(1)) {
   return CompanionNativeHost.isNativeMessagingLaunch(argv);
 }
 
+function optionValue(argv, name) {
+  const prefix = `--${name}=`;
+  const raw = (argv || []).find((item) => String(item || "").startsWith(prefix));
+  return raw ? String(raw).slice(prefix.length) : null;
+}
+
+function nativeHostRegistrationRequest(argv = process.argv.slice(1)) {
+  const extensionId = optionValue(argv, "register-native-host");
+  const unregister = (argv || []).includes("--unregister-native-host");
+  if (!extensionId && !unregister) return null;
+  const browsers = String(optionValue(argv, "native-host-browsers") || "edge").split(",").map((item) => item.trim()).filter(Boolean);
+  return extensionId ? { action: "register", extensionId, browsers } : { action: "unregister", browsers };
+}
+
 async function runNativeMessagingHost() {
   return CompanionNativeHost.main();
 }
 
-if (nativeMessagingRequested()) {
+function runNativeHostRegistration(request, { executable = process.execPath, dataDirectory = process.env.ORCHESTRA_DATA_DIR || null } = {}) {
+  if (!request) throw new TypeError("native_host_registration_request_required");
+  if (request.action === "register") {
+    return NativeHostRegistration.registerNativeHost({
+      extensionId: request.extensionId,
+      hostPath: executable,
+      browsers: request.browsers,
+      dataDirectory
+    });
+  }
+  if (request.action === "unregister") {
+    return NativeHostRegistration.unregisterNativeHost({
+      browsers: request.browsers,
+      dataDirectory
+    });
+  }
+  throw new TypeError("native_host_registration_action_invalid");
+}
+
+const registrationRequest = nativeHostRegistrationRequest();
+if (registrationRequest) {
+  Promise.resolve()
+    .then(() => runNativeHostRegistration(registrationRequest))
+    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+    .catch((error) => {
+      process.stderr.write(`${error?.stack || error?.message || error}\n`);
+      process.exitCode = 1;
+    });
+} else if (nativeMessagingRequested()) {
   runNativeMessagingHost().catch((error) => {
     process.stderr.write(`${error?.stack || error?.message || error}\n`);
     process.exitCode = 1;
@@ -83,4 +126,10 @@ if (nativeMessagingRequested()) {
   });
 }
 
-module.exports = { companionRequested, nativeMessagingRequested, runNativeMessagingHost };
+module.exports = {
+  companionRequested,
+  nativeMessagingRequested,
+  nativeHostRegistrationRequest,
+  runNativeMessagingHost,
+  runNativeHostRegistration
+};
