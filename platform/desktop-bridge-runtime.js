@@ -25,6 +25,7 @@
 
     async load() {
       await this.rpc.start();
+      if (typeof this.rpc.transport?.waitForConnection === "function") await this.rpc.transport.waitForConnection();
       const handshake = await this.rpc.request("companion.handshake", {
         protocolVersion: Protocol.PROTOCOL_VERSION,
         contractVersion: Contracts.CONTRACT_VERSION,
