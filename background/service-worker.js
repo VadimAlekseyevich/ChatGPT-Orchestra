@@ -23,7 +23,10 @@ importScripts(
   "integration-engine.js",
   "integration-recovery.js",
   "scheduler-engine.js",
-  "orchestrator.js"
+  "orchestrator.js",
+  "recovery-store.js",
+  "recovery-controller.js",
+  "recovery-hooks.js"
 );
 
 const root = globalThis.ChatGPTOrchestra;
@@ -34,6 +37,7 @@ const projectStore = new root.ProjectStore();
 const schedulerStore = new root.SchedulerStore();
 const reviewStore = new root.ReviewStore();
 const integrationStore = new root.IntegrationStore();
+const recoveryStore = new root.RecoveryStore();
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 
 let orchestrator = null;
@@ -73,13 +77,41 @@ schedulerEngine = new root.SchedulerEngine({
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
 orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });
-let readyPromise = orchestrator.init().then(() => integrationEngine.init());
+
+const recoveryController = new root.RecoveryController({
+  store: recoveryStore,
+  projectStore,
+  schedulerStore,
+  reviewStore,
+  integrationStore,
+  registry,
+  planningEngine,
+  schedulerEngine,
+  reviewEngine,
+  integrationEngine,
+  gitProvider
+});
+root.RecoveryRuntime.controller = recoveryController;
+recoveryController.setActions({
+  stopAgent: (agentId) => orchestrator.stopAgent(agentId),
+  createWorkers: (count) => orchestrator.createWorkers(count),
+  reconcileTabs: () => orchestrator.reconcileRegisteredTabs()
+});
+
+function initializeRuntime() {
+  return recoveryController.prepareForBoot()
+    .then(() => orchestrator.init())
+    .then(() => integrationEngine.init())
+    .then(() => recoveryController.afterRuntimeInit());
+}
+
+let readyPromise = initializeRuntime();
 
 function withReady(callback) {
   return Promise.resolve(readyPromise)
     .catch((error) => {
       console.error("[ChatGPT Orchestra] service_worker_init_failed", error);
-      readyPromise = orchestrator.init().then(() => integrationEngine.init());
+      readyPromise = initializeRuntime();
       return readyPromise;
     })
     .then(callback);
@@ -87,12 +119,25 @@ function withReady(callback) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
+    const recoveryCommand = await recoveryController.handleRuntimeMessage(message, sender);
+    if (recoveryCommand.handled) return recoveryCommand.response;
+
     const result = await orchestrator.handleRuntimeMessage(message, sender);
+    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT && result?.ok) {
+      const projectId = projectStore.getActiveProject()?.projectId;
+      if (projectId) await recoveryController.attachProject(projectId, "project_started");
+    }
+    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_EXECUTION && result?.ok) {
+      const projectId = projectStore.getActiveProject()?.projectId;
+      if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
+    }
+
     const tabId = sender?.tab?.id;
     if (Number.isInteger(tabId)) {
       const agent = registry.getAgentByTabId(tabId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
+    await recoveryController.tick({ reason: message?.type || "runtime_message" });
     return result;
   })
     .then((result) => sendResponse(result))
@@ -109,6 +154,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     const agent = registry.getAgentByTabId(tabId);
     await orchestrator.handleTabRemoved(tabId);
     if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "tab_closed");
+    await recoveryController.tick({ reason: "tab_removed" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] tab_removed_handler_failed", error);
   });
@@ -119,6 +165,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     await orchestrator.handleTabUpdated(tabId, changeInfo, tab);
     const agent = registry.getAgentByTabId(tabId);
     if (agent) await integrationEngine.handleAgentStateChanged(agent);
+    await recoveryController.tick({ reason: "tab_updated" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] tab_updated_handler_failed", error);
   });
@@ -132,6 +179,7 @@ if (chrome.alarms?.onAlarm) {
     withReady(async () => {
       await schedulerEngine.tick({ reason: "watchdog_alarm" });
       await integrationEngine.tick({ reason: "watchdog_alarm" });
+      await recoveryController.tick({ reason: "watchdog_alarm" });
     }).catch((error) => {
       console.warn("[ChatGPT Orchestra] watchdog_failed", error);
     });
