@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const CONTRACT_VERSION = 1;
+  const CONTRACT_VERSION = 2;
 
   const AGENT_RUNTIME_METHODS = Object.freeze([
     "load",
@@ -33,6 +33,7 @@
     "stopAgent"
   ]);
   const STATE_STORE_METHODS = Object.freeze(["get", "set"]);
+  const TRANSACTIONAL_STATE_STORE_METHODS = Object.freeze(["get", "set", "remove", "clear", "transaction"]);
   const TIMER_RUNTIME_METHODS = Object.freeze(["scheduleRecurring", "cancel"]);
 
   const API_COMMANDS = Object.freeze([
@@ -47,7 +48,9 @@
     "schedulerTick",
     "pause",
     "stopNow",
-    "resume"
+    "resume",
+    "exportProjectBundle",
+    "importProjectBundle"
   ]);
 
   const API_QUERIES = Object.freeze([
@@ -56,7 +59,8 @@
     "project",
     "scheduler",
     "schedulerDecisions",
-    "recovery"
+    "recovery",
+    "persistence"
   ]);
 
   function missingMethods(value, methods) {
@@ -71,6 +75,7 @@
 
   function assertAgentRuntime(value) { return assertContract("agent_runtime", value, AGENT_RUNTIME_METHODS); }
   function assertStateStore(value) { return assertContract("state_store", value, STATE_STORE_METHODS); }
+  function assertTransactionalStateStore(value) { return assertContract("transactional_state_store", value, TRANSACTIONAL_STATE_STORE_METHODS); }
   function assertTimerRuntime(value) { return assertContract("timer_runtime", value, TIMER_RUNTIME_METHODS); }
 
   function normalizeRuntimeSender(sender = {}) {
@@ -90,11 +95,13 @@
     CONTRACT_VERSION,
     AGENT_RUNTIME_METHODS,
     STATE_STORE_METHODS,
+    TRANSACTIONAL_STATE_STORE_METHODS,
     TIMER_RUNTIME_METHODS,
     API_COMMANDS,
     API_QUERIES,
     assertAgentRuntime,
     assertStateStore,
+    assertTransactionalStateStore,
     assertTimerRuntime,
     normalizeRuntimeSender
   };
