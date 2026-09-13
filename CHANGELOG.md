@@ -4,6 +4,62 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.12] - 2026-09-13
+
+### Added
+
+- canonical Portable State schema v1 для project-scoped logical state;
+- `MigrationRegistry` с deterministic sequential migration path;
+- pre-import backups с bounded history;
+- Project Bundle v1 с schema/version/identity/size/checksum validation;
+- popup Export Bundle / Import Bundle controls;
+- `OrchestratorApi` v2 persistence query и bundle commands;
+- `TransactionalStateStore` wrapper для serialized extension writes/import boundary;
+- Node `SQLiteStateStore` на `node:sqlite` с WAL и `BEGIN IMMEDIATE` transactions;
+- StateStore conformance tests для Chrome/Memory/SQLite;
+- extension-shaped state → SQLite round-trip regression;
+- Phase 11 architecture doc, smoke test и ADR 0011;
+- `npm run test:phase11`.
+
+### Portability and safety
+
+- `tabId`, `legacyTabId`, `sessionId` и runtime sender bindings рекурсивно исключаются из portable snapshots;
+- agent registry не переносит browser sessions и восстанавливается пустым;
+- secrets/tokens/API keys/cookies/credentials/private-key material redacted перед export;
+- project bundle содержит только exact project-scoped EventBus events/rejections;
+- import разрешён только в `IDLE`, `PAUSED`, `STOPPED` или `RECOVERY_REQUIRED`;
+- импортированное состояние всегда переводится в `RECOVERY_REQUIRED` до host-specific reconciliation;
+- extension import требует reload и freeze'ит StateStore, чтобы stale in-memory writes не перезаписали новый state;
+- namespace `projectId` mismatch отклоняется до persistence;
+- SQLite external writes сериализуются за active transaction и не могут случайно присоединиться к ней;
+- failed SQLite transactions rollback целиком;
+- extension permissions и target-branch policy не изменились.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.12`;
+- Orchestrator API обновлён до v2;
+- extension composition root использует transactional StateStore wrapper;
+- Project Bundle становится официальным migration bridge extension → future desktop host;
+- current production runtime остаётся Edge extension.
+
+### Validation
+
+- focused native SQLite commit/rollback tests passed on Node 22;
+- portable snapshot/bundle Memory → SQLite round-trip focused gate passed;
+- post-import stale-write freeze focused gate passed;
+- final targeted SQLite concurrency smoke passed;
+- полный repository `npm test` / `npm run test:phase11` из checkout в текущей environment не запускался из-за отсутствующего DNS-доступа к GitHub;
+- Edge import/export smoke-test остаётся release gate.
+
+### Next
+
+- Phase 12 — Portable Dashboard + Observability API;
+- shared Dashboard frontend поверх Orchestrator API;
+- no direct UI access to Chrome storage/tabs or SQLite.
+
+---
+
 ## [2.0.0-alpha.11] - 2026-09-13
 
 ### Added
