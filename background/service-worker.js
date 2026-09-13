@@ -21,6 +21,7 @@ importScripts(
   "integration-policy.js",
   "integration-store.js",
   "integration-engine.js",
+  "integration-recovery.js",
   "scheduler-engine.js",
   "orchestrator.js"
 );
@@ -53,7 +54,7 @@ const reviewEngine = new root.ReviewEngine({
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt),
   onSchedulerTick: (options) => schedulerEngine?.tick(options)
 });
-const integrationEngine = new root.IntegrationEngine({
+const integrationEngine = new root.RecoverableIntegrationEngine({
   store: integrationStore,
   schedulerStore,
   projectStore,
