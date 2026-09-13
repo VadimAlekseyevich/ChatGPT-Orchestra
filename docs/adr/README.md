@@ -38,4 +38,5 @@ Date: YYYY-MM-DD
 - [`0006-independent-review-loop.md`](0006-independent-review-loop.md) — dynamic Reviewer role, author/reviewer separation, structured approval and bounded rework loop;
 - [`0007-verified-integration-branches.md`](0007-verified-integration-branches.md) — dynamic Integrator role, deterministic `--no-ff` composition, independently verified integration branches and bounded semantic conflict remediation;
 - [`0008-recovery-control-plane.md`](0008-recovery-control-plane.md) — separate persisted lifecycle control plane, safe-point Pause, Stop Now boundary and reconcile-before-resume policy;
-- [`0009-gradual-desktop-migration.md`](0009-gradual-desktop-migration.md) — platform contracts, desktop control-plane migration, extension companion bridge and eventual direct desktop AgentRuntime.
+- [`0009-gradual-desktop-migration.md`](0009-gradual-desktop-migration.md) — platform contracts, desktop control-plane migration, extension companion bridge and eventual direct desktop AgentRuntime;
+- [`0010-platform-contracts-orchestrator-api.md`](0010-platform-contracts-orchestrator-api.md) — AgentRuntime/StateStore/TimerRuntime boundaries, normalized runtime identity and platform-neutral Orchestrator API.

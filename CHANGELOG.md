@@ -4,6 +4,55 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.11] - 2026-09-13
+
+### Added
+
+- platform contract v1 для `AgentRuntime`, `StateStore` и `TimerRuntime`;
+- `ExtensionAgentRuntime` как адаптер существующего TabRegistry/Chrome tabs/message transport;
+- `ChromeStorageStateStore` поверх `chrome.storage.local`;
+- `ChromeAlarmRuntime` поверх MV3 alarms;
+- deterministic `FakeAgentRuntime`, `MemoryStateStore` и `DeterministicTimerRuntime` для browser-free tests;
+- platform-neutral `OrchestratorApi` v1 с command/query surface для popup и будущего desktop IPC;
+- normalized runtime sender identity `kind/sessionId/agentId` для EventBus;
+- generic runtime provenance в accepted/rejected Event Store records;
+- source-level browser-boundary regression test;
+- browser-free portable Orchestrator regression;
+- Phase 10 architecture document, smoke test и ADR 0010;
+- `npm run test:phase10`.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.11`;
+- `ServiceWorkerOrchestrator` больше не вызывает `chrome.tabs` напрямую и работает через `AgentRuntime`;
+- service worker стал явным extension composition root: собирает Chrome adapters и Core engines через dependency injection;
+- popup/admin runtime messages теперь являются compatibility transport поверх `OrchestratorApi`;
+- EventBus больше не использует `sender.tab.id` как canonical protocol identity;
+- watchdog scheduling проходит через `TimerRuntime`;
+- TabRegistry и EventStore принимают injected StateStore-compatible backend;
+- extension permissions и Git/review/integration/recovery policies не изменились.
+
+### Migration boundary
+
+- persisted `tabId` остаётся compatibility metadata текущей extension schema; удаление platform IDs из canonical portable snapshot относится к Phase 11;
+- SQLite, Project Bundle export/import, Electron и Playwright/CDP намеренно не входят в alpha.11;
+- extension остаётся production/reference runtime и не переводится в companion-only mode на этой фазе.
+
+### Validation
+
+- focused reconstructed Node gate для новых contracts/FakeRuntime/OrchestratorApi/portable Orchestrator: 11/11 passed;
+- полный repository `npm test` / `npm run test:phase10` в текущей execution environment не запускался из checkout из-за отсутствующего DNS-доступа к GitHub;
+- production Edge smoke-test остаётся release gate.
+
+### Next
+
+- Phase 11 — Portable Persistence + Project Export/Import;
+- portable state schema/migration registry;
+- `SQLiteStateStore`;
+- extension → desktop project bundle migration.
+
+---
+
 ## [2.0.0-alpha.10] - 2026-09-13
 
 ### Added
@@ -52,9 +101,9 @@
 
 ### Not yet implemented
 
-- Phase 10 Dashboard / Observability;
+- platform-neutral portable persistence / SQLite;
 - context compaction / context budget management;
-- full reliability/safety hardening and CI matrix;
+- desktop shell / companion bridge;
 - automatic target-branch promotion policy.
 
 ---

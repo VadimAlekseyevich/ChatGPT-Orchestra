@@ -13,15 +13,11 @@
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
   }
-
   function canonicalize(value) {
     if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-    if (value && typeof value === "object") {
-      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
-    }
+    if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
     return JSON.stringify(value);
   }
-
   function eventSignature(event) {
     return canonicalize({
       v: event.v,
@@ -35,27 +31,30 @@
       payload: event.payload || {}
     });
   }
-
   function normalizePlanningArtifact(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     try {
       const encoded = JSON.stringify(value);
       if (encoded.length > MAX_PLANNING_ARTIFACT_LENGTH) return null;
       return clone(value);
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
-
+  function normalizeRuntimeSource(value) {
+    if (!value || typeof value !== "object") return null;
+    const kind = String(value.kind || "").slice(0, 80);
+    const sessionId = value.sessionId === null || value.sessionId === undefined ? null : String(value.sessionId).slice(0, 256);
+    const agentId = value.agentId ? String(value.agentId).slice(0, 256) : null;
+    return kind || sessionId || agentId ? { kind: kind || "unknown", sessionId, agentId } : null;
+  }
   function normalizeSource(source = {}) {
     return {
       responseFingerprint: String(source?.responseFingerprint || "").slice(0, 256),
       pathname: String(source?.pathname || "").slice(0, 1024),
       messageCount: Math.max(0, Number(source?.messageCount) || 0),
-      planningArtifact: normalizePlanningArtifact(source?.planningArtifact)
+      planningArtifact: normalizePlanningArtifact(source?.planningArtifact),
+      runtime: normalizeRuntimeSource(source?.runtime)
     };
   }
-
   function defaultState() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -68,7 +67,6 @@
       updatedAt: 0
     };
   }
-
   function eventIdentity(event) {
     return {
       event: event.event,
@@ -81,8 +79,8 @@
   }
 
   class EventStore {
-    constructor({ storageArea = globalThis.chrome?.storage?.local, clock = () => Date.now(), maxEvents = DEFAULT_MAX_EVENTS, maxRejections = DEFAULT_MAX_REJECTIONS, maxProcessed = DEFAULT_MAX_PROCESSED } = {}) {
-      this.storageArea = storageArea;
+    constructor({ stateStore = null, storageArea = null, clock = () => Date.now(), maxEvents = DEFAULT_MAX_EVENTS, maxRejections = DEFAULT_MAX_REJECTIONS, maxProcessed = DEFAULT_MAX_PROCESSED } = {}) {
+      this.stateStore = stateStore || storageArea || null;
       this.clock = clock;
       this.maxEvents = Math.max(100, Number(maxEvents) || DEFAULT_MAX_EVENTS);
       this.maxRejections = Math.max(50, Number(maxRejections) || DEFAULT_MAX_REJECTIONS);
@@ -93,8 +91,8 @@
     }
 
     async load() {
-      if (!this.storageArea?.get) { this.loaded = true; return this.snapshot(); }
-      const stored = await this.storageArea.get(STORAGE_KEY);
+      if (!this.stateStore?.get) { this.loaded = true; return this.snapshot(); }
+      const stored = await this.stateStore.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
       if (candidate?.schemaVersion === SCHEMA_VERSION) {
         this.state = {
@@ -125,30 +123,23 @@
 
     async persist() {
       this.state.updatedAt = this.clock();
-      if (!this.storageArea?.set) return this.snapshot();
+      if (!this.stateStore?.set) return this.snapshot();
       const payload = clone(this.state);
-      this.writeChain = this.writeChain.catch(() => {}).then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
+      this.writeChain = this.writeChain.catch(() => {}).then(() => this.stateStore.set({ [STORAGE_KEY]: payload }));
       await this.writeChain;
       return this.snapshot();
     }
 
-    getProcessed(eventId) {
-      const item = this.state.processedEvents[eventId];
-      return item ? clone(item) : null;
-    }
+    getProcessed(eventId) { const item = this.state.processedEvents[eventId]; return item ? clone(item) : null; }
+    getLastSequence(runKey) { const value = Number(this.state.sequences[runKey]); return Number.isSafeInteger(value) ? value : 0; }
 
-    getLastSequence(runKey) {
-      const value = Number(this.state.sequences[runKey]);
-      return Number.isSafeInteger(value) ? value : 0;
-    }
-
-    async accept(event, { route = null, tabId = null, source = null } = {}) {
+    async accept(event, { route = null, tabId = null, runtimeSource = null, source = null } = {}) {
       const now = this.clock();
       this.state.eventCursor += 1;
       const cursor = this.state.eventCursor;
       const identity = eventIdentity(event);
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
-      const normalizedSource = normalizeSource(source || {});
+      const normalizedSource = normalizeSource({ ...(source || {}), runtime: source?.runtime || runtimeSource || null });
 
       this.state.processedEvents[event.eventId] = { ...identity, signature: eventSignature(event), cursor, acceptedAt: now };
       this.state.processedOrder.push(event.eventId);
@@ -163,6 +154,7 @@
         receivedAt: now,
         route,
         tabId: Number.isInteger(tabId) ? tabId : null,
+        runtimeSource: normalizeRuntimeSource(runtimeSource),
         source: normalizedSource,
         event: clone(event)
       });
@@ -171,11 +163,12 @@
       return { cursor, runKey, source: clone(normalizedSource) };
     }
 
-    async reject(reason, { event = null, tabId = null, details = null } = {}) {
+    async reject(reason, { event = null, tabId = null, runtimeSource = null, details = null } = {}) {
       this.state.rejections.push({
         rejectedAt: this.clock(),
         reason: String(reason || "unknown_rejection"),
         tabId: Number.isInteger(tabId) ? tabId : null,
+        runtimeSource: normalizeRuntimeSource(runtimeSource),
         identity: event ? eventIdentity(event) : null,
         eventId: event?.eventId || null,
         details: details && typeof details === "object" ? clone(details) : null
@@ -194,6 +187,6 @@
   root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact };
+    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact, normalizeRuntimeSource };
   }
 })();

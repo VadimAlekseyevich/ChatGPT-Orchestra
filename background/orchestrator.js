@@ -7,9 +7,9 @@
   function asError(error) { return error?.message || String(error || "unknown_error"); }
 
   class ServiceWorkerOrchestrator {
-    constructor({ chromeApi = globalThis.chrome, registry, eventBus = null, planningEngine = null, schedulerEngine = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
-      this.chrome = chromeApi;
-      this.registry = registry;
+    constructor({ agentRuntime, eventBus = null, planningEngine = null, schedulerEngine = null, logger = console, workerUrl = CHATGPT_HOME } = {}) {
+      this.agentRuntime = agentRuntime;
+      this.registry = agentRuntime;
       this.eventBus = eventBus;
       this.planningEngine = planningEngine;
       this.schedulerEngine = schedulerEngine;
@@ -18,11 +18,16 @@
       this.initialized = false;
     }
 
+    senderContext(sender = {}) {
+      if (sender?.kind && Object.prototype.hasOwnProperty.call(sender, "sessionId")) return sender;
+      return this.agentRuntime?.normalizeSender?.(sender) || { kind: "unknown", sessionId: null, agentId: null, url: "", legacyTabId: null };
+    }
+
     async init() {
       if (this.initialized) return this.getPublicState();
-      await this.registry.load();
+      await this.agentRuntime?.load?.();
       if (this.eventBus) await this.eventBus.load();
-      await this.reconcileRegisteredTabs();
+      await this.reconcileRegisteredSessions();
       if (this.planningEngine) await this.planningEngine.init();
       if (this.schedulerEngine) await this.schedulerEngine.init();
       this.initialized = true;
@@ -30,8 +35,8 @@
     }
 
     getPublicState() {
-      const snapshot = this.registry.snapshot();
-      const agents = Object.values(snapshot.agents);
+      const snapshot = this.agentRuntime?.snapshot?.() || { schemaVersion: 1, runtimeStatus: "idle", agents: {}, updatedAt: 0 };
+      const agents = Object.values(snapshot.agents || {});
       return {
         schemaVersion: snapshot.schemaVersion,
         runtimeStatus: snapshot.runtimeStatus,
@@ -44,78 +49,81 @@
       };
     }
 
-    async reconcileRegisteredTabs() {
-      for (const agent of this.registry.listAgents()) {
-        if (!Number.isInteger(agent.tabId)) continue;
+    async reconcileRegisteredSessions() {
+      for (const agent of this.agentRuntime?.listAgents?.() || []) {
+        const sessionId = this.agentRuntime?.sessionIdForAgent?.(agent);
+        if (!sessionId) continue;
         try {
-          const tab = await this.chrome.tabs.get(agent.tabId);
-          if (!root.isChatGPTUrl(tab?.url)) {
-            await this.registry.updateNavigation(agent.tabId, tab?.url || "");
+          const session = await this.agentRuntime.getSession(sessionId);
+          if (!root.isChatGPTUrl(session?.url)) {
+            await this.agentRuntime.updateSessionNavigation(sessionId, session?.url || "");
             continue;
           }
-          await this.registry.bindAgent(agent.agentId, { tabId: agent.tabId, chatUrl: tab.url || agent.chatUrl, status: "CONNECTING" });
+          await this.agentRuntime.bindAgentToSession(agent.agentId, session, {
+            chatUrl: session.url || agent.chatUrl,
+            status: "CONNECTING"
+          });
           await this.refreshAgentFromContent(agent.agentId);
         } catch (error) {
-          await this.registry.markOfflineByTabId(agent.tabId, "tab_missing_after_restart");
-          this.logger.warn?.("[ChatGPT Orchestra] reconcile_tab_failed", agent.agentId, asError(error));
+          await this.agentRuntime.markSessionOffline(sessionId, "session_missing_after_restart");
+          this.logger.warn?.("[ChatGPT Orchestra] reconcile_session_failed", agent.agentId, asError(error));
         }
       }
+      return this.getPublicState();
     }
 
+    async reconcileRegisteredTabs() { return this.reconcileRegisteredSessions(); }
+
     async registerActiveLead() {
-      const tabs = await this.chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs?.[0];
-      if (!tab || !Number.isInteger(tab.id) || !root.isChatGPTUrl(tab.url)) return { ok: false, reason: "active_tab_is_not_chatgpt" };
-      const alreadyBound = this.registry.getAgentByTabId(tab.id);
+      const session = await this.agentRuntime?.getActiveSession?.();
+      if (!session?.id || !root.isChatGPTUrl(session.url)) return { ok: false, reason: "active_tab_is_not_chatgpt" };
+      const alreadyBound = this.agentRuntime.getAgentBySessionId?.(session.id);
       if (alreadyBound?.role === "worker") return { ok: false, reason: "active_tab_is_worker", agentId: alreadyBound.agentId };
 
-      let lead = this.registry.listAgents().find((agent) => agent.role === "lead") || null;
-      if (lead && Number.isInteger(lead.tabId) && lead.tabId !== tab.id) return { ok: false, reason: "lead_already_registered", agentId: lead.agentId };
+      let lead = this.agentRuntime.listAgents().find((agent) => agent.role === "lead") || null;
+      const leadSessionId = lead ? this.agentRuntime.sessionIdForAgent?.(lead) : null;
+      if (lead && leadSessionId && leadSessionId !== String(session.id)) return { ok: false, reason: "lead_already_registered", agentId: lead.agentId };
       lead = lead
-        ? await this.registry.bindAgent(lead.agentId, { tabId: tab.id, chatUrl: tab.url, status: "CONNECTING" })
-        : await this.registry.createAgent({ role: "lead", tabId: tab.id, chatUrl: tab.url, label: "Lead", status: "CONNECTING" });
-      await this.registry.setRuntimeStatus("pool_active");
+        ? await this.agentRuntime.bindAgentToSession(lead.agentId, session, { chatUrl: session.url, status: "CONNECTING" })
+        : await this.agentRuntime.createAgentForSession({ role: "lead", session, chatUrl: session.url, label: "Lead", status: "CONNECTING" });
+      await this.agentRuntime.setRuntimeStatus?.("pool_active");
       await this.refreshAgentFromContent(lead.agentId);
-      return { ok: true, agent: this.registry.getAgent(lead.agentId), state: this.getPublicState() };
+      return { ok: true, agent: this.agentRuntime.getAgent(lead.agentId), state: this.getPublicState() };
     }
 
     async createWorkers(targetCount = 3) {
       const target = Math.max(1, Math.min(MAX_WORKERS, Number(targetCount) || 3));
-      const workers = this.registry.listAgents().filter((agent) => agent.role === "worker");
-      const live = workers.filter((agent) => Number.isInteger(agent.tabId));
-      const offline = workers.filter((agent) => !Number.isInteger(agent.tabId));
+      const workers = this.agentRuntime.listAgents().filter((agent) => agent.role === "worker");
+      const live = workers.filter((agent) => this.agentRuntime.isAgentConnected(agent));
+      const offline = workers.filter((agent) => !this.agentRuntime.isAgentConnected(agent));
       const created = [];
 
       for (let index = live.length; index < target; index += 1) {
-        let tab = null;
+        let session = null;
         let agent = null;
         try {
-          tab = await this.chrome.tabs.create({ url: "about:blank", active: false });
+          session = await this.agentRuntime.createSession({ url: "about:blank", active: false });
           const reusable = offline.shift();
           agent = reusable
-            ? await this.registry.bindAgent(reusable.agentId, { tabId: tab.id, chatUrl: this.workerUrl, status: "CONNECTING" })
-            : await this.registry.createAgent({ role: "worker", tabId: tab.id, chatUrl: this.workerUrl, label: `Worker ${index + 1}`, status: "CONNECTING" });
-          await this.chrome.tabs.update(tab.id, { url: this.workerUrl });
+            ? await this.agentRuntime.bindAgentToSession(reusable.agentId, session, { chatUrl: this.workerUrl, status: "CONNECTING" })
+            : await this.agentRuntime.createAgentForSession({ role: "worker", session, chatUrl: this.workerUrl, label: `Worker ${index + 1}`, status: "CONNECTING" });
+          await this.agentRuntime.navigateSession(session.id, this.workerUrl);
           created.push(agent.agentId);
         } catch (error) {
-          if (agent && Number.isInteger(tab?.id)) await this.registry.markOfflineByTabId(tab.id, "worker_tab_create_failed");
-          if (Number.isInteger(tab?.id) && this.chrome.tabs.remove) { try { await this.chrome.tabs.remove(tab.id); } catch (_) {} }
+          if (agent && session?.id) await this.agentRuntime.markSessionOffline(session.id, "worker_session_create_failed");
+          if (session?.id) { try { await this.agentRuntime.removeSession(session.id); } catch (_) {} }
           return { ok: false, reason: "worker_tab_create_failed", message: asError(error), created, state: this.getPublicState() };
         }
       }
-      await this.registry.setRuntimeStatus("pool_active");
+      await this.agentRuntime.setRuntimeStatus?.("pool_active");
       return { ok: true, created, state: this.getPublicState() };
     }
 
     async startExecution(payload = {}) {
       if (!this.schedulerEngine) return { ok: false, reason: "scheduler_unavailable" };
       const project = this.planningEngine?.getPublicState?.();
-      if (!project || project.status !== "READY") {
-        return { ok: false, reason: "project_not_ready_for_execution", status: project?.status || null };
-      }
+      if (!project || project.status !== "READY") return { ok: false, reason: "project_not_ready_for_execution", status: project?.status || null };
       const maxWorkers = Math.max(1, Math.min(MAX_WORKERS, Number(payload.maxWorkers) || 3));
-      // Phase 7 forbids self-review. Even when execution concurrency is one, keep a second
-      // registered worker tab available so the author's result can be reviewed independently.
       const poolSize = Math.max(2, maxWorkers);
       const workers = await this.createWorkers(poolSize);
       if (!workers.ok) return workers;
@@ -129,63 +137,38 @@
     }
 
     async refreshAgentFromContent(agentId) {
-      const agent = this.registry.getAgent(agentId);
-      if (!agent || !Number.isInteger(agent.tabId)) return { ok: false, reason: "agent_offline" };
-      try {
-        const response = await this.chrome.tabs.sendMessage(agent.tabId, { type: root.MESSAGE_TYPES.PING, payload: { agentId } });
-        const updated = await this.registry.updateHeartbeat(agent.tabId, response?.payload || response || {}, agent.chatUrl);
-        await this.schedulerEngine?.handleAgentStateChanged?.(updated);
-        return { ok: true, agent: this.registry.getAgent(agentId) };
-      } catch (error) {
-        return { ok: false, reason: "content_not_ready", message: asError(error) };
-      }
+      const result = await this.agentRuntime?.pingAgent?.(agentId);
+      if (!result?.ok) return result || { ok: false, reason: "agent_runtime_unavailable" };
+      await this.schedulerEngine?.handleAgentStateChanged?.(result.agent);
+      return { ok: true, agent: this.agentRuntime.getAgent(agentId) };
     }
 
     async bindProtocolContext(agentId, context = {}) {
-      const agent = this.registry.getAgent(agentId);
+      const agent = this.agentRuntime.getAgent(agentId);
       if (!agent) return { ok: false, reason: "unknown_agent" };
-      return { ok: true, agent: await this.registry.setProtocolContext(agentId, context) };
+      return { ok: true, agent: await this.agentRuntime.setProtocolContext(agentId, context) };
     }
 
     async clearProtocolContext(agentId) {
-      const agent = this.registry.getAgent(agentId);
+      const agent = this.agentRuntime.getAgent(agentId);
       if (!agent) return { ok: false, reason: "unknown_agent" };
-      return { ok: true, agent: await this.registry.clearProtocolContext(agentId) };
+      return { ok: true, agent: await this.agentRuntime.clearProtocolContext(agentId) };
     }
 
-    async sendPromptToAgent(agentId, prompt) {
-      const agent = this.registry.getAgent(agentId);
-      if (!agent || !Number.isInteger(agent.tabId)) return { ok: false, reason: "agent_offline" };
-      try {
-        const result = await this.chrome.tabs.sendMessage(agent.tabId, { type: root.MESSAGE_TYPES.SEND_PROMPT, payload: { prompt: String(prompt || "") } });
-        return { ...result, agentId };
-      } catch (error) {
-        return { ok: false, reason: "agent_unreachable", message: asError(error), agentId };
-      }
-    }
-
-    async stopAgent(agentId) {
-      const agent = this.registry.getAgent(agentId);
-      if (!agent || !Number.isInteger(agent.tabId)) return { ok: false, reason: "agent_offline" };
-      try {
-        const result = await this.chrome.tabs.sendMessage(agent.tabId, { type: root.MESSAGE_TYPES.STOP_GENERATION, payload: { agentId } });
-        return { ...result, agentId };
-      } catch (error) {
-        return { ok: false, reason: "agent_unreachable", message: asError(error), agentId };
-      }
-    }
+    async sendPromptToAgent(agentId, prompt) { return this.agentRuntime.sendPrompt(agentId, prompt); }
+    async stopAgent(agentId) { return this.agentRuntime.stopAgent(agentId); }
 
     async handleContentMessage(message, sender) {
-      const tabId = sender?.tab?.id;
-      if (!Number.isInteger(tabId)) return { ok: false, reason: "missing_sender_tab" };
-      const agent = this.registry.getAgentByTabId(tabId);
+      const context = this.senderContext(sender);
+      if (!context.sessionId) return { ok: false, reason: "missing_sender_session" };
+      const agent = context.agentId ? this.agentRuntime.getAgent(context.agentId) : this.agentRuntime.getAgentBySessionId?.(context.sessionId);
       if (!agent) return { ok: true, ignored: true, reason: "unregistered_tab" };
-      const tabUrl = sender.tab.url || agent.chatUrl;
-      if (!root.isChatGPTUrl(tabUrl)) {
-        await this.registry.updateNavigation(tabId, tabUrl);
+      const sessionUrl = context.url || agent.chatUrl;
+      if (!root.isChatGPTUrl(sessionUrl)) {
+        await this.agentRuntime.updateSessionNavigation(context.sessionId, sessionUrl);
         return { ok: false, reason: "registered_tab_outside_chatgpt" };
       }
-      const updated = await this.registry.updateHeartbeat(tabId, message?.payload || {}, tabUrl);
+      const updated = await this.agentRuntime.updateHeartbeat(context.sessionId, message?.payload || {}, sessionUrl);
       await this.schedulerEngine?.handleAgentStateChanged?.(updated);
       return { ok: true, agent: updated };
     }
@@ -193,7 +176,7 @@
     async handleProtocolEvent(message, sender) {
       if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
       const payload = message?.payload || {};
-      return this.eventBus.handleEvent(payload.event, sender, {
+      return this.eventBus.handleEvent(payload.event, this.senderContext(sender), {
         responseFingerprint: payload.responseFingerprint || "",
         pathname: payload.pathname || "",
         messageCount: payload.messageCount || 0,
@@ -204,14 +187,15 @@
 
     async handleProtocolError(message, sender) {
       if (!this.eventBus) return { ok: false, reason: "event_bus_unavailable" };
-      return this.eventBus.handleProtocolError(message?.payload || {}, sender);
+      return this.eventBus.handleProtocolError(message?.payload || {}, this.senderContext(sender));
     }
 
     async handleRuntimeMessage(message, sender) {
+      const context = this.senderContext(sender);
       const type = message?.type;
       const payload = message?.payload || {};
-      if (type === root.MESSAGE_TYPES.ORCHESTRA_EVENT) return this.handleProtocolEvent(message, sender);
-      if (type === root.MESSAGE_TYPES.PROTOCOL_ERROR) return this.handleProtocolError(message, sender);
+      if (type === root.MESSAGE_TYPES.ORCHESTRA_EVENT) return this.handleProtocolEvent(message, context);
+      if (type === root.MESSAGE_TYPES.PROTOCOL_ERROR) return this.handleProtocolError(message, context);
 
       const contentTypes = new Set([
         root.MESSAGE_TYPES.CONTENT_READY,
@@ -219,23 +203,17 @@
         root.MESSAGE_TYPES.CHAT_STATE,
         root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
       ]);
-      if (contentTypes.has(type)) return this.handleContentMessage(message, sender);
-      if (sender?.tab) return { ok: false, reason: "orchestrator_command_forbidden_from_tab" };
+      if (contentTypes.has(type)) return this.handleContentMessage(message, context);
+      if (context.sessionId) return { ok: false, reason: "orchestrator_command_forbidden_from_agent_session" };
 
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_EVENTS) return { ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_PROJECT) return { ok: true, project: this.planningEngine?.getPublicState?.() || null };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_SCHEDULER) return { ok: true, scheduler: this.schedulerEngine?.getPublicState?.() || null };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_SCHEDULER_DECISIONS) return { ok: true, decisions: this.schedulerEngine?.getRecentDecisions?.(payload.limit) || [] };
-      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT) {
-        if (!this.planningEngine) return { ok: false, reason: "planning_engine_unavailable" };
-        return this.planningEngine.startProject({ goal: payload.goal, repositoryUrl: payload.repositoryUrl });
-      }
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT) return this.planningEngine?.startProject?.({ goal: payload.goal, repositoryUrl: payload.repositoryUrl }) || { ok: false, reason: "planning_engine_unavailable" };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_START_EXECUTION) return this.startExecution(payload);
-      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_SCHEDULER_TICK) {
-        if (!this.schedulerEngine) return { ok: false, reason: "scheduler_unavailable" };
-        return this.schedulerEngine.tick({ reason: payload.reason || "runtime_tick" });
-      }
+      if (type === root.MESSAGE_TYPES.ORCHESTRATOR_SCHEDULER_TICK) return this.schedulerEngine?.tick?.({ reason: payload.reason || "runtime_tick" }) || { ok: false, reason: "scheduler_unavailable" };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD) return this.registerActiveLead();
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS) return this.createWorkers(payload.count);
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_BIND_PROTOCOL_CONTEXT) return this.bindProtocolContext(payload.agentId, payload.context);
@@ -245,18 +223,24 @@
       return { ok: false, reason: "unknown_runtime_message" };
     }
 
-    async handleTabRemoved(tabId) {
-      const agent = this.registry.getAgentByTabId(tabId);
+    async handleSessionRemoved(sessionId) {
+      const agent = this.agentRuntime.getAgentBySessionId?.(sessionId);
       if (!agent) return;
-      await this.registry.markOfflineByTabId(tabId, "tab_closed");
-      await this.schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "tab_closed");
+      await this.agentRuntime.markSessionOffline(sessionId, "session_closed");
+      await this.schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
+    }
+
+    async handleTabRemoved(tabId) { return this.handleSessionRemoved(String(tabId)); }
+
+    async handleSessionUpdated(sessionId, changeInfo, session) {
+      const agent = this.agentRuntime.getAgentBySessionId?.(sessionId);
+      if (!agent) return;
+      if (changeInfo?.url) await this.agentRuntime.updateSessionNavigation(sessionId, changeInfo.url);
+      if (changeInfo?.status === "complete" && root.isChatGPTUrl(session?.url || changeInfo?.url)) await this.refreshAgentFromContent(agent.agentId);
     }
 
     async handleTabUpdated(tabId, changeInfo, tab) {
-      const agent = this.registry.getAgentByTabId(tabId);
-      if (!agent) return;
-      if (changeInfo?.url) await this.registry.updateNavigation(tabId, changeInfo.url);
-      if (changeInfo?.status === "complete" && root.isChatGPTUrl(tab?.url || changeInfo?.url)) await this.refreshAgentFromContent(agent.agentId);
+      return this.handleSessionUpdated(String(tabId), changeInfo, tab ? { id: String(tab.id), url: tab.url || "", active: Boolean(tab.active) } : null);
     }
   }
 

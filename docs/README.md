@@ -4,7 +4,7 @@
 
 ## Основные документы
 
-- [`../ROADMAP.md`](../ROADMAP.md) — целевая архитектура, фазы реализации, state machines, scheduler, protocol, Git/review/integration и recovery;
+- [`../ROADMAP.md`](../ROADMAP.md) — целевая архитектура, постепенная migration extension → desktop, platform contracts и release gates;
 - [`../CHANGELOG.md`](../CHANGELOG.md) — история изменений;
 - [`phase-2-tab-registry.md`](phase-2-tab-registry.md) — контракт service worker, agent registration, heartbeat и lifecycle вкладок;
 - [`phase-3-protocol-v1.md`](phase-3-protocol-v1.md) — Orchestra Protocol v1, Event Bus, idempotency, sequence и rejection semantics;
@@ -19,6 +19,8 @@
 - [`phase-8-smoke-test.md`](phase-8-smoke-test.md) — local Node + Edge acceptance checks для verified integration, text conflicts и semantic conflicts;
 - [`phase-9-pause-resume-recovery.md`](phase-9-pause-resume-recovery.md) — recovery control plane, safe-point Pause, Stop Now, Resume и crash reconciliation;
 - [`phase-9-smoke-test.md`](phase-9-smoke-test.md) — browser/service-worker crash, Pause/Resume и Stop Now acceptance checks;
+- [`phase-10-platform-boundary.md`](phase-10-platform-boundary.md) — AgentRuntime, StateStore, TimerRuntime, Orchestrator API и normalized event sender identity;
+- [`phase-10-smoke-test.md`](phase-10-smoke-test.md) — Node/Edge/API acceptance gates для behavior-preserving portability layer;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
@@ -28,7 +30,8 @@
 - architecture overviews;
 - protocol specifications;
 - state model и persistence schema;
-- extension permissions rationale;
+- extension/desktop platform contracts;
+- permissions rationale;
 - recovery/reconciliation design;
 - testing strategy;
 - threat/safety model;
