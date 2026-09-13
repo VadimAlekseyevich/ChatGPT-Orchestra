@@ -34,6 +34,8 @@ importScripts(
   "recovery-controller.js",
   "recovery-hooks.js",
   "recovery-stop-guards.js",
+  "observability-service.js",
+  "task-control-service.js",
   "orchestrator-api.js"
 );
 
@@ -48,6 +50,17 @@ const agentRuntime = new root.ExtensionAgentRuntime({
   registry,
   messageTypes: root.MESSAGE_TYPES
 });
+agentRuntime.activateAgent = async (agentId) => {
+  const sessionId = agentRuntime.sessionIdForAgent(agentId);
+  const tabId = Number(sessionId);
+  if (!Number.isInteger(tabId)) return { ok: false, reason: "agent_offline", agentId };
+  try {
+    const tab = await chrome.tabs.update(tabId, { active: true });
+    return { ok: true, agentId, session: tab ? { id: String(tab.id), url: String(tab.url || ""), active: Boolean(tab.active) } : { id: sessionId, active: true } };
+  } catch (error) {
+    return { ok: false, reason: "agent_activation_failed", agentId, message: error?.message || String(error) };
+  }
+};
 root.PlatformContracts.assertAgentRuntime(agentRuntime);
 
 const eventStore = new root.EventStore({ stateStore });
@@ -63,6 +76,7 @@ const projectBundleService = new root.ProjectBundle.ProjectBundleService({ porta
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
 root.PlatformContracts.assertTimerRuntime(timerRuntime);
+const persistenceInfo = () => ({ backend: "chrome.storage.local", transactionalWrapper: true });
 
 let schedulerEngine = null;
 const planningEngine = new root.PlanningEngine({
@@ -126,6 +140,26 @@ recoveryController.setActions({
   reconcileTabs: () => orchestrator.reconcileRegisteredSessions()
 });
 
+const observabilityService = new root.ObservabilityService({
+  projectStore,
+  schedulerStore,
+  reviewStore,
+  integrationStore,
+  registry: agentRuntime,
+  eventBus,
+  recoveryController,
+  persistenceInfo
+});
+const taskControlService = new root.TaskControlService({
+  schedulerStore,
+  schedulerEngine,
+  reviewStore,
+  reviewEngine,
+  integrationEngine,
+  registry: agentRuntime,
+  recoveryController
+});
+
 const orchestratorApi = new root.OrchestratorApi({
   orchestrator,
   planningEngine,
@@ -135,7 +169,9 @@ const orchestratorApi = new root.OrchestratorApi({
   recoveryController,
   eventBus,
   projectBundleService,
-  persistenceInfo: () => ({ backend: "chrome.storage.local", transactionalWrapper: true })
+  persistenceInfo,
+  observabilityService,
+  taskControlService
 });
 
 function initializeRuntime() {
@@ -162,7 +198,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
     if (portableReloadPending) return { ok: false, reason: "portable_reload_pending" };
     const senderContext = agentRuntime.normalizeSender(sender);
-    const isPortableImport = !senderContext.sessionId && message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT;
+    const genericCommand = message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE ? String(message?.payload?.name || "") : "";
+    const isPortableImport = !senderContext.sessionId && (
+      message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT
+      || (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE && genericCommand === "importProjectBundle")
+    );
     if (isPortableImport) portableReloadPending = true;
 
     let result;
@@ -176,11 +216,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (isPortableImport && !result?.ok) portableReloadPending = false;
 
-    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT && result?.ok) {
+    const projectStarted = message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT || genericCommand === "startProject";
+    const executionStarted = message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_EXECUTION || genericCommand === "startExecution";
+    if (projectStarted && result?.ok) {
       const projectId = projectStore.getActiveProject()?.projectId;
       if (projectId) await recoveryController.attachProject(projectId, "project_started");
     }
-    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_EXECUTION && result?.ok) {
+    if (executionStarted && result?.ok) {
       const projectId = projectStore.getActiveProject()?.projectId;
       if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
     }
@@ -191,7 +233,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const agent = agentRuntime.getAgent(senderContext.agentId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
-    await recoveryController.tick({ reason: message?.type || "runtime_message" });
+    await recoveryController.tick({ reason: genericCommand || message?.type || "runtime_message" });
     return result;
   })
     .then((result) => sendResponse(result))
