@@ -26,10 +26,20 @@ function remoteProvider(calls = []) {
   };
 }
 
-function input({ bound = true, localVerification = [{ command: "node", args: ["--version"], label: "node" }], verificationWaiver = "" } = {}) {
+function input(options = {}) {
+  const bound = options.bound !== false;
+  const localVerification = Object.prototype.hasOwnProperty.call(options, "localVerification")
+    ? options.localVerification
+    : [{ command: "node", args: ["--version"], label: "node" }];
   return {
     project: { projectId: "P1", repositoryRuntime: bound ? { repositoryId: "repo-1" } : null },
-    task: { id: "T1", kind: "code", scope: { allow: ["src"] }, localVerification, verificationWaiver },
+    task: {
+      id: "T1",
+      kind: "code",
+      scope: { allow: ["src"] },
+      localVerification,
+      verificationWaiver: options.verificationWaiver || ""
+    },
     run: { runId: "R1", git: { branch: "orchestra/P1/T1/R1", startSha: BASE, baseSha: BASE } },
     snapshot: { baseSha: BASE },
     payload: {}
@@ -83,7 +93,7 @@ test("local verification failure blocks artifact before Review and remains retry
   assert.equal(result.local.verification[0].result.exitCode, 7);
 });
 
-test("untrusted repository blocks command execution before Review", async () => {
+test("untrusted repository blocks command execution before Review and is classified fail-closed", async () => {
   const repositoryService = {
     async createTaskWorkspace() { return { ok: true, workspace: { workspaceId: "task:T1:R1" } }; },
     async materializeTaskArtifact() { return { ok: true, artifact: { head: COMMIT, changedFiles: ["src/real.js"], clean: true } }; },
@@ -93,14 +103,16 @@ test("untrusted repository blocks command execution before Review", async () => 
   const provider = new LocalValidatingGitProvider({ remoteProvider: remoteProvider(), repositoryService, logger: { warn() {} } });
   const result = await provider.validateArtifact(input());
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "repository_execution_not_trusted");
+  assert.equal(result.reason, "git_provider_repository_execution_not_trusted");
+  assert.equal(result.local.reason, "repository_execution_not_trusted");
 });
 
 test("missing structured verification plan fails closed for local code tasks", async () => {
   const provider = new LocalValidatingGitProvider({ remoteProvider: remoteProvider(), repositoryService: {}, logger: { warn() {} } });
-  const result = await provider.validateArtifact(input({ localVerification: undefined }));
+  const result = await provider.validateArtifact(input({ localVerification: null }));
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "local_verification_plan_missing");
+  assert.equal(result.reason, "git_provider_local_verification_plan_invalid");
+  assert.equal(result.local.reason, "local_verification_plan_missing");
 });
 
 test("verification waiver permits local scope validation without command execution", async () => {
@@ -112,7 +124,7 @@ test("verification waiver permits local scope validation without command executi
     async verifyWorkspace() { calls.push("verify"); throw new Error("must_not_run"); }
   };
   const provider = new LocalValidatingGitProvider({ remoteProvider: remoteProvider(), repositoryService, logger: { warn() {} } });
-  const result = await provider.validateArtifact(input({ localVerification: undefined, verificationWaiver: "No executable test exists for this docs-only code fixture." }));
+  const result = await provider.validateArtifact(input({ localVerification: null, verificationWaiver: "No executable test exists for this docs-only code fixture." }));
   assert.equal(result.ok, true);
   assert.equal(result.local.verificationWaived, true);
   assert.deepEqual(calls, ["create", "materialize", "scope"]);
@@ -137,7 +149,7 @@ test("legacy project without local repository binding keeps existing remote prov
     repositoryService: { async createTaskWorkspace() { throw new Error("must_not_run"); } },
     logger: { warn() {} }
   });
-  const result = await provider.validateArtifact(input({ bound: false, localVerification: undefined }));
+  const result = await provider.validateArtifact(input({ bound: false, localVerification: null }));
   assert.equal(result.ok, true);
   assert.deepEqual(result.artifact.changedFiles, ["worker-reported.txt"]);
   assert.equal(result.local, undefined);
