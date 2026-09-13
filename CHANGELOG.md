@@ -4,6 +4,53 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.13] - 2026-09-13
+
+### Added
+
+- portable `ObservabilityService` и versioned Observability DTO v1;
+- `OrchestratorApi` v3 с generic query/execute transport для extension и будущего desktop renderer;
+- shared `DashboardApp`, работающий поверх injected transport;
+- `ExtensionDashboardTransport` и standalone Fake transport host без Chrome runtime;
+- Dashboard views для project/DAG/tasks, runs, Git artifacts, reviews, integration evidence, recovery, agent health, scheduler decisions, events, warnings и metrics;
+- `TaskControlService` для safe Retry/Cancel/Priority/Reassign/Review/Integration/Open Executor actions;
+- portable debug bundle export;
+- Phase 12 architecture doc, smoke test и ADR 0012;
+- `npm run test:phase12`.
+
+### Portability and safety
+
+- Dashboard не имеет прямого доступа к `chrome.storage`, `chrome.tabs`, SQLite или внутренним Scheduler/Review/Integration stores;
+- observability/debug DTO рекурсивно удаляет `tabId`, `legacyTabId`, `sessionId`, `runtimeSource` и runtime sender bindings, включая EventBus provenance;
+- privileged Orchestrator API commands по-прежнему отклоняются от agent/browser sessions;
+- manual task mutations fail closed для active/unsafe states;
+- cancel downstream-задач требует explicit cascade;
+- Retry/Reassign, разрешающие `NEEDS_USER`, reopen scheduler/project только через Core service;
+- cancellation всех tasks завершает scheduler/project как `CANCELLED`, а не `READY_FOR_INTEGRATION`;
+- один и тот же Dashboard frontend работает в extension host и standalone Fake host;
+- extension permissions не расширялись.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.13`;
+- Orchestrator API обновлён до v3;
+- popup теперь host'ит shared portable Dashboard, сохраняя bootstrap и legacy controls;
+- Phase 13 становится следующим roadmap этапом.
+
+### Validation
+
+- frozen PR review выполнен для Observability read model, API privilege boundary, task controls, service-worker composition и Dashboard transport;
+- feature branch перед merge была `behind=0`;
+- dedicated `test:phase12` suite добавлена;
+- полный repository `npm test` / `npm run test:phase12` из checkout в текущей environment не запускался из-за отсутствующего DNS-доступа к GitHub;
+- Edge + standalone Dashboard smoke-test остаётся release gate.
+
+### Next
+
+- Phase 13 — Context Management + Portable Agent Packets.
+
+---
+
 ## [2.0.0-alpha.12] - 2026-09-13
 
 ### Added
