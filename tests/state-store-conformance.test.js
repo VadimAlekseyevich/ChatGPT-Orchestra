@@ -5,7 +5,10 @@ const Contracts = require("../platform/contracts.js");
 const { ChromeStorageStateStore } = require("../platform/extension-runtime.js");
 const { MemoryStateStore } = require("../platform/fake-runtime.js");
 const { TransactionalStateStore } = require("../platform/transactional-state-store.js");
-const { SQLiteStateStore } = require("../platform/sqlite-state-store.js");
+const { SQLiteStateStore, loadDatabaseSync } = require("../platform/sqlite-state-store.js");
+
+let sqliteAvailable = true;
+try { loadDatabaseSync(); } catch (_) { sqliteAvailable = false; }
 
 function fakeChromeStorage(seed = {}) {
   const data = { ...seed };
@@ -46,13 +49,13 @@ test("MemoryStateStore satisfies Phase 11 transactional conformance through wrap
   await exercise(new TransactionalStateStore({ store: new MemoryStateStore() }));
 });
 
-test("SQLiteStateStore provides native transactional conformance", async () => {
+test("SQLiteStateStore provides native transactional conformance", { skip: !sqliteAvailable }, async () => {
   const store = new SQLiteStateStore({ filename: ":memory:" });
   try { await exercise(store); }
   finally { store.close(); }
 });
 
-test("SQLite transaction rolls back failed writes", async () => {
+test("SQLite transaction rolls back failed writes", { skip: !sqliteAvailable }, async () => {
   const store = new SQLiteStateStore({ filename: ":memory:" });
   try {
     await store.set({ stable: "before" });
