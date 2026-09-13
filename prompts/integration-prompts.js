@@ -1,0 +1,119 @@
+(() => {
+  "use strict";
+
+  const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
+  const PROMPT_VERSION = 1;
+
+  function json(value) { return JSON.stringify(value ?? null, null, 2); }
+
+  function eventBase(run, agentId) {
+    return {
+      v: 1,
+      projectId: run.projectId,
+      taskId: "integration",
+      runId: run.runId,
+      agentId
+    };
+  }
+
+  function buildIntegratorPrompt({ project, run, agentId }) {
+    const base = eventBase(run, agentId);
+    return [
+      "You are the ChatGPT Orchestra Integrator for one reviewed project.",
+      `Integrator prompt contract version: ${PROMPT_VERSION}.`,
+      "Your job is composition only: integrate approved task branches, detect conflicts, run integration verification, and report structured evidence.",
+      "Do not modify or push the target branch. Do not squash, rebase or cherry-pick task commits. Use merge commits so approved task commits remain ancestors of the integration head.",
+      "",
+      `PROJECT ID: ${project.projectId}`,
+      `REPOSITORY: ${project.repository?.url || "unknown"}`,
+      `TARGET BRANCH: ${run.targetBranch}`,
+      `IMMUTABLE BASE SHA: ${run.baseSha}`,
+      `INTEGRATION BRANCH: ${run.branch}`,
+      "",
+      "APPROVED TASK ORDER:",
+      json(run.taskOrder),
+      "",
+      "MUTATING TASK ARTIFACTS TO MERGE IN EXACT ORDER:",
+      json(run.artifacts),
+      "",
+      "INTEGRATION VERIFICATION COMMANDS:",
+      json(run.verificationCommands),
+      "",
+      "GIT CONTRACT:",
+      `1. Fetch ${run.targetBranch} and verify it is still exactly ${run.baseSha}. If it moved, stop with NEEDS_USER.`,
+      `2. Create/reset only ${run.branch} from exact base ${run.baseSha}.`,
+      "3. For each artifact above, fetch its branch and verify its remote head equals the supplied commit SHA.",
+      "4. Merge artifact branches in the exact supplied order with `git merge --no-ff --no-edit <branch>`.",
+      "5. Never replace a merge with squash/rebase/cherry-pick.",
+      "6. Push only the integration branch.",
+      "7. After all merges, run every integration verification command exactly as supplied.",
+      "",
+      "TEXT CONFLICT CONTRACT:",
+      "- On a textual merge conflict, inspect `git diff --name-only --diff-filter=U`, record the files, then `git merge --abort` so the integration branch remains at the last clean merge.",
+      "- Do NOT invent a resolution in the same response. Stop and emit CONFLICT with conflictType=text.",
+      "- `mergedTaskIds` must be the exact successfully merged prefix before the conflicting task; `currentTaskId` must be the task that conflicted.",
+      "",
+      "SEMANTIC CONFLICT CONTRACT:",
+      "- If all Git merges are clean but any integration verification command fails because approved changes are incompatible, emit CONFLICT with conflictType=semantic.",
+      "- Include failedChecks and the smallest defensible responsibleTaskIds set. Do not report semantic responsibility without evidence.",
+      "",
+      "SUCCESS CONTRACT:",
+      "- DONE is allowed only after every artifact is merged, every verification command passes, and the integration branch is pushed.",
+      "- DONE payload.integration must contain branch, full 40-char commit, baseSha, targetBranch, exact mergedTaskIds, exact changedFiles, checks[{command,status:'PASS',evidence}], and summary.",
+      "",
+      "PROTOCOL CONTRACT:",
+      `- Identity: ${json(base)}`,
+      "- Initial final event uses sequence=1.",
+      `- Use unique eventId beginning with ${run.runId}-.`,
+      "- Final non-empty line must be exactly one @@ORCH JSON envelope; nothing follows it.",
+      "- Allowed final events for this turn: DONE, CONFLICT, BLOCKED, ERROR, NEEDS_USER.",
+      "- For CONFLICT payload include conflictType, currentTaskId (when merge conflict), mergedTaskIds, responsibleTaskIds, files, failedChecks, summary and repairHint."
+    ].join("\n");
+  }
+
+  function buildRepairPrompt({ project, run, repairTask, agentId }) {
+    const base = eventBase(run, agentId);
+    const conflict = repairTask.conflict || {};
+    const remainingArtifacts = run.artifacts.filter((artifact) => !new Set(conflict.mergedTaskIds || []).has(artifact.taskId));
+    return [
+      "Continue as ChatGPT Orchestra Integrator. A bounded integration repair task has been created from your previous CONFLICT event.",
+      `Integrator prompt contract version: ${PROMPT_VERSION}.`,
+      `REPAIR TASK ID: ${repairTask.repairTaskId}`,
+      `REPAIR ATTEMPT: ${repairTask.attempt}`,
+      `INTEGRATION BRANCH: ${run.branch}`,
+      `BASE SHA: ${run.baseSha}`,
+      "",
+      "CONFLICT:",
+      json(conflict),
+      "",
+      "RESPONSIBLE UPSTREAM TASKS:",
+      json(repairTask.responsibleTaskIds),
+      "",
+      "ARTIFACTS STILL TO INTEGRATE:",
+      json(remainingArtifacts),
+      "",
+      "REPAIR RULES:",
+      "- Work only on the integration branch. Never write the target branch.",
+      "- Keep all approved task commits as ancestors; do not squash/rebase/cherry-pick them away.",
+      "- For text conflict: re-run the conflicting merge, resolve only the reported conflict files according to both task intents/acceptance criteria, complete the merge commit, then continue remaining merges in deterministic order.",
+      "- For semantic conflict: make the smallest compatibility repair necessary on the integration branch. Do not add unrelated features or touch files outside the union of approved task changedFiles.",
+      "- Run every integration verification command again after the repair.",
+      "- Push the integration branch before reporting success.",
+      "- If another conflict remains, emit a new CONFLICT instead of claiming success.",
+      "",
+      "SUCCESS CONTRACT:",
+      "- On full success emit DONE with the same payload.integration schema as the initial Integrator prompt.",
+      "- mergedTaskIds must still equal the full expected merge order and all checks must PASS with evidence.",
+      "",
+      "PROTOCOL CONTRACT:",
+      `- Identity: ${json(base)}`,
+      `- Use sequence=${repairTask.nextSequence}.`,
+      `- Use a unique eventId beginning with ${run.runId}-repair-${repairTask.attempt}-.`,
+      "- Final non-empty line must be one @@ORCH envelope and nothing follows it.",
+      "- Allowed final events: DONE, CONFLICT, BLOCKED, ERROR, NEEDS_USER."
+    ].join("\n");
+  }
+
+  root.IntegrationPrompts = Object.freeze({ PROMPT_VERSION, buildIntegratorPrompt, buildRepairPrompt });
+  if (typeof module !== "undefined" && module.exports) module.exports = root.IntegrationPrompts;
+})();
