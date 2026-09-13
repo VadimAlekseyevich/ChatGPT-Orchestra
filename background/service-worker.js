@@ -9,6 +9,10 @@ importScripts(
   "../prompts/integration-prompts.js",
   "../platform/contracts.js",
   "../platform/extension-runtime.js",
+  "../platform/transactional-state-store.js",
+  "../persistence/migration-registry.js",
+  "../persistence/portable-state.js",
+  "../persistence/project-bundle.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
@@ -34,8 +38,9 @@ importScripts(
 );
 
 const root = globalThis.ChatGPTOrchestra;
-const stateStore = new root.ChromeStorageStateStore({ storageArea: chrome.storage.local });
-root.PlatformContracts.assertStateStore(stateStore);
+const chromeStateStore = new root.ChromeStorageStateStore({ storageArea: chrome.storage.local });
+const stateStore = new root.TransactionalStateStore({ store: chromeStateStore });
+root.PlatformContracts.assertTransactionalStateStore(stateStore);
 
 const registry = new root.TabRegistry({ stateStore });
 const agentRuntime = new root.ExtensionAgentRuntime({
@@ -52,6 +57,9 @@ const schedulerStore = new root.SchedulerStore({ storageArea: stateStore });
 const reviewStore = new root.ReviewStore({ storageArea: stateStore });
 const integrationStore = new root.IntegrationStore({ storageArea: stateStore });
 const recoveryStore = new root.RecoveryStore({ storageArea: stateStore });
+const migrationRegistry = new root.MigrationRegistry({ currentVersion: root.PortableState.PORTABLE_SCHEMA_VERSION });
+const portableStateManager = new root.PortableState.PortableStateManager({ stateStore, migrations: migrationRegistry });
+const projectBundleService = new root.ProjectBundle.ProjectBundleService({ portableStateManager, sourceHost: "edge-extension" });
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
 root.PlatformContracts.assertTimerRuntime(timerRuntime);
@@ -125,7 +133,9 @@ const orchestratorApi = new root.OrchestratorApi({
   reviewEngine,
   integrationEngine,
   recoveryController,
-  eventBus
+  eventBus,
+  projectBundleService,
+  persistenceInfo: () => ({ backend: "chrome.storage.local", transactionalWrapper: true })
 });
 
 function initializeRuntime() {
@@ -162,6 +172,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const projectId = projectStore.getActiveProject()?.projectId;
       if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
     }
+
+    if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT && result?.ok && result?.reloadRequired) return result;
 
     if (senderContext.agentId) {
       const agent = agentRuntime.getAgent(senderContext.agentId);
