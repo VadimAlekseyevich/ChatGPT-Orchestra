@@ -127,6 +127,26 @@ class DesktopRepositoryService {
     return commit?.ok === false ? commit : { ok: true, commit };
   }
 
+  async mergeTaskArtifact(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    const merge = await adapter.mergeTaskArtifact(
+      payload.integrationWorkspaceId || payload.workspaceId,
+      payload.taskCommit,
+      { message: payload.message }
+    );
+    return { ok: merge.ok === true, merge };
+  }
+
+  async pushWorkspace(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    const push = await adapter.push(payload.workspaceId, {
+      remote: payload.remote,
+      branch: payload.branch,
+      validated: payload.validated === true
+    });
+    return { ok: push.ok === true, push };
+  }
+
   async cleanupWorkspace(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
     const cleanup = await adapter.cleanup(payload.workspaceId, { force: payload.force === true, deleteBranch: payload.deleteBranch === true });
