@@ -20,8 +20,8 @@ assert.ok(/alpha\.15$/.test(pkg.version), "phase14_expected_alpha15");
 
 const permissions = manifest.permissions || [];
 assert.equal(new Set(permissions).size, permissions.length, "duplicate_manifest_permission");
-for (const required of ["storage", "tabs", "alarms"]) assert.ok(permissions.includes(required), `missing_manifest_permission:${required}`);
-for (const permission of permissions) assert.ok(["storage", "tabs", "alarms"].includes(permission), `unexpected_manifest_permission:${permission}`);
+for (const required of ["storage", "tabs", "alarms", "nativeMessaging"]) assert.ok(permissions.includes(required), `missing_manifest_permission:${required}`);
+for (const permission of permissions) assert.ok(["storage", "tabs", "alarms", "nativeMessaging"].includes(permission), `unexpected_manifest_permission:${permission}`);
 
 const hosts = manifest.host_permissions || [];
 assert.equal(new Set(hosts).size, hosts.length, "duplicate_host_permission");
