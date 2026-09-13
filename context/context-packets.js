@@ -7,6 +7,7 @@
   const BUDGETS = Object.freeze({ lead: 24000, task: 26000, review: 36000, integration: 36000, repair: 32000 });
   const RUNTIME_KEYS = new Set(["tabId", "legacyTabId", "sessionId", "runtimeSource", "browserHandle", "pageId", "webContentsId"]);
   const TRANSCRIPT_KEYS = new Set(["transcript", "chatHistory", "conversationHistory", "messages", "rawResponse", "rawTranscript"]);
+  const OPTIONAL_PACKET_SECTIONS = Object.freeze(["leadSummary", "decisions", "completedTasks", "repositoryContext"]);
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -93,11 +94,34 @@
 
   function enforceBudget(packet, packetType) {
     const maxChars = Number(BUDGETS[packetType] || 24000);
+    const targetBytes = Math.max(1024, maxChars - 384);
     const output = sanitizePortableExact(packet);
     const truncatedFields = [];
     let bytes = byteLength(output);
+
+    if (bytes > targetBytes) {
+      for (const optional of OPTIONAL_PACKET_SECTIONS) {
+        if (output[optional] === undefined) continue;
+        const before = JSON.stringify(output[optional]);
+        output[optional] = compactValue(output[optional]);
+        if (JSON.stringify(output[optional]) !== before) truncatedFields.push(optional);
+        bytes = byteLength(output);
+        if (bytes <= targetBytes) break;
+      }
+    }
+
+    if (bytes > targetBytes) {
+      for (const optional of OPTIONAL_PACKET_SECTIONS) {
+        if (output[optional] === undefined) continue;
+        output[optional] = Array.isArray(output[optional]) ? [] : { omittedForBudget: true };
+        truncatedFields.push(optional);
+        bytes = byteLength(output);
+        if (bytes <= targetBytes) break;
+      }
+    }
+
     let guard = 0;
-    while (bytes > maxChars && guard < 128) {
+    while (bytes > targetBytes && guard < 128) {
       const candidates = collectLongStrings(output).sort((a, b) => b.length - a.length);
       const candidate = candidates[0];
       if (!candidate) break;
@@ -108,16 +132,7 @@
       bytes = byteLength(output);
       guard += 1;
     }
-    if (bytes > maxChars) {
-      for (const optional of ["decisions", "completedTasks", "repositoryContext"]) {
-        if (output[optional] !== undefined) {
-          output[optional] = Array.isArray(output[optional]) ? [] : { omittedForBudget: true };
-          truncatedFields.push(optional);
-          bytes = byteLength(output);
-          if (bytes <= maxChars) break;
-        }
-      }
-    }
+
     output.budget = {
       policyVersion: BUDGET_POLICY_VERSION,
       maxChars,
