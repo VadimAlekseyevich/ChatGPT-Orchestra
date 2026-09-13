@@ -24,6 +24,22 @@
     return value.slice(0, max).map((item) => clone(item));
   }
 
+  function sanitizePortableExact(value) {
+    if (value === null || value === undefined) return value;
+    if (["string", "number", "boolean"].includes(typeof value)) return value;
+    if (Array.isArray(value)) return value.map(sanitizePortableExact);
+    if (typeof value === "object") {
+      const output = {};
+      for (const [key, item] of Object.entries(value)) {
+        if (RUNTIME_KEYS.has(key) || TRANSCRIPT_KEYS.has(key)) continue;
+        if (key === "runtime" && item && typeof item === "object") continue;
+        output[key] = sanitizePortableExact(item);
+      }
+      return output;
+    }
+    return String(value);
+  }
+
   function compactValue(value, depth = 0) {
     if (value === null || value === undefined) return value;
     if (typeof value === "string") return text(value, depth < 2 ? 4000 : 1800);
@@ -77,7 +93,7 @@
 
   function enforceBudget(packet, packetType) {
     const maxChars = Number(BUDGETS[packetType] || 24000);
-    const output = compactValue(packet);
+    const output = sanitizePortableExact(packet);
     const truncatedFields = [];
     let bytes = byteLength(output);
     let guard = 0;
@@ -105,11 +121,16 @@
     output.budget = {
       policyVersion: BUDGET_POLICY_VERSION,
       maxChars,
-      chars: byteLength(output),
-      withinBudget: byteLength(output) <= maxChars,
+      chars: 0,
+      withinBudget: false,
       truncated: truncatedFields.length > 0,
       truncatedFields: [...new Set(truncatedFields)].slice(0, 40)
     };
+    for (let index = 0; index < 3; index += 1) {
+      const actual = byteLength(output);
+      output.budget.chars = actual;
+      output.budget.withinBudget = actual <= maxChars;
+    }
     return output;
   }
 
@@ -199,7 +220,7 @@
     for (const name of names) {
       if (artifacts[name] === undefined) continue;
       refs.push({ kind: "planning_artifact", stage: name, ref: `project.artifacts.${name}` });
-      inputs[name] = compactValue(artifacts[name]);
+      inputs[name] = sanitizePortableExact(artifacts[name]);
     }
     return { refs, inputs };
   }
@@ -294,10 +315,10 @@
         packetVersion: PACKET_VERSION,
         packetType,
         logicalRole: { role, logicalRoleId },
-        identity: compactValue(identity),
+        identity: sanitizePortableExact(identity),
         project: {
           projectId: project.projectId,
-          repository: compactValue(project.repository || null),
+          repository: sanitizePortableExact(project.repository || null),
           immutableGoal: text(project.initialGoal || "", 5000),
           status: project.status,
           stage: project.stage
@@ -364,9 +385,9 @@
         logicalRoleId: `task:${project.projectId}:${task.id}`,
         identity: { projectId: project.projectId, taskId: task.id, runId, agentId }
       });
-      packet.task = compactValue(task);
+      packet.task = sanitizePortableExact(task);
       packet.dependencies = dependencies;
-      packet.assignment = { git: compactValue(gitAssignment), rework: compactValue(reworkContext) };
+      packet.assignment = { git: sanitizePortableExact(gitAssignment), rework: sanitizePortableExact(reworkContext) };
       packet.repositoryContext = repositoryContext(project, task);
       packet.artifactRefs = dependencies.map((item) => item.artifactRef).filter(Boolean);
       return this.finalize(packet, "task");
@@ -381,11 +402,11 @@
         logicalRoleId: `review:${project.projectId}:${task.id}:${review.iteration || 1}`,
         identity: { projectId: project.projectId, taskId: task.id, runId: review.reviewId, agentId }
       });
-      output.task = compactValue(task);
-      output.review = compactValue({ reviewId: review.reviewId, iteration: review.iteration, authorAgentId: review.authorAgentId });
-      output.evidence = compactValue(packet || {});
+      output.task = sanitizePortableExact(task);
+      output.review = sanitizePortableExact({ reviewId: review.reviewId, iteration: review.iteration, authorAgentId: review.authorAgentId });
+      output.evidence = sanitizePortableExact(packet || {});
       output.repositoryContext = repositoryContext(project, task);
-      output.artifactRefs = [compactValue(packet?.artifact || null)].filter(Boolean);
+      output.artifactRefs = [sanitizePortableExact(packet?.artifact || null)].filter(Boolean);
       return this.finalize(output, "review");
     }
 
@@ -400,7 +421,7 @@
         logicalRoleId: `integration:${project.projectId}`,
         identity: { projectId: project.projectId, taskId: "integration", runId: run.runId, agentId }
       });
-      output.integration = compactValue({
+      output.integration = sanitizePortableExact({
         runId: run.runId,
         branch: run.branch,
         baseSha: run.baseSha,
@@ -412,8 +433,8 @@
       });
       output.approvedTasks = orderedTasks;
       output.repositoryContext = repositoryContext(project);
-      output.artifactRefs = capArray(run.artifacts, 40).map(compactValue);
-      if (repairTask) output.repair = compactValue(repairTask);
+      output.artifactRefs = capArray(run.artifacts, 40).map(sanitizePortableExact);
+      if (repairTask) output.repair = sanitizePortableExact(repairTask);
       return this.finalize(output, type);
     }
 
@@ -445,7 +466,9 @@
         if (normalized === "integrator") {
           const integrationRun = runId ? this.integrationStore?.getRun?.(runId) : this.integrationStore?.currentRun?.();
           if (!integrationRun) return { ok: false, reason: "integration_role_not_active" };
-          const repairTask = integrationRun.activeRepairTaskId ? this.integrationStore?.getRepair?.(integrationRun.activeRepairTaskId) : null;
+          const repairTask = integrationRun.activeRepairTaskId
+            ? (this.integrationStore?.listRepairs?.() || []).find((item) => item.repairTaskId === integrationRun.activeRepairTaskId) || null
+            : null;
           return { ok: true, packet: this.buildIntegrationPacket({ project, run: { ...integrationRun, projectId: project.projectId }, repairTask, agentId }) };
         }
         return { ok: false, reason: "unknown_context_role", role: normalized };
@@ -470,7 +493,8 @@
     repositoryContext,
     compactTask,
     artifactRef,
-    compactValue
+    compactValue,
+    sanitizePortableExact
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = root.ContextPackets;
