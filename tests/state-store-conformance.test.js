@@ -92,6 +92,31 @@ test("SQLiteStateStore provides native transactional conformance", { skip: !sqli
   finally { store.close(); }
 });
 
+test("SQLite transaction serializes external writes behind the active transaction", { skip: !sqliteAvailable }, async () => {
+  const store = new SQLiteStateStore({ filename: ":memory:" });
+  const order = [];
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  try {
+    const transaction = store.transaction(async (tx) => {
+      order.push("transaction-start");
+      await tx.set({ imported: true });
+      await blocked;
+      order.push("transaction-end");
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const externalWrite = store.set({ heartbeat: true }).then(() => order.push("external-write"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, ["transaction-start"]);
+    release();
+    await Promise.all([transaction, externalWrite]);
+    assert.deepEqual(order, ["transaction-start", "transaction-end", "external-write"]);
+    const state = await store.get(null);
+    assert.equal(state.imported, true);
+    assert.equal(state.heartbeat, true);
+  } finally { store.close(); }
+});
+
 test("SQLite transaction rolls back failed writes", { skip: !sqliteAvailable }, async () => {
   const store = new SQLiteStateStore({ filename: ":memory:" });
   try {
