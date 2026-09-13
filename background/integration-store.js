@@ -109,6 +109,17 @@
       return this.snapshot();
     }
 
+    terminateActiveRepair(run, status, result, now = this.clock()) {
+      if (!run?.activeRepairTaskId) return;
+      const repair = this.state.repairTasks[run.activeRepairTaskId];
+      if (repair && ["PENDING", "ACTIVE"].includes(repair.status)) {
+        repair.status = status;
+        repair.completedAt = now;
+        repair.result = clone(result || {});
+      }
+      run.activeRepairTaskId = null;
+    }
+
     async ensureProject(projectId, settings = {}) {
       const id = String(projectId || "").trim();
       if (!id) return { ok: false, reason: "project_id_missing" };
@@ -267,12 +278,12 @@
       const run = this.state.runs[runId];
       if (!run) return null;
       const now = this.clock();
+      this.terminateActiveRepair(run, "COMPLETED", { outcome: "integration_verified" }, now);
       run.status = "VERIFIED";
       run.result = clone(result);
       run.finishedAt = now;
       run.lastEventAt = now;
       run.updatedAt = now;
-      run.activeRepairTaskId = null;
       this.state.status = "INTEGRATION_VERIFIED";
       this.state.summary = clone(result);
       await this.persist();
@@ -283,8 +294,10 @@
       const run = this.state.runs[runId];
       if (!run) return null;
       const now = this.clock();
+      const normalizedReason = String(reason || "integration_abandoned");
+      this.terminateActiveRepair(run, "ABANDONED", { outcome: "integration_run_abandoned", reason: normalizedReason }, now);
       run.status = "ABANDONED";
-      run.failureReason = String(reason || "integration_abandoned");
+      run.failureReason = normalizedReason;
       run.finishedAt = now;
       run.updatedAt = now;
       if (this.state.currentRunId === runId) this.state.currentRunId = null;
@@ -297,8 +310,10 @@
       const run = this.state.runs[runId];
       if (run) {
         const now = this.clock();
+        const normalizedReason = String(reason || "integration_failed");
+        this.terminateActiveRepair(run, "FAILED", { outcome: "integration_run_failed", reason: normalizedReason, details: details ? clone(details) : null }, now);
         run.status = "NEEDS_USER";
-        run.failureReason = String(reason || "integration_failed");
+        run.failureReason = normalizedReason;
         run.failureDetails = details ? clone(details) : null;
         run.finishedAt = now;
         run.updatedAt = now;
