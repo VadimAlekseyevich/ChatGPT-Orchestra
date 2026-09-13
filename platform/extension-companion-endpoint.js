@@ -71,6 +71,14 @@
       });
     }
 
+    async forwardLegacyMessage(message, sender = {}) {
+      if (!this.started) throw new Error("extension_companion_not_started");
+      return this.rpc.request("orchestrator.legacyMessage", {
+        message,
+        sender: this.agentRuntime.normalizeSender(sender)
+      });
+    }
+
     async forwardSessionRemoved(sessionId) {
       if (!this.started) throw new Error("extension_companion_not_started");
       return this.rpc.request("orchestrator.sessionRemoved", { sessionId: String(sessionId ?? "") });
