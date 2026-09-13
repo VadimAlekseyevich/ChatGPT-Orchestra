@@ -23,7 +23,6 @@
     "createSession",
     "navigateSession",
     "removeSession",
-    "activateAgent",
     "bindAgentToSession",
     "createAgentForSession",
     "markSessionOffline",
