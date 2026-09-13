@@ -1,8 +1,8 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.9",
+  "version": "2.0.0-alpha.10",
   "private": true,
-  "description": "Development tests for ChatGPT Orchestra adapter, protocol, planning, scheduler, Git isolation, independent review and verified integration.",
+  "description": "Development tests for ChatGPT Orchestra adapter, protocol, planning, scheduler, Git isolation, review, verified integration and recovery.",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
@@ -12,7 +12,8 @@
     "test:phase5": "node --test tests/conflict-policy.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase6": "node --test tests/git-provider.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase7": "node --test tests/event-bus.test.js tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
-    "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/integration-recovery.test.js tests/project-store.test.js tests/project-integration-state.test.js"
+    "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/integration-recovery.test.js tests/project-store.test.js tests/project-integration-state.test.js",
+    "test:phase9": "node --test tests/recovery-store.test.js tests/recovery-controller.test.js tests/recovery-reconciliation.test.js tests/integration-recovery.test.js tests/event-bus.test.js"
   },
   "engines": {
     "node": ">=18"
