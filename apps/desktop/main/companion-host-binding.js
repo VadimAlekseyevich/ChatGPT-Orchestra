@@ -10,6 +10,15 @@ async function handleRuntimeMessage(host, message, sender) {
   return result;
 }
 
+async function handleApiMessage(host, message, sender) {
+  if (sender?.sessionId) return { apiVersion: host.root.ORCHESTRATOR_API_VERSION, ok: false, reason: "orchestrator_command_forbidden_from_agent_session" };
+  const TYPES = host.root.MESSAGE_TYPES || {};
+  const payload = message?.payload || {};
+  if (message?.type === TYPES.ORCHESTRATOR_API_QUERY) return host.query(payload.name, payload.payload || {});
+  if (message?.type === TYPES.ORCHESTRATOR_API_EXECUTE) return host.execute(payload.name, payload.payload || {});
+  return host.orchestratorApi.handleLegacyMessage(message, sender || {});
+}
+
 async function handleSessionRemoved(host, sessionId) {
   const agent = host.agentRuntime.getAgentBySessionId(sessionId);
   await host.orchestrator.handleSessionRemoved(sessionId);
@@ -30,9 +39,10 @@ function bindCompanionAgentRuntime(host) {
   if (typeof host?.agentRuntime?.bindHostHandlers !== "function") return null;
   return host.agentRuntime.bindHostHandlers({
     onRuntimeMessage: (message, sender) => handleRuntimeMessage(host, message, sender),
+    onApiMessage: (message, sender) => handleApiMessage(host, message, sender),
     onSessionRemoved: (sessionId) => handleSessionRemoved(host, sessionId),
     onSessionUpdated: (sessionId, changeInfo, session) => handleSessionUpdated(host, sessionId, changeInfo, session)
   });
 }
 
-module.exports = { bindCompanionAgentRuntime, handleRuntimeMessage, handleSessionRemoved, handleSessionUpdated };
+module.exports = { bindCompanionAgentRuntime, handleRuntimeMessage, handleApiMessage, handleSessionRemoved, handleSessionUpdated };
