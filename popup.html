@@ -10,7 +10,7 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Project planning · scheduler · Git isolation · review · integration · recovery</p>
+      <p>Portable Core · Dashboard · scheduler · review · integration · recovery</p>
     </header>
 
     <section class="orchestra-section" aria-labelledby="projectTitle">
@@ -33,6 +33,16 @@
 
       <button id="startProject" type="button">Start Planning</button>
       <p class="hint">Нужен зарегистрированный Lead. Planning строит и валидирует DAG; выполнение Worker'ами запускается отдельно.</p>
+    </section>
+
+    <section class="orchestra-section dashboard-host-section" aria-labelledby="dashboardTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="dashboardTitle">Portable Dashboard</h2>
+          <p>Observability API v1 · тот же frontend станет desktop renderer.</p>
+        </div>
+      </div>
+      <div id="orchestraDashboard" class="dashboard-host"></div>
     </section>
 
     <section class="orchestra-section" aria-labelledby="orchestraTitle">
@@ -61,7 +71,7 @@
         <button id="createWorkers" class="secondary" type="button">Создать Workers</button>
       </div>
 
-      <p class="hint">Lead привязывается только явно. Worker-вкладки создаёт расширение; свободный Worker может временно стать Reviewer или Integrator. Reviewer никогда не проверяет собственный run.</p>
+      <p class="hint">Lead привязывается только явно. Worker-вкладки создаёт расширение; свободный Worker может временно стать Reviewer или Integrator.</p>
     </section>
 
     <section class="orchestra-section" aria-labelledby="executionTitle">
@@ -78,7 +88,7 @@
         <button id="resumeProject" type="button">Resume</button>
         <button id="stopNow" class="secondary" type="button">Stop Now</button>
       </div>
-      <p class="hint">Pause блокирует новые prompts и ждёт safe point. Stop Now останавливает активные generations best-effort и помечает run'ы interrupted. Resume сначала reconciles tabs, Git state и protocol contexts, и только потом снова открывает dispatch.</p>
+      <p class="hint">Pause ждёт safe point. Stop Now создаёт interruption boundary. Resume сначала reconciles runtime/Git/protocol state.</p>
     </section>
 
     <section class="orchestra-section" aria-labelledby="persistenceTitle">
@@ -93,7 +103,7 @@
         <button id="importProject" class="secondary" type="button">Import Bundle</button>
       </div>
       <input id="importProjectFile" type="file" accept="application/json,.json" hidden />
-      <p class="hint">Export не переносит browser session IDs или secrets. Перед Import поставь проект на Pause или Stop Now. После успешного import расширение перезапустится и потребует reconciliation.</p>
+      <p class="hint">Export не переносит browser session IDs или secrets. Перед Import поставь проект на Pause или Stop Now.</p>
     </section>
 
     <label class="toggle-row">
@@ -150,6 +160,8 @@
   </template>
 
   <script src="content/message-types.js"></script>
+  <script src="dashboard/extension-transport.js"></script>
+  <script src="dashboard/dashboard-app.js"></script>
   <script src="popup-orchestrator.js"></script>
   <script src="popup.js"></script>
 </body>
