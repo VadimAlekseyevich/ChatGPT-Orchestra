@@ -33,18 +33,20 @@
       this.logger = logger;
       this.actions = {};
       this.initialized = false;
+      this.bootReady = false;
       this.resumePromise = Promise.resolve();
     }
 
     setActions(actions = {}) { this.actions = { ...this.actions, ...actions }; }
     getPublicState() {
       const summary = this.store.summary();
-      return { ...summary, safePoint: this.safePointSummary() };
+      return { ...summary, bootReady: this.bootReady, safePoint: this.safePointSummary() };
     }
-    canDispatchNewPrompts() { return ["IDLE", "RUNNING"].includes(this.store.summary().status); }
+    canDispatchNewPrompts() { return this.bootReady && ["IDLE", "RUNNING"].includes(this.store.summary().status); }
     isRecovering() { return this.store.summary().status === "RECOVERING"; }
 
     async prepareForBoot() {
+      this.bootReady = false;
       await this.store.load();
       const state = this.store.summary();
       if (["RUNNING", "PAUSING", "STOPPING", "RECOVERING"].includes(state.status)) {
@@ -134,6 +136,7 @@
       if (!project) {
         if (control.status !== "IDLE") await this.store.clear({ status: "IDLE" });
         this.initialized = true;
+        this.bootReady = true;
         return this.getPublicState();
       }
 
@@ -144,6 +147,7 @@
       }
 
       const state = this.store.summary();
+      let automaticKick = false;
       if (state.status === "RECOVERING") {
         const issues = this.continuityIssues();
         const interruptedControlFlow = ["PAUSING", "STOPPING"].includes(state.previousStatus);
@@ -162,10 +166,12 @@
             snapshot: this.buildSnapshot("startup_reconciled"),
             reconciled: true
           });
-          await this.kickEngines("automatic_service_worker_resume");
+          automaticKick = true;
         }
       }
       this.initialized = true;
+      this.bootReady = true;
+      if (automaticKick) await this.kickEngines("automatic_service_worker_resume");
       return this.getPublicState();
     }
 
@@ -296,6 +302,9 @@
 
       const schedulerSummary = this.schedulerStore?.summary?.();
       if (schedulerSummary?.taskCount > 0 && schedulerSummary.status !== "INTEGRATION_VERIFIED") {
+        for (const agent of this.registry?.listAgents?.() || []) {
+          if (agent.role === "worker" && !Number.isInteger(agent.tabId)) await this.registry.removeAgent?.(agent.agentId);
+        }
         const target = Math.max(2, Number(schedulerSummary.settings?.maxWorkers) || 2);
         try {
           const created = await this.actions.createWorkers?.(target);
