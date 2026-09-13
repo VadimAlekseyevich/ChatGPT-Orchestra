@@ -24,6 +24,7 @@
       "content/message-types.js",
       "protocol/orchestra-protocol.js",
       "content/planning-artifact-parser.js",
+      "content/worker-artifact-parser.js",
       "content/generation-state.js",
       "content/protocol-parser.js",
       "content/assistant-message-reader.js",
