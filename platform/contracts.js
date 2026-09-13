@@ -79,6 +79,8 @@
     "createIntegrationWorkspace",
     "verifyWorkspace",
     "commitWorkspace",
+    "mergeTaskArtifact",
+    "pushWorkspace",
     "cleanupWorkspace"
   ]);
 
