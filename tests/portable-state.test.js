@@ -51,7 +51,11 @@ function seed(projectId = "P1") {
         { cursor: 1, tabId: 42, runtimeSource: { sessionId: "42", agentId: "worker-1" }, source: { runtime: { sessionId: "42" } }, event: { projectId, taskId: "T1", runId: "R1", agentId: "worker-1" } },
         { cursor: 2, tabId: 99, event: { projectId: "OTHER", taskId: "X", runId: "RX", agentId: "other" } }
       ],
-      rejections: []
+      rejections: [
+        { reason: "project_rejection", event: { projectId, taskId: "T1", runId: "R1", agentId: "worker-1" }, tabId: 42 },
+        { reason: "other_project_rejection", event: { projectId: "OTHER", taskId: "X", runId: "RX", agentId: "other" }, tabId: 99 },
+        { reason: "unscoped_runtime_diagnostic", details: { sessionId: "sensitive-session" } }
+      ]
     },
     [STORE_KEYS.agents]: {
       schemaVersion: 1,
@@ -76,11 +80,14 @@ test("portable capture scopes one project, redacts secrets and strips browser ru
   assert.equal(result.snapshot.namespaces.projects.projects.P1.planning.apiKey, "[REDACTED]");
   assert.equal(result.snapshot.namespaces.events.events.length, 1);
   assert.deepEqual(Object.keys(result.snapshot.namespaces.events.processedEvents), ["E1"]);
+  assert.equal(result.snapshot.namespaces.events.rejections.length, 1);
+  assert.equal(result.snapshot.namespaces.events.rejections[0].reason, "project_rejection");
   assert.deepEqual(result.snapshot.namespaces.agents.agents, {});
   const serialized = JSON.stringify(result.snapshot);
   assert.equal(serialized.includes("\"tabId\""), false);
   assert.equal(serialized.includes("\"sessionId\""), false);
   assert.equal(serialized.includes("sk-123456789012345678901234567890"), false);
+  assert.equal(serialized.includes("unscoped_runtime_diagnostic"), false);
 });
 
 test("portable import creates backup, restores logical state and forces recovery gate", async () => {
