@@ -15,12 +15,12 @@
 
   const API_COMMANDS = Object.freeze([
     "startProject","startExecution","registerActiveLead","createWorkers","bindProtocolContext","clearProtocolContext","sendAgentPrompt","stopAgent","openExecutor","schedulerTick","retryTask","cancelTask","changePriority","reassignAgent","requestReview","startIntegration","pause","stopNow","resume","exportProjectBundle","importProjectBundle","exportDebugBundle",
-    "openLocalRepository","cloneRepository","setRepositoryTrust","createTaskWorkspace","createIntegrationWorkspace","materializeTaskArtifact","verifyWorkspace","commitWorkspace","mergeTaskArtifact","pushWorkspace","cleanupWorkspace","cleanupAbandonedWorkspaces"
+    "openLocalRepository","cloneRepository","setRepositoryTrust","createTaskWorkspace","createIntegrationWorkspace","materializeTaskArtifact","verifyWorkspace","cancelVerification","commitWorkspace","mergeTaskArtifact","pushWorkspace","cleanupWorkspace","cleanupAbandonedWorkspaces"
   ]);
 
   const API_QUERIES = Object.freeze([
     "state","dashboard","taskGraph","taskDetails","agents","events","warnings","metrics","reviewDetails","integrationEvidence","contextSummary","contextPacket","project","scheduler","schedulerDecisions","recovery","persistence",
-    "repositories","repository","workspaceStatus","workspaceDiff","workspaceArtifact","workspaceScope","workspaceRecovery"
+    "repositories","repository","workspaceStatus","workspaceDiff","workspaceArtifact","workspaceScope","workspaceRecovery","verificationRuns"
   ]);
 
   function missingMethods(value, methods) { return methods.filter((method) => typeof value?.[method] !== "function"); }
