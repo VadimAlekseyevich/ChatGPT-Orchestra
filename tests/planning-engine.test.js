@@ -35,6 +35,7 @@ function fakeRegistry() {
     lead,
     contexts: [],
     listAgents() { return [lead]; },
+    isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     async setProtocolContext(agentId, context) {
       assert.equal(agentId, "A1");
       lead.protocolContext = { ...context };
