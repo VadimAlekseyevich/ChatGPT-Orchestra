@@ -79,7 +79,7 @@
       .filter((record) => record?.event?.projectId === projectId)
       .map((record) => stripRuntimeBindingsDeep(record));
     output.rejections = (Array.isArray(output.rejections) ? output.rejections : [])
-      .filter((record) => !record?.event?.projectId || record.event.projectId === projectId)
+      .filter((record) => record?.event?.projectId === projectId)
       .map((record) => stripRuntimeBindingsDeep(record));
 
     const processed = {};
@@ -211,7 +211,7 @@
       return backup;
     }
 
-    async import(snapshot, { replace = false } = {}) {
+    async import(snapshot, { replace = false, freezeAfter = false } = {}) {
       if (!this.stateStore?.transaction) return { ok: false, reason: "state_store_transaction_required" };
       const migrated = this.migrate(snapshot);
       if (!migrated.ok) return migrated;
@@ -232,7 +232,7 @@
         const storage = namespaceToStorage(portable.namespaces, projectId, now);
         await tx.set(storage);
         result = { backupId: backup.backupId, projectId, appliedMigrations: migrated.applied || [] };
-      }).catch((error) => {
+      }, { freezeAfter }).catch((error) => {
         result = { error: error?.code || error?.message || "portable_import_failed" };
       });
       if (result?.error) return { ok: false, reason: result.error };
