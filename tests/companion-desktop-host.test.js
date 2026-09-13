@@ -16,6 +16,16 @@ const { CompanionDesktopHost } = require("../apps/desktop/main/companion-desktop
 
 function silentLogger() { return { info() {}, warn() {}, error() {}, log() {} }; }
 
+test("native companion factory applies pending migration before transport/Core boot", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../apps/desktop/main/companion-desktop-host.js"), "utf8");
+  const applyIndex = source.indexOf("await applyPendingCompanionMigration");
+  const transportIndex = source.indexOf("new CompanionServerTransport");
+  const hostIndex = source.indexOf("new CompanionDesktopHost");
+  assert.ok(applyIndex >= 0, "migration apply hook missing");
+  assert.ok(transportIndex > applyIndex, "transport must start after migration apply");
+  assert.ok(hostIndex > applyIndex, "Core host must be constructed after migration apply");
+});
+
 test("CompanionDesktopHost receives browser events while desktop owns Core/state", async () => {
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop });
