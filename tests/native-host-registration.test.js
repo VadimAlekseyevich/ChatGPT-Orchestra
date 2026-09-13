@@ -131,4 +131,6 @@ test("electron main handles registration/native-host modes before loading Electr
   assert.ok(nativeIndex > registrationIndex);
   assert.ok(electronIndex > nativeIndex);
   assert.match(source, /hostPath:\s*executable/);
+  assert.match(source, /const dataDirectory = orchestraDataDirectory\(\)/);
+  assert.equal(source.includes('app.getPath("userData")'), false);
 });
