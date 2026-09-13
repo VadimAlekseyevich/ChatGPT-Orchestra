@@ -25,7 +25,8 @@ const project = {
   repository: { url: "https://github.com/acme/demo" },
   initialGoal: "Build portable agent context packets.",
   status: "PLANNING",
-  stage: "PLAN_V1"
+  stage: "PLAN_V1",
+  artifacts: {}
 };
 
 const task = {
@@ -68,9 +69,22 @@ test("Worker prompt rejects actual serialized oversize even if packet metadata c
     artifactRefs: [],
     padding: "x".repeat(ContextPackets.BUDGETS.task + 2048)
   });
-  const gate = WorkerPrompts.packetCompleteness(packet);
+  const gate = WorkerPrompts.packetCompleteness(packet, { task });
   assert.equal(gate.ok, false);
   assert.ok(gate.actualBytes > gate.maxBytes);
+});
+
+test("Worker rejects silent compaction of critical task strings", () => {
+  const source = { ...task, objective: "SOURCE_OBJECTIVE_MUST_BE_EXACT" };
+  const packet = basePacket("task", {
+    task: { ...source, objective: "SOURCE_OBJECTIVE…" },
+    dependencies: [],
+    assignment: { git: null, rework: null },
+    artifactRefs: []
+  });
+  const gate = WorkerPrompts.packetCompleteness(packet, { task: source });
+  assert.equal(gate.ok, false);
+  assert.ok(gate.incompleteSections.includes("task_compacted"));
 });
 
 test("Lead prompt fails closed when required stageInputs were structurally truncated", () => {
@@ -83,6 +97,21 @@ test("Lead prompt fails closed when required stageInputs were structurally trunc
   const prompt = PlanningPrompts.buildPlanningPrompt({ stage: "PLAN_V1", project, agentId: "L1", runId: "PL1", packet, replacement: true });
   assertFailClosed(prompt, sentinel);
   assert.doesNotMatch(prompt, /@@ORCH_ARTIFACT_BEGIN/);
+});
+
+test("Lead rejects silent compaction of a prior planning artifact", () => {
+  const sourceProject = {
+    ...project,
+    artifacts: { DISCOVERY: { repositorySummary: "DISCOVERY_SOURCE_MUST_BE_EXACT", stack: ["JavaScript"] } }
+  };
+  const packet = basePacket("lead", {
+    stage: "PLAN_V1",
+    stageInputs: { DISCOVERY: { repositorySummary: "DISCOVERY_SOURCE…", stack: ["JavaScript"] } },
+    artifactRefs: []
+  });
+  const gate = PlanningPrompts.packetCompleteness(packet, { project: sourceProject, stage: "PLAN_V1" });
+  assert.equal(gate.ok, false);
+  assert.ok(gate.incompleteSections.includes("stage_inputs_compacted"));
 });
 
 test("Reviewer prompt fails closed before approval when evidence is structurally incomplete", () => {
@@ -109,9 +138,21 @@ test("Reviewer prompt fails closed before approval when evidence is structurally
   }
 });
 
-test("Integrator and repair prompts fail closed on partial manifests", () => {
-  const sentinel = "DO_NOT_LEAK_PARTIAL_ARTIFACT";
-  const run = {
+test("Reviewer rejects silent compaction of diff evidence", () => {
+  const sourceEvidence = { diff: { files: [{ filename: "src/a.js", patch: "PATCH_SOURCE_MUST_BE_EXACT" }] } };
+  const packet = basePacket("review", {
+    task,
+    review: { reviewId: "V1", iteration: 1, authorAgentId: "A0" },
+    evidence: { diff: { files: [{ filename: "src/a.js", patch: "PATCH_SOURCE…" }] } },
+    artifactRefs: []
+  });
+  const gate = ReviewPrompts.packetCompleteness(packet, { task, evidence: sourceEvidence });
+  assert.equal(gate.ok, false);
+  assert.ok(gate.incompleteSections.includes("evidence_compacted"));
+});
+
+function integrationRun() {
+  return {
     projectId: "P1",
     runId: "I1",
     branch: "orchestra/P1/integration/I1",
@@ -122,8 +163,13 @@ test("Integrator and repair prompts fail closed on partial manifests", () => {
     artifacts: [],
     verificationCommands: ["npm test"]
   };
+}
+
+test("Integrator and repair prompts fail closed on partial manifests", () => {
+  const sentinel = "DO_NOT_LEAK_PARTIAL_ARTIFACT";
+  const run = integrationRun();
   const integrationPacket = basePacket("integration", {
-    integration: { ...run, artifacts: [{ taskId: "T1", branch: sentinel }, { _truncatedItems: 4 }] },
+    integration: { ...IntegrationPrompts.integrationManifest(run), artifacts: [{ taskId: "T1", branch: sentinel }, { _truncatedItems: 4 }] },
     approvedTasks: [],
     artifactRefs: []
   });
@@ -133,7 +179,7 @@ test("Integrator and repair prompts fail closed on partial manifests", () => {
 
   const repairTask = { repairTaskId: "IR1", attempt: 1, nextSequence: 2, conflict: { files: ["src/a.js"] } };
   const repairPacket = basePacket("repair", {
-    integration: run,
+    integration: IntegrationPrompts.integrationManifest(run),
     approvedTasks: [],
     artifactRefs: [],
     repair: { ...repairTask, conflict: { files: [{ _truncatedItems: 2 }], note: sentinel } }
@@ -141,4 +187,28 @@ test("Integrator and repair prompts fail closed on partial manifests", () => {
   const repairPrompt = IntegrationPrompts.buildRepairPrompt({ project, run, repairTask, agentId: "A2", packet: repairPacket });
   assertFailClosed(repairPrompt, sentinel);
   assert.doesNotMatch(repairPrompt, /re-run the conflicting merge/);
+});
+
+test("Integrator rejects silent compaction of merge manifest and repair context", () => {
+  const run = integrationRun();
+  run.verificationCommands = ["npm run integration:verify -- --must-be-exact"];
+  const integrationPacket = basePacket("integration", {
+    integration: { ...IntegrationPrompts.integrationManifest(run), verificationCommands: ["npm run integration:verify…"] },
+    approvedTasks: [],
+    artifactRefs: []
+  });
+  const integrationGate = IntegrationPrompts.packetCompleteness(integrationPacket, false, { run });
+  assert.equal(integrationGate.ok, false);
+  assert.ok(integrationGate.incompleteSections.includes("integration_manifest_compacted"));
+
+  const repairTask = { repairTaskId: "IR1", attempt: 1, nextSequence: 2, conflict: { summary: "CONFLICT_SOURCE_MUST_BE_EXACT" } };
+  const repairPacket = basePacket("repair", {
+    integration: IntegrationPrompts.integrationManifest(run),
+    approvedTasks: [],
+    artifactRefs: [],
+    repair: { ...repairTask, conflict: { summary: "CONFLICT_SOURCE…" } }
+  });
+  const repairGate = IntegrationPrompts.packetCompleteness(repairPacket, true, { run, repairTask });
+  assert.equal(repairGate.ok, false);
+  assert.ok(repairGate.incompleteSections.includes("repair_context_compacted"));
 });
