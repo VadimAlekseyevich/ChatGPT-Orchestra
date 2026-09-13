@@ -71,7 +71,15 @@
     "resume",
     "exportProjectBundle",
     "importProjectBundle",
-    "exportDebugBundle"
+    "exportDebugBundle",
+    "openLocalRepository",
+    "cloneRepository",
+    "setRepositoryTrust",
+    "createTaskWorkspace",
+    "createIntegrationWorkspace",
+    "verifyWorkspace",
+    "commitWorkspace",
+    "cleanupWorkspace"
   ]);
 
   const API_QUERIES = Object.freeze([
@@ -91,7 +99,12 @@
     "scheduler",
     "schedulerDecisions",
     "recovery",
-    "persistence"
+    "persistence",
+    "repositories",
+    "repository",
+    "workspaceStatus",
+    "workspaceDiff",
+    "workspaceScope"
   ]);
 
   function missingMethods(value, methods) {
