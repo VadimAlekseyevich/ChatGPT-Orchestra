@@ -64,7 +64,7 @@
 
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
-      return Boolean(agent && this.sessionIdForAgent(agent) && !["OFFLINE", "ERROR"].includes(agent.status));
+      return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
     }
 
     normalizeSender(sender = {}) {
