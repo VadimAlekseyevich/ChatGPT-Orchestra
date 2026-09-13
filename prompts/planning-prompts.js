@@ -12,24 +12,49 @@
     if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
     return serialized.length;
   }
+  function sameJson(left, right) { return JSON.stringify(left ?? null) === JSON.stringify(right ?? null); }
   function hasStructuralTruncation(value) {
     if (!value || typeof value !== "object") return false;
     if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
     if (Array.isArray(value)) return value.some(hasStructuralTruncation);
     return Object.values(value).some(hasStructuralTruncation);
   }
-  function packetCompleteness(packet) {
+
+  function artifactFor(project, stage) {
+    const artifacts = project?.artifacts || {};
+    if (stage === "PLAN_V1") return { discovery: artifacts.DISCOVERY };
+    if (stage === "CRITIQUE") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V1 };
+    if (stage === "PLAN_V2") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V1, critique: artifacts.CRITIQUE };
+    if (stage === "DECOMPOSE") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V2 };
+    if (stage === "DAG_CRITIC") return { plan: artifacts.PLAN_V2, taskGraph: artifacts.DECOMPOSE };
+    return {};
+  }
+
+  function expectedStageInputs(project, stage) {
+    const artifacts = project?.artifacts || {};
+    if (stage === "PLAN_V1") return { DISCOVERY: artifacts.DISCOVERY };
+    if (stage === "CRITIQUE") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V1: artifacts.PLAN_V1 };
+    if (stage === "PLAN_V2") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V1: artifacts.PLAN_V1, CRITIQUE: artifacts.CRITIQUE };
+    if (stage === "DECOMPOSE") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V2: artifacts.PLAN_V2 };
+    if (stage === "DAG_CRITIC") return { PLAN_V2: artifacts.PLAN_V2, DECOMPOSE: artifacts.DECOMPOSE };
+    return {};
+  }
+
+  function packetCompleteness(packet, { project = null, stage = "" } = {}) {
     if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
     const maxBytes = Number(root.ContextPackets?.BUDGETS?.lead || 24000);
     const actualBytes = bytes(packet);
     const incompleteSections = hasStructuralTruncation(packet?.stageInputs) ? ["stageInputs"] : [];
+    const normalizedStage = String(stage || packet?.stage || "").toUpperCase();
+    if (project && !sameJson(expectedStageInputs(project, normalizedStage), packet?.stageInputs || {})) incompleteSections.push("stage_inputs_compacted");
     const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    const unique = [...new Set(incompleteSections)];
     return {
-      ok: budgetOk && incompleteSections.length === 0,
-      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      ok: budgetOk && unique.length === 0,
+      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
       actualBytes,
       maxBytes,
-      incompleteSections
+      incompleteSections: unique
     };
   }
   function failClosedPacket(packet, gate) {
@@ -43,16 +68,6 @@
       provenance: packet?.provenance || null,
       completeness: gate
     };
-  }
-
-  function artifactFor(project, stage) {
-    const artifacts = project?.artifacts || {};
-    if (stage === "PLAN_V1") return { discovery: artifacts.DISCOVERY };
-    if (stage === "CRITIQUE") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V1 };
-    if (stage === "PLAN_V2") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V1, critique: artifacts.CRITIQUE };
-    if (stage === "DECOMPOSE") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V2 };
-    if (stage === "DAG_CRITIC") return { plan: artifacts.PLAN_V2, taskGraph: artifacts.DECOMPOSE };
-    return {};
   }
 
   const instructions = {
@@ -89,7 +104,7 @@
       stageInputs: artifactFor(project, normalizedStage),
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
-    const completeness = packetCompleteness(contextPacket);
+    const completeness = packetCompleteness(contextPacket, { project, stage: normalizedStage });
     const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
     if (!completeness.ok) {
       return [
@@ -119,7 +134,7 @@
       `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check.",
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks.",
       "",
       `STAGE INSTRUCTION:\n${instructions[normalizedStage]}`,
       "",
@@ -139,6 +154,6 @@
     ].join("\n");
   }
 
-  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt, packetCompleteness });
+  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt, packetCompleteness, expectedStageInputs });
   if (typeof module !== "undefined" && module.exports) module.exports = root.PlanningPrompts;
 })();
