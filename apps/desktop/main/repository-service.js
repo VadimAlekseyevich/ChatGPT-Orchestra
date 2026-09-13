@@ -16,6 +16,8 @@ class DesktopRepositoryService {
     this.workspaceFactory = workspaceFactory || ((options) => new SystemGitWorkspace(options));
     this.lifecyclePolicy = lifecyclePolicy || new WorkspaceLifecyclePolicy({ clock });
     this.adapters = new Map();
+    this.activeVerificationRuns = new Map();
+    this.verificationSequence = 0;
   }
 
   audit(event, details = {}) {
@@ -144,23 +146,59 @@ class DesktopRepositoryService {
     return { ok: artifact.ok === true, artifact };
   }
 
-  async verifyWorkspace(payload = {}) {
-    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    const metadata = {
+  verificationMetadata(payload = {}, runId) {
+    return {
       projectId: payload.projectId,
       repositoryId: payload.repositoryId,
       workspaceId: payload.workspaceId,
-      runId: payload.runId || null,
+      runId,
       command: String(payload.command || ""),
       argCount: Array.isArray(payload.args) ? payload.args.length : 0,
-      timeoutMs: Number(payload.timeoutMs) || null
+      timeoutMs: Number(payload.timeoutMs) || null,
+      startedAt: this.clock()
     };
+  }
+
+  listActiveVerificationRuns(payload = {}) {
+    const projectId = payload.projectId ? String(payload.projectId) : null;
+    const repositoryId = payload.repositoryId ? String(payload.repositoryId) : null;
+    const runs = [...this.activeVerificationRuns.values()].filter((item) => (
+      (!projectId || item.projectId === projectId)
+      && (!repositoryId || item.repositoryId === repositoryId)
+    )).map((item) => ({ ...item }));
+    return { ok: true, runs };
+  }
+
+  async cancelVerification(payload = {}) {
+    const runId = String(payload.runId || "").trim();
+    if (!runId) return { ok: false, reason: "verification_run_id_missing" };
+    const active = this.activeVerificationRuns.get(runId);
+    if (!active) return { ok: false, reason: "verification_run_not_active", runId };
+    if (payload.projectId && String(payload.projectId) !== active.projectId) return { ok: false, reason: "verification_run_project_mismatch", runId };
+    if (payload.repositoryId && String(payload.repositoryId) !== active.repositoryId) return { ok: false, reason: "verification_run_repository_mismatch", runId };
+    const adapter = await this.adapterFor(active.projectId, active.repositoryId);
+    const cancelled = typeof adapter.cancelVerification === "function"
+      ? adapter.cancelVerification(runId)
+      : adapter.commandRunner?.cancel?.(runId) === true;
+    if (!cancelled) return { ok: false, reason: "verification_cancel_failed", runId };
+    const updated = { ...active, cancelRequestedAt: this.clock() };
+    this.activeVerificationRuns.set(runId, updated);
+    this.audit("verification_cancel_requested", { projectId: active.projectId, repositoryId: active.repositoryId, workspaceId: active.workspaceId, runId });
+    return { ok: true, runId };
+  }
+
+  async verifyWorkspace(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    const runId = String(payload.runId || `verify:${this.clock()}:${++this.verificationSequence}`);
+    if (this.activeVerificationRuns.has(runId)) return { ok: false, reason: "verification_run_already_active", runId };
+    const metadata = this.verificationMetadata(payload, runId);
+    this.activeVerificationRuns.set(runId, metadata);
     this.audit("verification_started", metadata);
     try {
       const verification = await adapter.runVerification(payload.workspaceId, {
         command: payload.command,
         args: payload.args,
-        runId: payload.runId,
+        runId,
         timeoutMs: payload.timeoutMs,
         maxOutputBytes: payload.maxOutputBytes
       });
@@ -178,6 +216,8 @@ class DesktopRepositoryService {
       const reason = String(error?.message || "verification_failed");
       this.audit("verification_rejected", { ...metadata, reason: /^[a-z0-9_:-]+$/i.test(reason) ? reason : "verification_failed" });
       throw error;
+    } finally {
+      this.activeVerificationRuns.delete(runId);
     }
   }
 
