@@ -16,7 +16,7 @@ function exists(relative) {
 assert.equal(manifest.manifest_version, 3, "manifest_must_be_mv3");
 assert.equal(manifest.version_name, pkg.version, "package_manifest_version_mismatch");
 assert.ok(pkg.version.startsWith(`${manifest.version}-`), "numeric_manifest_version_must_prefix_prerelease");
-assert.ok(/alpha\.15$/.test(pkg.version), "phase14_expected_alpha15");
+assert.ok(/alpha\.16$/.test(pkg.version), "alpha_release_expected_alpha16");
 
 const permissions = manifest.permissions || [];
 assert.equal(new Set(permissions).size, permissions.length, "duplicate_manifest_permission");
@@ -34,9 +34,10 @@ assert.ok(Contracts.CONTRACT_VERSION >= 4, "platform_contract_version_too_old");
 for (const query of ["contextSummary", "contextPacket"]) assert.ok(Contracts.API_QUERIES.includes(query), `api_contract_drift:${query}`);
 assert.ok(Array.isArray(Contracts.GIT_WORKSPACE_METHODS) && Contracts.GIT_WORKSPACE_METHODS.length > 0, "git_workspace_contract_missing");
 
-for (const requiredScript of ["test", "test:contracts", "test:browser-fixtures", "test:release", "test:phase14"]) {
+for (const requiredScript of ["test", "test:contracts", "test:browser-fixtures", "test:release", "test:phase14", "test:phase15", "test:phase16", "test:alpha", "extension:stage-alpha"]) {
   assert.equal(typeof pkg.scripts?.[requiredScript], "string", `missing_package_script:${requiredScript}`);
 }
 
 exists(".github/workflows/ci.yml");
+exists("docs/alpha-16-smoke-test.md");
 console.log(`release validation ok: ${pkg.version}, contract v${Contracts.CONTRACT_VERSION}`);
