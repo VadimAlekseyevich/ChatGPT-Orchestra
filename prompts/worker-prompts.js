@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 4;
+  const PROMPT_VERSION = 5;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
   function bytes(value) {
@@ -22,20 +22,13 @@
     if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
     const maxBytes = Number(root.ContextPackets?.BUDGETS?.task || 26000);
     const actualBytes = bytes(packet);
-    const incompleteSections = ["task", "dependencies", "assignment", "artifactRefs"]
-      .filter((key) => hasStructuralTruncation(packet?.[key]));
+    const incompleteSections = ["task", "dependencies", "assignment", "artifactRefs"].filter((key) => hasStructuralTruncation(packet?.[key]));
     if (task && !sameJson(task, packet?.task)) incompleteSections.push("task_compacted");
     if (gitAssignment && !sameJson(gitAssignment, packet?.assignment?.git)) incompleteSections.push("git_assignment_compacted");
     if (reworkContext && !sameJson(reworkContext, packet?.assignment?.rework)) incompleteSections.push("rework_context_compacted");
     const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
     const unique = [...new Set(incompleteSections)];
-    return {
-      ok: budgetOk && unique.length === 0,
-      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
-      actualBytes,
-      maxBytes,
-      incompleteSections: unique
-    };
+    return { ok: budgetOk && unique.length === 0, reason: budgetOk && !unique.length ? null : "context_packet_incomplete", actualBytes, maxBytes, incompleteSections: unique };
   }
   function failClosedPacket(packet, gate) {
     return {
@@ -78,12 +71,20 @@
     }
 
     const gitRequired = gitAssignment?.required !== false;
-    const gitExample = gitRequired ? {
+    const localArtifactMode = Boolean(gitRequired && project?.repositoryRuntime?.repositoryId);
+    const gitExample = gitRequired && !localArtifactMode ? {
       branch: gitAssignment.branch,
       commit: "0123456789abcdef0123456789abcdef01234567",
       baseSha: gitAssignment.baseSha,
       targetBranch: gitAssignment.targetBranch,
       changedFiles: ["path/actually/changed.ext"]
+    } : undefined;
+    const localChangesExample = localArtifactMode ? {
+      format: "file-set-v1",
+      files: [
+        { path: "src/example.js", operation: "write", content: "complete UTF-8 file contents after your change\n" },
+        { path: "src/obsolete.js", operation: "delete" }
+      ]
     } : undefined;
     const finalExample = {
       ...eventBase,
@@ -94,12 +95,23 @@
         summary: "what was completed",
         testsPerformed: [],
         knownLimitations: [],
-        ...(gitRequired ? { git: gitExample } : {})
+        ...(localArtifactMode ? { localChanges: localChangesExample } : gitRequired ? { git: gitExample } : {})
       }
     };
 
     const startSha = gitAssignment?.startSha || gitAssignment?.baseSha || "";
-    const gitInstructions = gitRequired ? [
+    const gitInstructions = gitRequired ? (localArtifactMode ? [
+      "LOCAL WORKTREE ARTIFACT CONTRACT:",
+      `- Orchestra already prepared an isolated local worktree from start SHA ${startSha}. You do not need filesystem access to that worktree.`,
+      "- Do NOT push an intermediate task branch and do NOT fabricate a commit SHA. Desktop Orchestra will apply, scope-check, test and commit your changes locally.",
+      "- Return the complete intended text changes as payload.localChanges using format=file-set-v1.",
+      "- Each file entry is {path, operation:'write', content:'complete UTF-8 file contents'} or {path, operation:'delete'}.",
+      "- Paths must be repository-relative, must not contain '..', and must stay inside task scope.allow and outside scope.deny.",
+      "- file-set-v1 is intentionally bounded: at most 64 files, at most 128 KiB per written file and 256 KiB total written content.",
+      "- Do not include binary files in file-set-v1. If the correct task requires a binary/oversized artifact, return NEEDS_USER with reason=local_change_set_unsupported instead of pushing behind Orchestra's back.",
+      "- Desktop Orchestra independently derives changed files, runs the structured local verification plan, creates the local task commit and provides a host-generated diff to an independent Reviewer.",
+      "- DONE payload.localChanges is mandatory for this mutating local-bound task. payload.git is not required."
+    ] : [
       "GIT ISOLATION CONTRACT:",
       `- Target branch: ${gitAssignment.targetBranch}`,
       `- Immutable execution base SHA used for validation: ${gitAssignment.baseSha}`,
@@ -110,13 +122,13 @@
         : "- This is an initial run. The start SHA is the immutable execution base.",
       "- Never commit or push directly to the target branch.",
       "- Never reuse another task/run branch. This run owns only the exact branch above.",
-      "- Push the task branch before reporting DONE. A local-only commit is not a valid artifact.",
+      "- Push the task branch before reporting DONE. A local-only commit is not a valid artifact in this legacy remote mode.",
       "- Keep all changed files inside task scope.allow and outside scope.deny. Renames must keep both old and new paths inside allowed scope.",
       "- Do not fabricate branch/commit metadata. Orchestra independently checks GitHub branch head, merge base and compare files.",
       "- DONE payload.git is mandatory and must contain branch, full 40-char commit SHA, baseSha, targetBranch and exact changedFiles.",
       "- If Git access, branch creation or push is unavailable, return BLOCKED/NEEDS_USER instead of bypassing isolation.",
       `- Cleanup policy: ${gitAssignment.cleanupPolicy || "retain_until_review_or_manual_cleanup"}. Do not delete the branch yourself after DONE.`
-    ] : [
+    ]) : [
       "GIT ISOLATION CONTRACT:",
       "- This task kind is explicitly non-mutating; no Git artifact is required.",
       "- Do not make repository changes unless the assignment itself is wrong; report BLOCKED if mutation becomes necessary."
@@ -135,7 +147,7 @@
       "This turn is self-contained. Do not rely on previous chat messages for task or project memory.",
       "The PORTABLE TASK PACKET below is the authoritative bounded context. Persisted artifact references replace transcript copying.",
       "Work only on the assigned task. Do not broaden scope without reporting BLOCKED or NEEDS_USER.",
-      "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and its result is ready for independent Git validation and Reviewer evaluation.",
+      "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and its result is ready for independent host validation and Reviewer evaluation.",
       "",
       `PORTABLE TASK PACKET:\n${json(contextPacket)}`,
       "",
@@ -152,7 +164,9 @@
       "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER.",
       "- The final non-empty response line must be one valid @@ORCH JSON envelope; no text may follow it and do not emit a second @@ORCH line.",
       `- DONE example: @@ORCH ${JSON.stringify(finalExample)}`,
-      "- For DONE payload include summary, testsPerformed and knownLimitations. For mutating tasks payload.git is mandatory as specified above.",
+      localArtifactMode
+        ? "- For DONE payload include summary, testsPerformed, knownLimitations and localChanges. Do not include fake git commit metadata."
+        : "- For DONE payload include summary, testsPerformed and knownLimitations. For mutating remote-mode tasks payload.git is mandatory as specified above.",
       "- For BLOCKED/ERROR use the same identity/eventId/sequence and include reason plus retryable=true/false. Use NEEDS_USER when external user input, permission or complete context is required."
     ].join("\n");
   }
