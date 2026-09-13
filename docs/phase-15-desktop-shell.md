@@ -20,7 +20,9 @@ Desktop boot follows the same recovery order as the extension:
 
 `context packets → prepareForBoot → orchestrator init → integration init → afterRuntimeInit`
 
-A one-minute Node watchdog then calls Scheduler, Integration and Recovery ticks. `FakeAgentRuntime` seeds a synthetic Lead for Phase 15 development; browser/extension agent bridging remains Phase 16.
+A one-minute Node watchdog then calls Scheduler, Integration and Recovery ticks. `FakeAgentRuntime` seeds a synthetic Lead for Phase 15 development. Workers created by the desktop fake host are deterministically settled from `CONNECTING` to `IDLE` after start/resume so the real Scheduler, Review and Integration engines can be exercised without a browser content script. Browser/extension agent bridging remains Phase 16.
+
+The Phase 15 Node 22 gate contains a restart E2E that drives the real Core through planning, a two-worker parallel DAG, pause-to-safe-point, SQLite close/reopen, resume, review, dependent-task dispatch, integration verification, Dashboard observability and Project Bundle export. Agent responses and Git provenance are fixtures; orchestration state transitions are not mocked.
 
 ## Electron security boundary
 
@@ -28,7 +30,7 @@ The renderer uses `contextIsolation: true`, `nodeIntegration: false` and a narro
 
 ## Development
 
-Node 22 runs the dedicated desktop adapter suite because the real SQLite adapter uses `node:sqlite`.
+Node 22 runs the dedicated desktop adapter and restart-E2E suite because the real SQLite adapter uses `node:sqlite`.
 
 ```bash
 npm run test:phase15
@@ -51,4 +53,4 @@ The desktop dev dependency pins Electron `44.3.0` and electron-builder `26.15.3`
 
 ## Current Phase 15 boundary
 
-This bootstrap intentionally does not implement the Phase 16 extension-companion transport or the Phase 17 real local Git/worktree runtime. `FakeAgentRuntime` is the executor host for this phase; remote Git provenance remains injectable through the existing Git provider boundary.
+This bootstrap intentionally does not implement the Phase 16 extension-companion transport or the Phase 17 real local Git/worktree runtime. `FakeAgentRuntime` remains the executor host for this phase; Git provenance stays injectable through the existing provider boundary so Phase 15 can validate orchestration and recovery independently of Phase 17 workspace mechanics.
