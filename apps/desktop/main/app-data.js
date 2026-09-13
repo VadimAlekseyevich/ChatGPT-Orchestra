@@ -27,7 +27,8 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     companionSecretFile: path.join(root, "companion", "pairing-secret"),
     companionEndpointFile: path.join(root, "companion", "endpoint.json"),
     companionMigrationPendingFile: path.join(root, "companion", "migration-pending.json"),
-    companionMigrationReceiptFile: path.join(root, "companion", "migration-applied.json")
+    companionMigrationReceiptFile: path.join(root, "companion", "migration-applied.json"),
+    companionNativeHostManifestFile: path.join(root, "companion", "native-host-manifest.json")
   };
   for (const directory of [paths.root, paths.stateDirectory, paths.logsDirectory, paths.bundlesDirectory, paths.companionDirectory]) fs.mkdirSync(directory, { recursive: true });
   return paths;
