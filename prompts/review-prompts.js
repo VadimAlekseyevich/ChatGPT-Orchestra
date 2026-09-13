@@ -11,25 +11,29 @@
     if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
     return serialized.length;
   }
+  function sameJson(left, right) { return JSON.stringify(left ?? null) === JSON.stringify(right ?? null); }
   function hasStructuralTruncation(value) {
     if (!value || typeof value !== "object") return false;
     if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
     if (Array.isArray(value)) return value.some(hasStructuralTruncation);
     return Object.values(value).some(hasStructuralTruncation);
   }
-  function packetCompleteness(packet) {
+  function packetCompleteness(packet, { task = null, evidence = null } = {}) {
     if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
     const maxBytes = Number(root.ContextPackets?.BUDGETS?.review || 36000);
     const actualBytes = bytes(packet);
     const incompleteSections = ["task", "review", "evidence", "artifactRefs"]
       .filter((key) => hasStructuralTruncation(packet?.[key]));
+    if (task && !sameJson(task, packet?.task)) incompleteSections.push("task_compacted");
+    if (evidence && !sameJson(evidence, packet?.evidence)) incompleteSections.push("evidence_compacted");
     const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    const unique = [...new Set(incompleteSections)];
     return {
-      ok: budgetOk && incompleteSections.length === 0,
-      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      ok: budgetOk && unique.length === 0,
+      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
       actualBytes,
       maxBytes,
-      incompleteSections
+      incompleteSections: unique
     };
   }
   function failClosedPacket(packet, gate) {
@@ -56,7 +60,7 @@
       evidence: packet,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
-    const completeness = packetCompleteness(contextPacket);
+    const completeness = packetCompleteness(contextPacket, { task, evidence: packet });
     const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
     const identity = { v: 1, projectId: project.projectId, taskId: task.id, runId: review.reviewId, agentId };
     const approvedExample = {
@@ -76,7 +80,7 @@
 
     const completenessInstructions = completeness.ok ? [
       "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check."
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks."
     ] : [
       "PACKET COMPLETENESS GATE — FAIL CLOSED:",
       "- The host detected incomplete review evidence. Do NOT approve, request code changes, inspect additional repository state, or infer omitted diff/task context.",
