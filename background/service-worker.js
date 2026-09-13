@@ -7,6 +7,8 @@ importScripts(
   "../prompts/worker-prompts.js",
   "../prompts/review-prompts.js",
   "../prompts/integration-prompts.js",
+  "../platform/contracts.js",
+  "../platform/extension-runtime.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
@@ -27,57 +29,74 @@ importScripts(
   "recovery-store.js",
   "recovery-controller.js",
   "recovery-hooks.js",
-  "recovery-stop-guards.js"
+  "recovery-stop-guards.js",
+  "orchestrator-api.js"
 );
 
 const root = globalThis.ChatGPTOrchestra;
-const registry = new root.TabRegistry();
-const eventStore = new root.EventStore();
-const eventBus = new root.EventBus({ registry, store: eventStore });
-const projectStore = new root.ProjectStore();
-const schedulerStore = new root.SchedulerStore();
-const reviewStore = new root.ReviewStore();
-const integrationStore = new root.IntegrationStore();
-const recoveryStore = new root.RecoveryStore();
-const gitProvider = new root.GitProvider.GitHubRestProvider();
+const stateStore = new root.ChromeStorageStateStore({ storageArea: chrome.storage.local });
+root.PlatformContracts.assertStateStore(stateStore);
 
-let orchestrator = null;
+const registry = new root.TabRegistry({ stateStore });
+const agentRuntime = new root.ExtensionAgentRuntime({
+  chromeApi: chrome,
+  registry,
+  messageTypes: root.MESSAGE_TYPES
+});
+root.PlatformContracts.assertAgentRuntime(agentRuntime);
+
+const eventStore = new root.EventStore({ stateStore });
+const eventBus = new root.EventBus({ registry: agentRuntime, store: eventStore });
+const projectStore = new root.ProjectStore({ storageArea: stateStore });
+const schedulerStore = new root.SchedulerStore({ storageArea: stateStore });
+const reviewStore = new root.ReviewStore({ storageArea: stateStore });
+const integrationStore = new root.IntegrationStore({ storageArea: stateStore });
+const recoveryStore = new root.RecoveryStore({ storageArea: stateStore });
+const gitProvider = new root.GitProvider.GitHubRestProvider();
+const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
+root.PlatformContracts.assertTimerRuntime(timerRuntime);
+
 let schedulerEngine = null;
 const planningEngine = new root.PlanningEngine({
   projectStore,
-  registry,
+  registry: agentRuntime,
   eventBus,
-  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
 });
 const reviewEngine = new root.ReviewEngine({
   store: reviewStore,
   schedulerStore,
   projectStore,
-  registry,
+  registry: agentRuntime,
   eventBus,
   gitProvider,
-  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt),
+  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt),
   onSchedulerTick: (options) => schedulerEngine?.tick(options)
 });
 const integrationEngine = new root.RecoverableIntegrationEngine({
   store: integrationStore,
   schedulerStore,
   projectStore,
-  registry,
+  registry: agentRuntime,
   eventBus,
   gitProvider,
-  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
 });
 schedulerEngine = new root.SchedulerEngine({
   store: schedulerStore,
   projectStore,
-  registry,
+  registry: agentRuntime,
   eventBus,
   gitProvider,
   reviewEngine,
-  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
 });
-orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });
+const orchestrator = new root.ServiceWorkerOrchestrator({
+  agentRuntime,
+  eventBus,
+  planningEngine,
+  schedulerEngine
+});
 
 const recoveryController = new root.RecoveryController({
   store: recoveryStore,
@@ -85,7 +104,7 @@ const recoveryController = new root.RecoveryController({
   schedulerStore,
   reviewStore,
   integrationStore,
-  registry,
+  registry: agentRuntime,
   planningEngine,
   schedulerEngine,
   reviewEngine,
@@ -94,9 +113,19 @@ const recoveryController = new root.RecoveryController({
 });
 root.RecoveryRuntime.controller = recoveryController;
 recoveryController.setActions({
-  stopAgent: (agentId) => orchestrator.stopAgent(agentId),
+  stopAgent: (agentId) => agentRuntime.stopAgent(agentId),
   createWorkers: (count) => orchestrator.createWorkers(count),
-  reconcileTabs: () => orchestrator.reconcileRegisteredTabs()
+  reconcileTabs: () => orchestrator.reconcileRegisteredSessions()
+});
+
+const orchestratorApi = new root.OrchestratorApi({
+  orchestrator,
+  planningEngine,
+  schedulerEngine,
+  reviewEngine,
+  integrationEngine,
+  recoveryController,
+  eventBus
 });
 
 function initializeRuntime() {
@@ -120,10 +149,11 @@ function withReady(callback) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
-    const recoveryCommand = await recoveryController.handleRuntimeMessage(message, sender);
-    if (recoveryCommand.handled) return recoveryCommand.response;
+    const senderContext = agentRuntime.normalizeSender(sender);
+    const result = senderContext.sessionId
+      ? await orchestrator.handleRuntimeMessage(message, senderContext)
+      : await orchestratorApi.handleLegacyMessage(message, senderContext);
 
-    const result = await orchestrator.handleRuntimeMessage(message, sender);
     if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT && result?.ok) {
       const projectId = projectStore.getActiveProject()?.projectId;
       if (projectId) await recoveryController.attachProject(projectId, "project_started");
@@ -133,9 +163,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
     }
 
-    const tabId = sender?.tab?.id;
-    if (Number.isInteger(tabId)) {
-      const agent = registry.getAgentByTabId(tabId);
+    if (senderContext.agentId) {
+      const agent = agentRuntime.getAgent(senderContext.agentId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
     await recoveryController.tick({ reason: message?.type || "runtime_message" });
@@ -152,37 +181,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   withReady(async () => {
-    const agent = registry.getAgentByTabId(tabId);
-    await orchestrator.handleTabRemoved(tabId);
-    if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "tab_closed");
-    await recoveryController.tick({ reason: "tab_removed" });
+    const sessionId = String(tabId);
+    const agent = agentRuntime.getAgentBySessionId(sessionId);
+    await orchestrator.handleSessionRemoved(sessionId);
+    if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
+    await recoveryController.tick({ reason: "session_removed" });
   }).catch((error) => {
-    console.warn("[ChatGPT Orchestra] tab_removed_handler_failed", error);
+    console.warn("[ChatGPT Orchestra] session_removed_handler_failed", error);
   });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   withReady(async () => {
-    await orchestrator.handleTabUpdated(tabId, changeInfo, tab);
-    const agent = registry.getAgentByTabId(tabId);
+    const sessionId = String(tabId);
+    const session = { id: sessionId, url: tab?.url || changeInfo?.url || "", active: Boolean(tab?.active) };
+    await orchestrator.handleSessionUpdated(sessionId, changeInfo, session);
+    const agent = agentRuntime.getAgentBySessionId(sessionId);
     if (agent) await integrationEngine.handleAgentStateChanged(agent);
-    await recoveryController.tick({ reason: "tab_updated" });
+    await recoveryController.tick({ reason: "session_updated" });
   }).catch((error) => {
-    console.warn("[ChatGPT Orchestra] tab_updated_handler_failed", error);
+    console.warn("[ChatGPT Orchestra] session_updated_handler_failed", error);
   });
 });
 
 const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
-if (chrome.alarms?.create) chrome.alarms.create(SCHEDULER_WATCHDOG_ALARM, { periodInMinutes: 1 });
-if (chrome.alarms?.onAlarm) {
-  chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm?.name !== SCHEDULER_WATCHDOG_ALARM) return;
-    withReady(async () => {
-      await schedulerEngine.tick({ reason: "watchdog_alarm" });
-      await integrationEngine.tick({ reason: "watchdog_alarm" });
-      await recoveryController.tick({ reason: "watchdog_alarm" });
-    }).catch((error) => {
-      console.warn("[ChatGPT Orchestra] watchdog_failed", error);
-    });
-  });
-}
+timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => withReady(async () => {
+  await schedulerEngine.tick({ reason: "watchdog_alarm" });
+  await integrationEngine.tick({ reason: "watchdog_alarm" });
+  await recoveryController.tick({ reason: "watchdog_alarm" });
+}).catch((error) => {
+  console.warn("[ChatGPT Orchestra] watchdog_failed", error);
+}));
