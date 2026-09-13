@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  requiresLocalVerification,
+  normalizeLocalVerificationPlan
+} = require("../../../platform/local-verification.js");
+
 class LocalValidatingGitProvider {
   constructor({ remoteProvider, repositoryService, logger = console } = {}) {
     if (!remoteProvider) throw new TypeError("remote_git_provider_required");
@@ -28,6 +33,19 @@ class LocalValidatingGitProvider {
     if (!repositoryId) return remote;
     if (!task?.id || !run?.runId) {
       return { ok: false, reason: "git_repository_identity_missing", remote, local: { ok: false, reason: "local_run_identity_missing" } };
+    }
+
+    const waived = Boolean(String(task.verificationWaiver || "").trim());
+    const verificationPlan = normalizeLocalVerificationPlan(task.localVerification, {
+      required: requiresLocalVerification(task) && !waived
+    });
+    if (!verificationPlan.ok) {
+      return {
+        ok: false,
+        reason: verificationPlan.reason,
+        remote,
+        local: { ok: false, reason: verificationPlan.reason, verificationPlan }
+      };
     }
 
     let workspaceId = null;
@@ -75,6 +93,50 @@ class LocalValidatingGitProvider {
       if (!localScope?.ok) {
         return { ok: false, reason: "local_scope_violation", remote, local: { ok: false, workspaceId, artifact: localArtifact, scope: localScope } };
       }
+
+      const verification = [];
+      for (let index = 0; index < verificationPlan.commands.length; index += 1) {
+        const command = verificationPlan.commands[index];
+        let checked;
+        try {
+          checked = await this.repositoryService.verifyWorkspace({
+            projectId: project.projectId,
+            repositoryId,
+            workspaceId,
+            command: command.command,
+            args: command.args,
+            timeoutMs: command.timeoutMs,
+            runId: `local-verify:${run.runId}:${index + 1}`
+          });
+        } catch (error) {
+          if (String(error?.message || "") === "repository_execution_not_trusted") {
+            return {
+              ok: false,
+              reason: "repository_execution_not_trusted",
+              remote,
+              local: { ok: false, reason: "repository_execution_not_trusted", workspaceId, artifact: localArtifact, scope: localScope, verification }
+            };
+          }
+          throw error;
+        }
+        const result = checked?.verification || null;
+        verification.push({
+          index,
+          label: command.label || null,
+          command: command.command,
+          argCount: command.args.length,
+          result
+        });
+        if (!checked?.ok || !result?.ok) {
+          return {
+            ok: false,
+            reason: "local_verification_failed",
+            remote,
+            local: { ok: false, reason: "local_verification_failed", workspaceId, artifact: localArtifact, scope: localScope, verification }
+          };
+        }
+      }
+
       return {
         ...remote,
         artifact: {
@@ -82,9 +144,17 @@ class LocalValidatingGitProvider {
           remoteChangedFiles: remote.artifact?.changedFiles || [],
           changedFiles: localArtifact.changedFiles || [],
           workspaceId,
-          repositoryId
+          repositoryId,
+          localVerificationPassed: true
         },
-        local: { ok: true, workspaceId, artifact: localArtifact, scope: localScope }
+        local: {
+          ok: true,
+          workspaceId,
+          artifact: localArtifact,
+          scope: localScope,
+          verification,
+          verificationWaived: waived && verification.length === 0
+        }
       };
     } catch (error) {
       this.logger?.warn?.("local_artifact_validation_failed", { projectId: project.projectId, taskId: task.id, runId: run.runId, repositoryId, error: String(error?.message || error) });
