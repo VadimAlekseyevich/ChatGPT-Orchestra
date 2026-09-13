@@ -81,7 +81,7 @@
         if (!IMPORT_SAFE_RECOVERY_STATES.has(recoveryStatus)) {
           result = { ok: false, reason: "portable_import_requires_safe_recovery_state", recoveryStatus };
         } else {
-          result = await this.projectBundleService?.importBundle?.(payload.bundle, { replace: payload.replace === true });
+          result = await this.projectBundleService?.importBundle?.(payload.bundle, { replace: payload.replace === true, freezeAfter: true });
           if (result?.ok) result = { ...result, reloadRequired: true };
         }
       }
