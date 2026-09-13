@@ -42,7 +42,7 @@ class DesktopHost {
     this.stateStore = stateStore || new SQLiteStateStore({ filename: this.paths.stateDatabase, clock });
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
     this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.logger });
-    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock });
+    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock, logger: this.logger });
     this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
     this.gitProvider = new LocalValidatingGitProvider({ remoteProvider: this.remoteGitProvider, repositoryService: this.repositoryService, logger: this.logger });
     this.localIntegrationCoordinator = new LocalIntegrationCoordinator({ repositoryService: this.repositoryService, clock, logger: this.logger });
@@ -119,7 +119,7 @@ class DesktopHost {
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
       reviewEngine: this.reviewEngine,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
+      sendPrompt: (agentId, prompt) => this.sendWorkerPromptWithWorkspace(agentId, prompt)
     });
     this.orchestrator = new root.ServiceWorkerOrchestrator({
       agentRuntime: this.agentRuntime,
@@ -185,6 +185,31 @@ class DesktopHost {
       contextPackets: this.contextPackets,
       repositoryService: this.repositoryService
     });
+  }
+
+  async sendWorkerPromptWithWorkspace(agentId, prompt) {
+    const agent = this.agentRuntime.getAgent?.(agentId) || null;
+    const context = agent?.protocolContext || null;
+    const run = context?.runId ? this.schedulerStore.getRun?.(context.runId) : null;
+    const taskState = context?.taskId ? this.schedulerStore.getTask?.(context.taskId) : null;
+    const project = this.projectStore.getActiveProject?.() || null;
+    if (run && taskState && project && this.gitProvider?.prepareRun) {
+      const task = taskState.definition || taskState;
+      const prepared = await this.gitProvider.prepareRun({ project, task, run, snapshot: this.schedulerStore.getGitSnapshot?.() || null });
+      if (!prepared?.ok) {
+        return { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
+      }
+      if (!prepared.skipped) {
+        await this.schedulerStore.logDecision?.("task_workspace_prepared", {
+          taskId: task.id,
+          runId: run.runId,
+          workspaceId: prepared.workspaceId,
+          created: prepared.created === true,
+          recovered: prepared.recovered === true
+        });
+      }
+    }
+    return this.agentRuntime.sendPrompt(agentId, prompt);
   }
 
   async seedFakeLead() {
