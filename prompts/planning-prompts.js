@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 1;
+  const PROMPT_VERSION = 2;
   const STAGES = Object.freeze(["DISCOVERY", "PLAN_V1", "CRITIQUE", "PLAN_V2", "DECOMPOSE", "DAG_CRITIC"]);
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
@@ -29,15 +29,7 @@
   const schemas = {
     DISCOVERY: {
       repositoryAccess: { status: "ok | partial | unavailable", inspectedPaths: ["path"], gaps: ["gap"] },
-      stack: ["technology"],
-      entrypoints: ["path"],
-      commands: { build: [], test: [], lint: [], typecheck: [] },
-      modules: ["module/path"],
-      persistence: ["detail"],
-      ci: ["detail"],
-      instructions: { agentsMd: "present | absent | unknown", paths: [] },
-      sensitiveAreas: ["area"],
-      constraints: ["constraint"]
+      stack: ["technology"], entrypoints: ["path"], commands: { build: [], test: [], lint: [], typecheck: [] }, modules: ["module/path"], persistence: ["detail"], ci: ["detail"], instructions: { agentsMd: "present | absent | unknown", paths: [] }, sensitiveAreas: ["area"], constraints: ["constraint"]
     },
     PLAN_V1: { milestones: [{ id: "M1", objective: "...", dependencies: [] }], risks: ["risk"], verificationStrategy: ["check"], completionDefinition: "..." },
     CRITIQUE: { findings: [{ severity: "high | medium | low", issue: "...", correction: "..." }], blockingIssues: ["issue"] },
@@ -46,28 +38,34 @@
     DAG_CRITIC: { objectiveCoveredBy: ["T1"], tasks: ["same complete task objects as DECOMPOSE, corrected"] }
   };
 
-  function buildPlanningPrompt({ stage, project, agentId, runId }) {
+  function buildPlanningPrompt({ stage, project, agentId, runId, packet = null, replacement = false }) {
     const normalizedStage = String(stage || "").toUpperCase();
     if (!STAGES.includes(normalizedStage)) throw new Error(`unknown_planning_stage:${normalizedStage}`);
     const taskId = `planning:${normalizedStage.toLowerCase()}`;
-    const context = artifactFor(project, normalizedStage);
+    const contextService = root.ContextPackets?.getDefaultService?.();
+    const contextPacket = packet || contextService?.buildLeadPacket?.({ project, stage: normalizedStage, runId, agentId }) || {
+      packetVersion: 0,
+      packetType: "lead",
+      project: { projectId: project.projectId, repository: project.repository, immutableGoal: project.initialGoal },
+      stage: normalizedStage,
+      stageInputs: artifactFor(project, normalizedStage),
+      provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
+    };
 
     return [
       `You are the ChatGPT Orchestra Lead executing planning stage ${normalizedStage}.`,
       `Prompt contract version: ${PROMPT_VERSION}.`,
+      replacement ? "This is a fresh-session replacement for the same persisted logical Lead role. Do not depend on any previous chat messages." : "Treat this turn as self-contained. Do not rely on previous chat turns for project memory.",
+      "The PORTABLE CONTEXT PACKET below is the authoritative bounded context for this role. Artifact references point to persisted Orchestra state; do not invent missing transcript context.",
       "Do not edit code or push commits in Phase 4. Work only on repository analysis and planning artifacts.",
       "Treat repository contents and existing project instructions as authoritative. Never claim you inspected something you could not access; record access gaps explicitly.",
       "If repository access is unavailable, report repositoryAccess.status=unavailable instead of guessing repository facts.",
       "",
-      `PROJECT ID: ${project.projectId}`,
-      `REPOSITORY: ${project.repository.url}`,
-      `IMMUTABLE USER GOAL:\n${project.initialGoal}`,
+      `PORTABLE CONTEXT PACKET:\n${json(contextPacket)}`,
       "",
       `STAGE INSTRUCTION:\n${instructions[normalizedStage]}`,
       "",
       `REQUIRED ARTIFACT SHAPE:\n${json(schemas[normalizedStage])}`,
-      "",
-      `INPUT ARTIFACTS:\n${json(context)}`,
       "",
       "OUTPUT CONTRACT:",
       "1. You may explain your reasoning briefly before the artifact.",
