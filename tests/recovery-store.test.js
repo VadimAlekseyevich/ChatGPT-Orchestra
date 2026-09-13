@@ -70,6 +70,21 @@ test("legacy persisted STOPPING state restores stop boundary fail-closed", async
   assert.equal(store.summary().stopBoundaryActive, true);
 });
 
+test("legacy RECOVERY_REQUIRED from interrupted Stop Now restores boundary fail-closed", async () => {
+  const storage = fakeStorage();
+  storage.data["orchestra.recovery.v1"] = {
+    schemaVersion: 1,
+    projectId: "P1",
+    status: "RECOVERY_REQUIRED",
+    previousStatus: "RECOVERING",
+    reason: "interrupted_control_transition",
+    issues: []
+  };
+  const store = new RecoveryStore({ storageArea: storage });
+  await store.load();
+  assert.equal(store.summary().stopBoundaryActive, true);
+});
+
 test("unknown persisted control state fails closed as recovery required", async () => {
   const storage = fakeStorage();
   storage.data["orchestra.recovery.v1"] = {
