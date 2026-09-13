@@ -8,11 +8,14 @@ const { DesktopRepositoryService } = require("../apps/desktop/main/repository-se
 
 function serviceFixture() {
   let finish = null;
+  let markStarted = null;
+  const started = new Promise((resolve) => { markStarted = resolve; });
   const audit = [];
   const adapter = {
     runVerification(workspaceId, verification) {
       assert.equal(workspaceId, "task:T1:R1");
       assert.equal(verification.runId, "verify:R1");
+      markStarted?.();
       return new Promise((resolve) => { finish = resolve; });
     },
     cancelVerification(runId) {
@@ -42,11 +45,11 @@ function serviceFixture() {
   });
   service.registry.get = async () => ({ repositoryId: "repo-1", path: "/tmp/repo", trust: "TRUSTED" });
   service.adapters.set(service.adapterKey("P1", "repo-1"), adapter);
-  return { service, audit };
+  return { service, audit, started };
 }
 
 test("active local verification is observable by metadata and cancellable by runId", async () => {
-  const { service, audit } = serviceFixture();
+  const { service, audit, started } = serviceFixture();
   const pending = service.verifyWorkspace({
     projectId: "P1",
     repositoryId: "repo-1",
@@ -57,7 +60,7 @@ test("active local verification is observable by metadata and cancellable by run
     timeoutMs: 5000
   });
 
-  await Promise.resolve();
+  await started;
   const active = service.listActiveVerificationRuns({ projectId: "P1", repositoryId: "repo-1" });
   assert.equal(active.ok, true);
   assert.equal(active.runs.length, 1);
@@ -87,7 +90,7 @@ test("active local verification is observable by metadata and cancellable by run
 });
 
 test("verification cancellation rejects stale and mismatched run identities", async () => {
-  const { service } = serviceFixture();
+  const { service, started } = serviceFixture();
   assert.deepEqual(await service.cancelVerification({ runId: "missing" }), { ok: false, reason: "verification_run_not_active", runId: "missing" });
 
   const pending = service.verifyWorkspace({
@@ -98,7 +101,7 @@ test("verification cancellation rejects stale and mismatched run identities", as
     command: "node",
     args: []
   });
-  await Promise.resolve();
+  await started;
   assert.equal((await service.cancelVerification({ projectId: "P2", runId: "verify:R1" })).reason, "verification_run_project_mismatch");
   assert.equal((await service.cancelVerification({ repositoryId: "repo-2", runId: "verify:R1" })).reason, "verification_run_repository_mismatch");
   await service.cancelVerification({ runId: "verify:R1" });
