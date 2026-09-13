@@ -23,7 +23,7 @@ class SQLiteStateStore {
     this.clock = clock;
     this.ownsDatabase = database ? ownsDatabase === true : true;
     this.db = database || new (loadDatabaseSync())(filename);
-    this.transactionDepth = 0;
+    this.writeChain = Promise.resolve();
     this.ensureSchema();
   }
 
@@ -37,7 +37,13 @@ class SQLiteStateStore {
   encode(value) { return JSON.stringify(value === undefined ? null : value); }
   decode(text) { return clone(JSON.parse(text)); }
 
-  async get(selector = null) {
+  enqueueWrite(operation) {
+    const next = this.writeChain.catch(() => {}).then(operation);
+    this.writeChain = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  async _getDirect(selector = null) {
     if (typeof selector === "string") {
       const row = this.db.prepare(`SELECT value FROM ${this.table} WHERE key = ?`).get(selector);
       return { [selector]: row ? this.decode(row.value) : undefined };
@@ -65,51 +71,53 @@ class SQLiteStateStore {
     return output;
   }
 
-  async set(values) {
+  async _setDirect(values) {
     const entries = Object.entries(values || {});
     if (!entries.length) return;
     const statement = this.db.prepare(`INSERT INTO ${this.table}(key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`);
-    const run = () => {
-      for (const [key, value] of entries) statement.run(String(key), this.encode(value), this.clock());
-    };
-    if (this.transactionDepth > 0) return run();
-    this.db.exec("BEGIN IMMEDIATE");
-    try { run(); this.db.exec("COMMIT"); }
-    catch (error) { try { this.db.exec("ROLLBACK"); } catch (_) {} throw error; }
+    for (const [key, value] of entries) statement.run(String(key), this.encode(value), this.clock());
   }
 
-  async remove(keys) {
+  async _removeDirect(keys) {
     const list = Array.isArray(keys) ? keys : [keys];
     const statement = this.db.prepare(`DELETE FROM ${this.table} WHERE key = ?`);
-    const run = () => { for (const key of list) if (key !== undefined && key !== null) statement.run(String(key)); };
-    if (this.transactionDepth > 0) return run();
-    this.db.exec("BEGIN IMMEDIATE");
-    try { run(); this.db.exec("COMMIT"); }
-    catch (error) { try { this.db.exec("ROLLBACK"); } catch (_) {} throw error; }
+    for (const key of list) if (key !== undefined && key !== null) statement.run(String(key));
   }
 
-  async clear() {
-    if (this.transactionDepth > 0) return this.db.exec(`DELETE FROM ${this.table}`);
-    this.db.exec("BEGIN IMMEDIATE");
-    try { this.db.exec(`DELETE FROM ${this.table}`); this.db.exec("COMMIT"); }
-    catch (error) { try { this.db.exec("ROLLBACK"); } catch (_) {} throw error; }
+  async _clearDirect() { this.db.exec(`DELETE FROM ${this.table}`); }
+
+  async get(selector = null) {
+    await this.writeChain.catch(() => {});
+    return this._getDirect(selector);
   }
 
-  async transaction(callback) {
-    if (typeof callback !== "function") throw new TypeError("transaction_callback_required");
-    if (this.transactionDepth > 0) return callback(this);
+  async atomicWrite(operation) {
     this.db.exec("BEGIN IMMEDIATE");
-    this.transactionDepth += 1;
     try {
-      const result = await callback(this);
+      const result = await operation();
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
       try { this.db.exec("ROLLBACK"); } catch (_) {}
       throw error;
-    } finally {
-      this.transactionDepth -= 1;
     }
+  }
+
+  async set(values) { return this.enqueueWrite(() => this.atomicWrite(() => this._setDirect(values))); }
+  async remove(keys) { return this.enqueueWrite(() => this.atomicWrite(() => this._removeDirect(keys))); }
+  async clear() { return this.enqueueWrite(() => this.atomicWrite(() => this._clearDirect())); }
+
+  async transaction(callback) {
+    if (typeof callback !== "function") throw new TypeError("transaction_callback_required");
+    return this.enqueueWrite(() => this.atomicWrite(async () => {
+      const tx = {
+        get: (selector = null) => this._getDirect(selector),
+        set: (values) => this._setDirect(values),
+        remove: (keys) => this._removeDirect(keys),
+        clear: () => this._clearDirect()
+      };
+      return callback(tx);
+    }));
   }
 
   async snapshot() { return this.get(null); }
