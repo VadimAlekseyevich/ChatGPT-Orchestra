@@ -5,7 +5,7 @@
 Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 [![Platform](https://img.shields.io/badge/platform-Microsoft%20Edge-0A7EA4?style=for-the-badge)](#требования-и-permissions)
-[![Version](https://img.shields.io/badge/version-2.0.0--alpha.9-orange?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0--alpha.10-orange?style=for-the-badge)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/VadimAlekseyevich/ChatGPT-Orchestra?style=for-the-badge&label=license)](LICENSE)
 
 [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Документация](docs/README.md) · [Issues](../../issues)
@@ -16,9 +16,9 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 ## Идея
 
-**ChatGPT Orchestra** — Manifest V3 extension, которая превращает несколько ChatGPT-чатов в управляемый оркестр coding-agent'ов с централизованным состоянием, формальным event protocol, staged planning, conflict-aware scheduling, Git isolation, независимым review и verified integration.
+**ChatGPT Orchestra** — Manifest V3 extension, которая превращает несколько ChatGPT-чатов в управляемый оркестр coding-agent'ов с централизованным состоянием, формальным event protocol, staged planning, conflict-aware scheduling, Git isolation, независимым review, verified integration и deterministic recovery.
 
-Ключевой принцип: **чаты — исполнители, а не источник истины**. Project state, task/run/review/integration state, event identity, Git provenance и scheduler decisions принадлежат Orchestrator Core в service worker.
+Ключевой принцип: **чаты — исполнители, а не источник истины**. Project state, task/run/review/integration state, recovery lifecycle, event identity, Git provenance и scheduler decisions принадлежат Orchestrator Core в service worker.
 
 Полная целевая архитектура: [`ROADMAP.md`](ROADMAP.md).
 
@@ -26,7 +26,7 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 ## Текущий статус
 
-Текущая prerelease-версия — **`2.0.0-alpha.9`**.
+Текущая prerelease-версия — **`2.0.0-alpha.10`**.
 
 Реализованы:
 
@@ -37,7 +37,8 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 - Phase 5 — conflict-aware parallel scheduler;
 - Phase 6 — per-run Git task isolation и independent artifact validation;
 - Phase 7 — independent Reviewer, structured approval и bounded rework loop;
-- Phase 8 — dynamic Integrator, deterministic branch composition и semantic conflict remediation.
+- Phase 8 — dynamic Integrator, deterministic branch composition и semantic conflict remediation;
+- Phase 9 — safe-point Pause, Stop Now, reconcile-before-resume и browser/service-worker crash recovery.
 
 Текущий execution pipeline:
 
@@ -76,6 +77,17 @@ new rework run       APPROVED
               integration verification
                          ↓
                 INTEGRATION_VERIFIED
+```
+
+Любая long-running стадия дополнительно управляется persisted recovery control plane:
+
+```text
+RUNNING
+  ├─ Pause ───────→ PAUSING → safe point → PAUSED
+  ├─ Stop Now ────→ STOPPING → interrupted snapshot → STOPPED
+  └─ crash/restart → RECOVERING
+                       ├─ continuity intact → RUNNING
+                       └─ ambiguity/lost tabs → RECOVERY_REQUIRED → Resume
 ```
 
 `INTEGRATION_VERIFIED` означает: approved task commits собраны в отдельной remote integration branch, target branch осталась на immutable base, ancestry/merge order/changed files проверены независимо, а integration verification commands имеют PASS evidence. Это **не direct merge в target branch**.
@@ -280,9 +292,49 @@ Integrator abort'ит конфликтующий merge и отправляет s
 - first-parent merge order совпадает с deterministic order;
 - каждый required integration command имеет `PASS` evidence.
 
-Alpha.9 использует policy `integration_branch_only`: target branch расширение напрямую не изменяет.
+Alpha.10 сохраняет policy `integration_branch_only`: target branch расширение напрямую не изменяет.
 
 Подробности: [`docs/phase-8-integrator.md`](docs/phase-8-integrator.md).
+
+---
+
+## Pause / Resume / Crash Recovery
+
+Phase 9 добавляет отдельный `RecoveryStore` поверх Planning/Scheduler/Review/Integration. Underlying work state не переписывается в искусственный `PAUSED`: recovery lifecycle хранится отдельно и управляет единым dispatch gate.
+
+### Pause
+
+`Pause` сразу запрещает новые prompts, но уже идущие generations могут закончиться и сохранить events/artifacts. После исчезновения active planning/Worker/Reviewer/Integrator generation Orchestra достигает safe point и становится `PAUSED`.
+
+### Stop Now
+
+`Stop Now` best-effort отправляет `STOP_GENERATION`, затем:
+
+- Worker run → `INTERRUPTED`, а не completion;
+- active Review requeue'ится с fresh `reviewId`;
+- active Integration run abandon'ится и не переиспользуется;
+- active Planning stage получает interrupted marker и fresh run после Resume;
+- late `DONE / REVIEW_* / CONFLICT` во время `STOPPING/STOPPED` остаются audit-only и не применяются к state machines.
+
+### Resume
+
+Resume всегда выполняет reconciliation **до** открытия dispatch:
+
+1. reconcile tabs;
+2. missing Worker records удаляются из live registry;
+3. replacement Worker tabs получают fresh agent IDs;
+4. target/base Git snapshot проверяется повторно;
+5. task branches reconciles с persisted runs;
+6. безопасный in-scope remote progress может стать стартовым commit fresh run;
+7. reviews/integration identities reconciles или заменяются;
+8. protocol contexts перестраиваются из persisted state;
+9. только затем recovery возвращается в `RUNNING`.
+
+Небезопасный или неоднозначный state остаётся `RECOVERY_REQUIRED`.
+
+При обычном MV3 service-worker restart с живыми ChatGPT tabs Orchestra может auto-reconcile и продолжить без повторной выдачи active work. При полном browser restart и потерянных tabs требуется explicit Resume.
+
+Подробности: [`docs/phase-9-pause-resume-recovery.md`](docs/phase-9-pause-resume-recovery.md).
 
 ---
 
@@ -325,7 +377,8 @@ Popup умеет:
 - восстанавливать known agent identity после reload;
 - отправлять prompt конкретному `agentId`;
 - динамически использовать idle Worker как Reviewer;
-- динамически использовать idle Worker как Integrator после полного approval DAG.
+- динамически использовать idle Worker как Integrator после полного approval DAG;
+- управлять `Pause / Resume / Stop Now` для активного проекта.
 
 Обычные ChatGPT tabs не становятся агентами автоматически.
 
@@ -333,25 +386,28 @@ Popup умеет:
 
 ---
 
-## Safety invariants alpha.9
+## Safety invariants alpha.10
 
+- boot reconciliation закрывает dispatch до `bootReady=true`;
+- Pause запрещает новые prompts до safe point и во всём `PAUSED`;
+- Stop Now не превращает interrupted Worker в completion;
+- late state-changing events через Stop boundary audit'ятся, но не применяются;
+- replacement browser tabs получают fresh Worker identities;
+- recovered Git progress принимается только после base/scope checks;
 - обычный Worker `DONE` не означает acceptance;
 - mutating Worker result не проходит без independently validated Git artifact;
 - author agent не может review собственный run;
-- incomplete/malformed `REVIEW_APPROVED` fails closed;
-- `CHANGES_REQUIRED` не считается completion;
 - dependency unlock требует `APPROVED`;
 - `APPROVED` mutating task без canonical Git artifact не допускается к integration;
 - integration events требуют exact bound protocol context;
 - Integrator использует deterministic `--no-ff` merge order;
-- target branch movement останавливает integration fail-closed;
+- target branch movement останавливает execution/recovery fail-closed;
 - final integration report не принимается без remote ancestry/merge-history validation;
-- integration repair ограничен approved artifact file union;
-- alpha.9 не пишет target branch напрямую.
+- alpha.10 не пишет target branch напрямую.
 
 ---
 
-## Архитектура alpha.9
+## Архитектура alpha.10
 
 ```text
 background/
@@ -373,6 +429,10 @@ background/
   integration-store.js
   integration-engine.js
   integration-recovery.js
+  recovery-store.js
+  recovery-controller.js
+  recovery-hooks.js
+  recovery-stop-guards.js
 
 protocol/
   orchestra-protocol.js
@@ -384,7 +444,7 @@ prompts/
   integration-prompts.js
 ```
 
-`ProjectStore` хранит project/approved DAG. `SchedulerStore` — mutable task/run state. `ReviewStore` — review identities/history. `IntegrationStore` — integration attempts/conflicts/repairs/final summary. `EventBus` — protocol identity/idempotency. `GitProvider` — independent Git provenance. ChatGPT tabs остаются replaceable executor nodes.
+`ProjectStore` хранит project/approved DAG. `SchedulerStore` — mutable task/run state. `ReviewStore` — review identities/history. `IntegrationStore` — integration attempts/conflicts/repairs/final summary. `RecoveryStore` — persisted lifecycle intent/snapshots. `EventBus` — protocol identity/idempotency. `GitProvider` — independent Git provenance. ChatGPT tabs остаются replaceable executor nodes.
 
 ---
 
@@ -394,7 +454,7 @@ prompts/
 git clone https://github.com/VadimAlekseyevich/ChatGPT-Orchestra.git
 cd ChatGPT-Orchestra
 npm test
-npm run test:phase8
+npm run test:phase9
 ```
 
 Затем:
@@ -405,10 +465,11 @@ npm run test:phase8
 4. дождись planning status `READY`;
 5. выбери Worker slots / maxWorkers;
 6. Start Execution;
-7. наблюдай Worker → Git validation → independent review → rework/approval;
-8. после всех approvals ожидай auto-allocation Integrator;
-9. при конфликте ожидай persisted integration repair task;
-10. финальный успешный статус — `INTEGRATION_VERIFIED`, а target branch остаётся неизменённой.
+7. наблюдай Worker → Git validation → independent review → integration;
+8. используй Pause для safe-point остановки новых prompts;
+9. используй Stop Now для interruption boundary;
+10. после browser/service-worker disruption используй Resume и следи за `RECOVERING / RECOVERY_REQUIRED / RUNNING`;
+11. финальный успешный execution status — `INTEGRATION_VERIFIED`, target branch остаётся неизменённой.
 
 Runtime extension не требует npm dependencies или build step.
 
@@ -422,13 +483,13 @@ Runtime extension не требует npm dependencies или build step.
 
 Manifest permissions:
 
-- `storage` — registry/event/project/scheduler/review/integration persisted state;
+- `storage` — registry/event/project/scheduler/review/integration/recovery persisted state;
 - `tabs` — agent tab lifecycle и targeted routing;
-- `alarms` — scheduler/integration watchdog;
+- `alarms` — scheduler/integration/recovery watchdog;
 - ChatGPT host permissions — content adapter;
-- `https://api.github.com/*` — read-only Git artifact/review/integration validation.
+- `https://api.github.com/*` — read-only Git artifact/review/integration/recovery validation.
 
-Extension не хранит GitHub credentials и alpha.9 не использует GitHub write API. Git branches/commits создаются назначенными ChatGPT agents через их рабочую Git-среду; extension независимо проверяет remote result.
+Extension не хранит GitHub credentials и alpha.10 не использует GitHub write API. Git branches/commits создаются назначенными ChatGPT agents через их рабочую Git-среду; extension независимо проверяет remote result.
 
 ---
 
@@ -442,20 +503,22 @@ Extension не хранит GitHub credentials и alpha.9 не использу�
 - Phase 5 — Parallel Scheduler — `2.0.0-alpha.6`;
 - Phase 6 — Git Task Isolation — `2.0.0-alpha.7`;
 - Phase 7 — Independent Review Loop — `2.0.0-alpha.8`;
-- **Phase 8 — Integrator + Semantic Conflicts — `2.0.0-alpha.9`;**
-- **Phase 9 — Pause / Resume / Crash Recovery — следующий этап;**
-- Phase 10+ — dashboard, context, hardening, CI, alpha release.
+- Phase 8 — Integrator + Semantic Conflicts — `2.0.0-alpha.9`;
+- **Phase 9 — Pause / Resume / Crash Recovery — `2.0.0-alpha.10`;**
+- **Phase 10 — Dashboard / Observability — следующий этап;**
+- Phase 11+ — context, hardening, CI, alpha release.
 
 ---
 
-## Ограничения alpha.9
+## Ограничения alpha.10
 
 - `INTEGRATION_VERIFIED` означает verified integration branch, но не automatic promotion в target branch;
-- target branch policy в alpha.9 намеренно `integration_branch_only`;
-- semantic remediation ограничена union approved artifact files; крупный redesign требует user/replan;
-- general Pause / Stop Now / Resume / full project reconciliation — Phase 9;
+- target branch policy остаётся `integration_branch_only`;
+- planning Lead после полного browser loss требует явного user reconnect/register;
+- recovery не пытается восстановить скрытый model context закрытой ChatGPT вкладки: вместо этого reconciles persisted artifacts и создаёт fresh run identity;
+- unauthenticated GitHub REST reconciliation ориентирован на public-readable repositories;
 - review и semantic attribution остаются LLM-based quality gates поверх deterministic structural/provenance checks;
-- unauthenticated GitHub REST validation ориентирован на public-readable repositories;
+- Phase 10 Dashboard/Observability ещё не реализован;
 - browser E2E against production ChatGPT DOM остаётся ручным smoke-test.
 
 ---
@@ -469,7 +532,8 @@ Extension не хранит GitHub credentials и alpha.9 не использу�
 - [`docs/phase-5-scheduler.md`](docs/phase-5-scheduler.md)
 - [`docs/phase-6-git-task-isolation.md`](docs/phase-6-git-task-isolation.md)
 - [`docs/phase-7-review-loop.md`](docs/phase-7-review-loop.md)
-- [`docs/phase-7-smoke-test.md`](docs/phase-7-smoke-test.md)
 - [`docs/phase-8-integrator.md`](docs/phase-8-integrator.md)
 - [`docs/phase-8-smoke-test.md`](docs/phase-8-smoke-test.md)
+- [`docs/phase-9-pause-resume-recovery.md`](docs/phase-9-pause-resume-recovery.md)
+- [`docs/phase-9-smoke-test.md`](docs/phase-9-smoke-test.md)
 - [`docs/adr/`](docs/adr/)

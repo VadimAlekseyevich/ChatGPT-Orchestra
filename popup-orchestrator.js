@@ -7,10 +7,14 @@
     runtimeStatus: document.querySelector("#runtimeStatus"),
     projectStatus: document.querySelector("#projectStatus"),
     executionStatus: document.querySelector("#executionStatus"),
+    recoveryStatus: document.querySelector("#recoveryStatus"),
     repositoryUrl: document.querySelector("#repositoryUrl"),
     projectGoal: document.querySelector("#projectGoal"),
     startProject: document.querySelector("#startProject"),
     startExecution: document.querySelector("#startExecution"),
+    pauseProject: document.querySelector("#pauseProject"),
+    resumeProject: document.querySelector("#resumeProject"),
+    stopNow: document.querySelector("#stopNow"),
     leadStatus: document.querySelector("#leadStatus"),
     workersStatus: document.querySelector("#workersStatus"),
     agentsList: document.querySelector("#agentsList"),
@@ -56,15 +60,17 @@
       return;
     }
     const tasks = Number(project.taskCount) || 0;
-    ui.projectStatus.textContent = `${project.status} · ${project.stage}${tasks ? ` · ${tasks} tasks` : ""}`;
+    const workStatus = project.workStatus ? ` · work ${project.workStatus}` : "";
+    ui.projectStatus.textContent = `${project.status}${workStatus} · ${project.stage}${tasks ? ` · ${tasks} tasks` : ""}`;
     if (!ui.repositoryUrl.value) ui.repositoryUrl.value = project.repository?.url || "";
     if (!ui.projectGoal.value) ui.projectGoal.value = project.goal || "";
   }
 
-  function renderScheduler(project, scheduler) {
+  function renderScheduler(project, scheduler, recovery) {
+    const lifecycleBlocked = recovery && !["IDLE", "RUNNING"].includes(recovery.status);
     if (!scheduler || !project || scheduler.projectId !== project.projectId || scheduler.taskCount === 0) {
       ui.executionStatus.textContent = "Execution: not started";
-      ui.startExecution.disabled = project?.status !== "READY";
+      ui.startExecution.disabled = lifecycleBlocked || project?.status !== "READY";
       return;
     }
     const counts = scheduler.counts || {};
@@ -80,18 +86,33 @@
     if (integration?.branch) {
       const commit = integration.commit ? `@${String(integration.commit).slice(0, 8)}` : "";
       integrationText = ` · integration ${integration.branch}${commit}`;
-    } else if (["READY_FOR_INTEGRATION", "INTEGRATING", "INTEGRATION_REPAIRING"].includes(project.status)) {
-      integrationText = ` · integration ${project.status.toLowerCase()}`;
+    } else if (["READY_FOR_INTEGRATION", "INTEGRATING", "INTEGRATION_REPAIRING"].includes(project.workStatus || project.status)) {
+      integrationText = ` · integration ${(project.workStatus || project.status).toLowerCase()}`;
     }
     ui.executionStatus.textContent = `${scheduler.status} · ${approved}/${scheduler.taskCount} approved · ${scheduler.activeRuns} work active${reviewText}${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}${integrationText}`;
     ui.startExecution.disabled = true;
+  }
+
+  function renderRecovery(project, recovery) {
+    const status = recovery?.status || "IDLE";
+    const safe = recovery?.safePoint || {};
+    const activeCount = (safe.activeWorkerRuns?.length || 0) + (safe.activeReviews?.length || 0) + (safe.activeIntegration ? 1 : 0) + (safe.planningActive ? 1 : 0);
+    const issueCount = recovery?.issues?.length || 0;
+    ui.recoveryStatus.textContent = `Recovery: ${status}${status === "PAUSING" ? ` · ${activeCount} active` : ""}${issueCount ? ` · ${issueCount} issue(s)` : ""}`;
+
+    const hasProject = Boolean(project);
+    ui.pauseProject.disabled = !hasProject || !["RUNNING", "IDLE"].includes(status);
+    ui.resumeProject.disabled = !hasProject || !["PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(status);
+    ui.stopNow.disabled = !hasProject || ["STOPPED", "STOPPING", "INTEGRATION_VERIFIED"].includes(status) || project?.workStatus === "INTEGRATION_VERIFIED" || project?.status === "INTEGRATION_VERIFIED";
+    ui.startProject.disabled = ["PAUSING", "PAUSED", "STOPPING", "STOPPED", "RECOVERING", "RECOVERY_REQUIRED"].includes(status);
   }
 
   function renderState(state) {
     if (!state) return;
     ui.runtimeStatus.textContent = `Runtime: ${state.runtimeStatus || "idle"}`;
     renderProject(state.project);
-    renderScheduler(state.project, state.scheduler);
+    renderScheduler(state.project, state.scheduler, state.recovery);
+    renderRecovery(state.project, state.recovery);
     ui.leadStatus.textContent = statusText(state.lead);
     const connected = (state.workers || []).filter((worker) => !["OFFLINE", "ERROR"].includes(worker.status)).length;
     ui.workersStatus.textContent = `${connected}/${(state.workers || []).length}`;
@@ -158,11 +179,21 @@
     renderState(response.state);
   }
 
+  async function lifecycleCommand(type, label) {
+    for (const button of [ui.pauseProject, ui.resumeProject, ui.stopNow]) if (button) button.disabled = true;
+    const response = await send(type);
+    if (!response.ok) ui.recoveryStatus.textContent = `${label}: ${response.reason || "unknown"}`;
+    await refresh();
+  }
+
   ui.refreshPool?.addEventListener("click", refresh);
   ui.registerLead?.addEventListener("click", registerLead);
   ui.createWorkers?.addEventListener("click", createWorkers);
   ui.startProject?.addEventListener("click", startProject);
   ui.startExecution?.addEventListener("click", startExecution);
+  ui.pauseProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_PAUSE, "Pause"));
+  ui.resumeProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_RESUME, "Resume"));
+  ui.stopNow?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_STOP_NOW, "Stop Now"));
 
   refresh();
   setInterval(refresh, 3000);

@@ -4,6 +4,61 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.10] - 2026-09-13
+
+### Added
+
+- persisted `RecoveryStore` как отдельный lifecycle control plane поверх planning/scheduler/review/integration state;
+- recovery states `IDLE`, `RUNNING`, `PAUSING`, `PAUSED`, `STOPPING`, `STOPPED`, `RECOVERING`, `RECOVERY_REQUIRED`;
+- project-level **Pause**, **Resume** и **Stop Now** controls в popup;
+- safe-point Pause: новые prompts блокируются сразу, а уже идущие generations могут закончиться и сохранить events/artifacts;
+- Stop Now best-effort `STOP_GENERATION` для active role agents;
+- `INTERRUPTED` Worker run semantics без ложного task completion;
+- reconcile-before-resume pipeline для tabs, Worker runs, Git branches, Reviews, Integration и protocol contexts;
+- crash snapshots с project/scheduler/review/integration/agent summaries и safe-point state;
+- automatic MV3 service-worker recovery при сохранённой tab continuity;
+- explicit `RECOVERY_REQUIRED` при browser-level continuity loss;
+- independent reconciliation безопасного partial Git progress с reuse только через fresh run identity;
+- fresh Worker identities для replacement tabs после browser loss;
+- Phase 9 architecture doc, smoke test, ADR 0008 и recovery regression tests;
+- `npm run test:phase9`.
+
+### Reliability and safety
+
+- dispatch fail-closed до завершения startup reconciliation (`bootReady` gate);
+- во время `PAUSING`, `PAUSED`, `STOPPING`, `STOPPED`, `RECOVERING` и `RECOVERY_REQUIRED` новые Planner/Worker/Reviewer/Integrator prompts не запускаются;
+- late `DONE`, `REVIEW_*`, `CONFLICT` и blocker events через Stop Now boundary могут остаться в Event Bus audit, но не применяются к state machines;
+- missing Worker registry identity не переиспользуется как доказательство продолжения старого ChatGPT run;
+- recovered task branch проверяется по immutable base, behind state, provider truncation и task scope до reuse commit;
+- out-of-scope или неоднозначный recovered Git state переводит recovery в `RECOVERY_REQUIRED`;
+- missing Reviewer получает fresh review identity, missing Integrator — fresh integration run identity;
+- stale protocol contexts перестраиваются из persisted active identities до открытия dispatch;
+- Phase 8 target policy `integration_branch_only` не меняется.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.10`;
+- service-worker boot теперь проходит recovery preparation до инициализации runtime engines и завершает reconciliation перед новым dispatch;
+- public project state может отображать lifecycle status отдельно от underlying work status;
+- popup показывает recovery state, safe-point progress и recovery issues;
+- browser restart больше не трактуется как обычный Worker retry без Git/tab reconciliation.
+
+### Known limitations
+
+- после полного browser loss Planning Lead требует явного reconnect/register пользователем;
+- recovery не восстанавливает скрытый model context закрытого ChatGPT tab и вместо этого создаёт fresh run identity поверх independently verified persisted/Git state;
+- initial GitHub REST reconciliation остаётся unauthenticated и ориентирована на public-readable repositories;
+- browser E2E against production ChatGPT DOM остаётся ручным smoke-test.
+
+### Not yet implemented
+
+- Phase 10 Dashboard / Observability;
+- context compaction / context budget management;
+- full reliability/safety hardening and CI matrix;
+- automatic target-branch promotion policy.
+
+---
+
 ## [2.0.0-alpha.9] - 2026-09-13
 
 ### Added
