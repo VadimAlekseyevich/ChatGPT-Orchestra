@@ -38,6 +38,14 @@ function seed(projectId = "P1") {
       status: "RUNNING",
       snapshot: { agents: [{ agentId: "worker-1", tabId: 42, sessionId: "42" }] }
     },
+    [STORE_KEYS.context]: {
+      schemaVersion: 1,
+      projectId,
+      leadSummary: { projectId, status: "RUNNING", runtimeSource: { sessionId: "lead-session" } },
+      decisions: [{ decisionId: "D1", source: "scheduler", details: { token: "ghp_123456789012345678901234567890" } }],
+      packetAudit: [{ packetType: "task", logicalRoleId: `task:${projectId}:T1`, sessionId: "should-strip" }],
+      updatedAt: 5
+    },
     [STORE_KEYS.events]: {
       schemaVersion: 1,
       eventCursor: 2,
@@ -83,15 +91,18 @@ test("portable capture scopes one project, redacts secrets and strips browser ru
   assert.equal(result.snapshot.namespaces.events.rejections.length, 1);
   assert.equal(result.snapshot.namespaces.events.rejections[0].reason, "project_rejection");
   assert.deepEqual(result.snapshot.namespaces.agents.agents, {});
+  assert.equal(result.snapshot.namespaces.context.projectId, "P1");
+  assert.equal(result.snapshot.namespaces.context.decisions[0].details.token, "[REDACTED]");
   const serialized = JSON.stringify(result.snapshot);
   assert.equal(serialized.includes("\"tabId\""), false);
   assert.equal(serialized.includes("\"legacyTabId\""), false);
   assert.equal(serialized.includes("\"sessionId\""), false);
   assert.equal(serialized.includes("sk-123456789012345678901234567890"), false);
+  assert.equal(serialized.includes("ghp_123456789012345678901234567890"), false);
   assert.equal(serialized.includes("unscoped_runtime_diagnostic"), false);
 });
 
-test("portable import creates backup, restores logical state and forces recovery gate", async () => {
+test("portable import creates backup, restores logical/context state and forces recovery gate", async () => {
   const source = manager(seed());
   const captured = await source.portable.capture();
   assert.equal(captured.ok, true);
@@ -106,6 +117,9 @@ test("portable import creates backup, restores logical state and forces recovery
   assert.equal(restored[STORE_KEYS.scheduler].tasks.T1.status, "APPROVED");
   assert.equal(restored[STORE_KEYS.reviews].reviews.V1.taskId, "T1");
   assert.equal(restored[STORE_KEYS.integration].projectId, "P1");
+  assert.equal(restored[STORE_KEYS.context].projectId, "P1");
+  assert.equal(restored[STORE_KEYS.context].leadSummary.status, "RUNNING");
+  assert.equal(restored[STORE_KEYS.context].packetAudit[0].logicalRoleId, "task:P1:T1");
   assert.equal(restored[STORE_KEYS.recovery].status, "RECOVERY_REQUIRED");
   assert.equal(restored[STORE_KEYS.recovery].reason, "portable_import_reconciliation_required");
   assert.deepEqual(restored[STORE_KEYS.agents].agents, {});
@@ -113,15 +127,30 @@ test("portable import creates backup, restores logical state and forces recovery
   assert.equal(restored[BACKUP_KEY].length, 1);
 });
 
+test("alpha.13 bundle without context namespace remains import-compatible", async () => {
+  const sourceSeed = seed();
+  delete sourceSeed[STORE_KEYS.context];
+  const source = manager(sourceSeed);
+  const captured = await source.portable.capture();
+  assert.equal(captured.ok, true);
+  assert.equal(captured.snapshot.namespaces.context.projectId, "P1");
+  const target = manager({});
+  const imported = await target.portable.import(captured.snapshot);
+  assert.equal(imported.ok, true);
+  const restored = await target.store.get(STORE_KEYS.context);
+  assert.equal(restored[STORE_KEYS.context].projectId, "P1");
+  assert.deepEqual(restored[STORE_KEYS.context].decisions, []);
+});
+
 test("portable validation rejects namespace project identity mismatch", async () => {
   const source = manager(seed());
   const captured = await source.portable.capture();
   assert.equal(captured.ok, true);
-  captured.snapshot.namespaces.scheduler.projectId = "OTHER";
+  captured.snapshot.namespaces.context.projectId = "OTHER";
   const checked = source.portable.validate(captured.snapshot);
   assert.equal(checked.ok, false);
   assert.equal(checked.reason, "portable_namespace_project_mismatch");
-  assert.equal(checked.namespace, "scheduler");
+  assert.equal(checked.namespace, "context");
 });
 
 test("portable import strips injected runtime bindings before persistence", async () => {
@@ -129,12 +158,14 @@ test("portable import strips injected runtime bindings before persistence", asyn
   const captured = await source.portable.capture();
   captured.snapshot.namespaces.scheduler.runs.R1.tabId = 999;
   captured.snapshot.namespaces.reviews.reviews.V1.sessionId = "injected";
+  captured.snapshot.namespaces.context.leadSummary.sessionId = "injected-context";
   const target = manager({});
   const imported = await target.portable.import(captured.snapshot);
   assert.equal(imported.ok, true);
-  const restored = await target.store.get([STORE_KEYS.scheduler, STORE_KEYS.reviews]);
+  const restored = await target.store.get([STORE_KEYS.scheduler, STORE_KEYS.reviews, STORE_KEYS.context]);
   assert.equal(restored[STORE_KEYS.scheduler].runs.R1.tabId, undefined);
   assert.equal(restored[STORE_KEYS.reviews].reviews.V1.sessionId, undefined);
+  assert.equal(restored[STORE_KEYS.context].leadSummary.sessionId, undefined);
 });
 
 test("portable import refuses to overwrite a different active project unless replace is explicit", async () => {
