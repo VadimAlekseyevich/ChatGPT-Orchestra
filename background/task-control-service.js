@@ -3,16 +3,11 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
 
-  function clone(value) {
-    if (typeof structuredClone === "function") return structuredClone(value);
-    if (value === undefined) return undefined;
-    return JSON.parse(JSON.stringify(value));
-  }
-
   class TaskControlService {
-    constructor({ schedulerStore, schedulerEngine, reviewStore, reviewEngine, integrationEngine, registry, recoveryController = null, clock = () => Date.now() } = {}) {
+    constructor({ schedulerStore, schedulerEngine, projectStore = null, reviewStore, reviewEngine, integrationEngine, registry, recoveryController = null, clock = () => Date.now() } = {}) {
       this.schedulerStore = schedulerStore;
       this.schedulerEngine = schedulerEngine;
+      this.projectStore = projectStore;
       this.reviewStore = reviewStore;
       this.reviewEngine = reviewEngine;
       this.integrationEngine = integrationEngine;
@@ -28,13 +23,14 @@
       return next;
     }
 
-    recoveryAllowsMutation() {
-      const status = String(this.recoveryController?.getPublicState?.()?.status || "RUNNING");
-      return ["IDLE", "RUNNING", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(status);
-    }
+    recoveryStatus() { return String(this.recoveryController?.getPublicState?.()?.status || "RUNNING"); }
+    recoveryAllowsMutation() { return ["IDLE", "RUNNING", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(this.recoveryStatus()); }
+    mutableTask(taskId) { return this.schedulerStore?.state?.tasks?.[String(taskId || "")] || null; }
 
-    mutableTask(taskId) {
-      return this.schedulerStore?.state?.tasks?.[String(taskId || "")] || null;
+    async reopenExecution(reason, details = {}) {
+      if (this.schedulerStore?.summary?.().status !== "RUNNING") await this.schedulerStore?.setStatus?.("RUNNING");
+      const projectId = this.schedulerStore?.summary?.().projectId;
+      if (projectId) await this.projectStore?.setExecutionStatus?.(projectId, "RUNNING", { phase: 12, reason, ...details });
     }
 
     downstreamTaskIds(taskId) {
@@ -69,7 +65,8 @@
         task.updatedAt = this.clock();
         await this.schedulerStore.persist();
         await this.schedulerStore.logDecision("manual_task_retry", { taskId: task.id });
-        if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "manual_task_retry" });
+        await this.reopenExecution("manual_task_retry", { taskId: task.id });
+        if (this.recoveryStatus() === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "manual_task_retry" });
         return { ok: true, task: this.schedulerStore.getTask(task.id) };
       });
     }
@@ -96,7 +93,8 @@
         }
         await this.schedulerStore.persist();
         await this.schedulerStore.logDecision("tasks_cancelled", { taskId: task.id, cascade: Boolean(cascade), cancelledTaskIds: ids });
-        if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "tasks_cancelled" });
+        await this.reopenExecution("tasks_cancelled", { taskId: task.id, cascade: Boolean(cascade), cancelledTaskIds: ids });
+        if (this.recoveryStatus() === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "tasks_cancelled" });
         return { ok: true, cancelledTaskIds: ids, scheduler: this.schedulerEngine?.getPublicState?.() || this.schedulerStore.summary() };
       });
     }
@@ -112,14 +110,14 @@
         task.updatedAt = this.clock();
         await this.schedulerStore.persist();
         await this.schedulerStore.logDecision("task_priority_changed", { taskId: task.id, priority: normalized });
-        if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "task_priority_changed" });
+        if (this.recoveryStatus() === "RUNNING") await this.schedulerEngine?.tick?.({ reason: "task_priority_changed" });
         return { ok: true, task: this.schedulerStore.getTask(task.id) };
       });
     }
 
     async reassignAgent(taskId, agentId) {
       return this.serialize(async () => {
-        if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") !== "RUNNING") return { ok: false, reason: "task_reassign_requires_running_recovery" };
+        if (this.recoveryStatus() !== "RUNNING") return { ok: false, reason: "task_reassign_requires_running_recovery" };
         let task = this.schedulerStore.getTask(taskId);
         if (!task) return { ok: false, reason: "unknown_task" };
         if (task.activeRunId || task.activeReviewId || !["READY", "NEEDS_USER"].includes(task.status)) return { ok: false, reason: "task_reassign_requires_idle_task", status: task.status };
@@ -135,6 +133,7 @@
           mutable.updatedAt = this.clock();
           await this.schedulerStore.persist();
           task = this.schedulerStore.getTask(task.id);
+          await this.reopenExecution("manual_task_reassign", { taskId: task.id, agentId: agent.agentId });
         }
         if (!this.schedulerStore.dependenciesSatisfied(task)) return { ok: false, reason: "task_dependencies_not_satisfied" };
         const conflict = this.schedulerEngine?.conflictsWithAny?.(task, this.schedulerEngine?.activeTasks?.() || []);
@@ -144,14 +143,14 @@
         if (activeRoles >= maxWorkers) return { ok: false, reason: "worker_capacity_full" };
         const dispatched = await this.schedulerEngine?.dispatch?.(task, agent);
         if (!dispatched?.ok) return dispatched || { ok: false, reason: "task_dispatch_failed" };
-        await this.schedulerStore.logDecision("task_reassigned", { taskId: task.id, agentId: agent.agentId, runId: dispatched.run?.runId || null });
-        return { ok: true, task: this.schedulerStore.getTask(task.id), run: dispatched.run || null };
+        await this.schedulerStore.logDecision("task_reassigned", { taskId: task.id, agentId: agent.agentId, runId: dispatched.runId || dispatched.run?.runId || null });
+        return { ok: true, task: this.schedulerStore.getTask(task.id), run: dispatched.run || null, runId: dispatched.runId || null };
       });
     }
 
     async requestReview(taskId) {
       return this.serialize(async () => {
-        if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") !== "RUNNING") return { ok: false, reason: "review_request_requires_running_recovery" };
+        if (this.recoveryStatus() !== "RUNNING") return { ok: false, reason: "review_request_requires_running_recovery" };
         const task = this.schedulerStore.getTask(taskId);
         if (!task) return { ok: false, reason: "unknown_task" };
         if (task.status === "REVIEWING") return { ok: true, active: true, reviewId: task.activeReviewId };
@@ -168,7 +167,7 @@
     }
 
     async startIntegration() {
-      if (String(this.recoveryController?.getPublicState?.()?.status || "RUNNING") !== "RUNNING") return { ok: false, reason: "integration_start_requires_running_recovery" };
+      if (this.recoveryStatus() !== "RUNNING") return { ok: false, reason: "integration_start_requires_running_recovery" };
       return this.integrationEngine?.tick?.({ reason: "manual_integration_request" }) || { ok: false, reason: "integration_engine_unavailable" };
     }
 
