@@ -25,7 +25,9 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     stateDatabase: path.join(root, "state", "orchestra.sqlite"),
     logFile: path.join(root, "logs", "orchestra.jsonl"),
     companionSecretFile: path.join(root, "companion", "pairing-secret"),
-    companionEndpointFile: path.join(root, "companion", "endpoint.json")
+    companionEndpointFile: path.join(root, "companion", "endpoint.json"),
+    companionMigrationPendingFile: path.join(root, "companion", "migration-pending.json"),
+    companionMigrationReceiptFile: path.join(root, "companion", "migration-applied.json")
   };
   for (const directory of [paths.root, paths.stateDirectory, paths.logsDirectory, paths.bundlesDirectory, paths.companionDirectory]) fs.mkdirSync(directory, { recursive: true });
   return paths;
