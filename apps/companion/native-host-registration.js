@@ -16,9 +16,14 @@ function validateExtensionId(value) {
   return id;
 }
 
-function validateHostPath(value, { exists = fs.existsSync } = {}) {
-  const hostPath = path.resolve(String(value || ""));
-  if (!path.isAbsolute(hostPath) || !exists(hostPath)) throw new TypeError("native_host_path_invalid");
+function validateHostPath(value, { exists = fs.existsSync, stat = fs.statSync } = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) throw new TypeError("native_host_path_invalid");
+  const hostPath = path.resolve(raw);
+  if (!exists(hostPath)) throw new TypeError("native_host_path_invalid");
+  let info;
+  try { info = stat(hostPath); } catch (_) { throw new TypeError("native_host_path_invalid"); }
+  if (!info?.isFile?.()) throw new TypeError("native_host_path_invalid");
   return hostPath;
 }
 
