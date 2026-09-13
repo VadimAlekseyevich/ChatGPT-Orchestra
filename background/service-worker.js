@@ -26,7 +26,8 @@ importScripts(
   "orchestrator.js",
   "recovery-store.js",
   "recovery-controller.js",
-  "recovery-hooks.js"
+  "recovery-hooks.js",
+  "recovery-stop-guards.js"
 );
 
 const root = globalThis.ChatGPTOrchestra;
