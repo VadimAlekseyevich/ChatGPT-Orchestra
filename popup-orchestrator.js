@@ -1,7 +1,10 @@
 (() => {
   "use strict";
-  const TYPES = globalThis.ChatGPTOrchestra?.MESSAGE_TYPES;
-  if (!TYPES) return;
+
+  const Transport = globalThis.ChatGPTOrchestra?.ExtensionDashboardTransport;
+  const DashboardApp = globalThis.ChatGPTOrchestra?.DashboardApp;
+  if (!Transport) return;
+  const transport = new Transport();
 
   const ui = {
     runtimeStatus: document.querySelector("#runtimeStatus"),
@@ -25,17 +28,12 @@
     workerCount: document.querySelector("#workerCount"),
     registerLead: document.querySelector("#registerLead"),
     createWorkers: document.querySelector("#createWorkers"),
-    refreshPool: document.querySelector("#refreshPool")
+    refreshPool: document.querySelector("#refreshPool"),
+    dashboardRoot: document.querySelector("#orchestraDashboard")
   };
 
-  function send(type, payload = {}) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type, payload }, (response) => {
-        if (chrome.runtime.lastError) return resolve({ ok: false, reason: "runtime_error", message: chrome.runtime.lastError.message });
-        resolve(response || { ok: false, reason: "empty_response" });
-      });
-    });
-  }
+  let dashboardApp = null;
+  if (DashboardApp && ui.dashboardRoot) dashboardApp = new DashboardApp({ rootElement: ui.dashboardRoot, transport, pollMs: 3000 }).start();
 
   function statusText(agent) {
     if (!agent) return "не привязан";
@@ -49,7 +47,7 @@
     const title = document.createElement("strong");
     const details = document.createElement("span");
     title.textContent = agent.label || agent.role || agent.agentId;
-    details.textContent = `${agent.status} · ${agent.agentId.slice(0, 14)}…`;
+    details.textContent = `${agent.status} · ${String(agent.agentId || "").slice(0, 14)}…`;
     meta.append(title, details);
     const badge = document.createElement("span");
     badge.className = `agent-status status-${String(agent.status || "unknown").toLowerCase()}`;
@@ -67,7 +65,7 @@
     const workStatus = project.workStatus ? ` · work ${project.workStatus}` : "";
     ui.projectStatus.textContent = `${project.status}${workStatus} · ${project.stage}${tasks ? ` · ${tasks} tasks` : ""}`;
     if (!ui.repositoryUrl.value) ui.repositoryUrl.value = project.repository?.url || "";
-    if (!ui.projectGoal.value) ui.projectGoal.value = project.goal || "";
+    if (!ui.projectGoal.value) ui.projectGoal.value = typeof project.goal === "string" ? project.goal : project.goal?.text || "";
   }
 
   function renderScheduler(project, scheduler, recovery) {
@@ -86,13 +84,7 @@
     const gitText = git?.defaultBranch && git?.baseSha ? ` · git ${git.defaultBranch}@${String(git.baseSha).slice(0, 8)}` : "";
     const reviewText = reviewWaiting ? ` · review ${review.active || 0} active/${review.pending || 0} pending` : "";
     const integration = project.execution?.details?.integration || null;
-    let integrationText = "";
-    if (integration?.branch) {
-      const commit = integration.commit ? `@${String(integration.commit).slice(0, 8)}` : "";
-      integrationText = ` · integration ${integration.branch}${commit}`;
-    } else if (["READY_FOR_INTEGRATION", "INTEGRATING", "INTEGRATION_REPAIRING"].includes(project.workStatus || project.status)) {
-      integrationText = ` · integration ${(project.workStatus || project.status).toLowerCase()}`;
-    }
+    const integrationText = integration?.branch ? ` · integration ${integration.branch}${integration.commit ? `@${String(integration.commit).slice(0, 8)}` : ""}` : "";
     ui.executionStatus.textContent = `${scheduler.status} · ${approved}/${scheduler.taskCount} approved · ${scheduler.activeRuns} work active${reviewText}${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}${integrationText}`;
     ui.startExecution.disabled = true;
   }
@@ -135,8 +127,8 @@
 
   async function refresh() {
     const [response, persistence] = await Promise.all([
-      send(TYPES.ORCHESTRATOR_GET_STATE),
-      send(TYPES.ORCHESTRATOR_GET_PERSISTENCE)
+      transport.query("state"),
+      transport.query("persistence")
     ]);
     if (response.ok) renderState(response.state);
     else ui.runtimeStatus.textContent = `Runtime error: ${response.reason || "unknown"}`;
@@ -144,29 +136,32 @@
       const info = persistence.persistence || {};
       ui.persistenceStatus.textContent = `Persistence: schema ${info.portableSchemaVersion || "?"} · ${info.backend || "unknown"}`;
     }
+    dashboardApp?.refresh?.();
   }
 
   async function registerLead() {
     ui.registerLead.disabled = true;
-    const response = await send(TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD);
+    const response = await transport.execute("registerActiveLead");
     ui.registerLead.disabled = false;
     if (!response.ok) return void (ui.runtimeStatus.textContent = `Lead: ${response.reason || "ошибка"}`);
     renderState(response.state);
+    dashboardApp?.refresh?.();
   }
 
   async function createWorkers() {
     ui.createWorkers.disabled = true;
     const count = Math.max(1, Math.min(4, Number(ui.workerCount.value) || 3));
     ui.workerCount.value = count;
-    const response = await send(TYPES.ORCHESTRATOR_CREATE_WORKERS, { count });
+    const response = await transport.execute("createWorkers", { count });
     ui.createWorkers.disabled = false;
     if (!response.ok) return void (ui.runtimeStatus.textContent = `Workers: ${response.reason || "ошибка"}`);
     renderState(response.state);
+    dashboardApp?.refresh?.();
   }
 
   async function startProject() {
     ui.startProject.disabled = true;
-    const response = await send(TYPES.ORCHESTRATOR_START_PROJECT, {
+    const response = await transport.execute("startProject", {
       repositoryUrl: ui.repositoryUrl.value.trim(),
       goal: ui.projectGoal.value.trim()
     });
@@ -182,18 +177,18 @@
     ui.startExecution.disabled = true;
     const maxWorkers = Math.max(1, Math.min(4, Number(ui.workerCount.value) || 3));
     ui.workerCount.value = maxWorkers;
-    const response = await send(TYPES.ORCHESTRATOR_START_EXECUTION, { maxWorkers, maxReviewIterations: 3 });
+    const response = await transport.execute("startExecution", { maxWorkers, maxReviewIterations: 3 });
     if (!response.ok) {
       ui.executionStatus.textContent = `Execution error: ${response.reason || "unknown"}`;
       ui.startExecution.disabled = false;
       return;
     }
-    renderState(response.state);
+    await refresh();
   }
 
-  async function lifecycleCommand(type, label) {
+  async function lifecycleCommand(name, label) {
     for (const button of [ui.pauseProject, ui.resumeProject, ui.stopNow]) if (button) button.disabled = true;
-    const response = await send(type);
+    const response = await transport.execute(name);
     if (!response.ok) ui.recoveryStatus.textContent = `${label}: ${response.reason || "unknown"}`;
     await refresh();
   }
@@ -213,7 +208,7 @@
   async function exportProject() {
     ui.exportProject.disabled = true;
     ui.persistenceStatus.textContent = "Persistence: exporting…";
-    const response = await send(TYPES.ORCHESTRATOR_EXPORT_PROJECT);
+    const response = await transport.execute("exportProjectBundle");
     ui.exportProject.disabled = false;
     if (!response.ok) {
       ui.persistenceStatus.textContent = `Export error: ${response.reason || "unknown"}`;
@@ -238,7 +233,7 @@
       ui.persistenceStatus.textContent = "Import error: unable to read file";
       return;
     }
-    const response = await send(TYPES.ORCHESTRATOR_IMPORT_PROJECT, { bundle: text, replace: false });
+    const response = await transport.execute("importProjectBundle", { bundle: text, replace: false });
     ui.importProject.disabled = false;
     if (!response.ok) {
       ui.persistenceStatus.textContent = `Import error: ${response.reason || "unknown"}`;
@@ -253,9 +248,9 @@
   ui.createWorkers?.addEventListener("click", createWorkers);
   ui.startProject?.addEventListener("click", startProject);
   ui.startExecution?.addEventListener("click", startExecution);
-  ui.pauseProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_PAUSE, "Pause"));
-  ui.resumeProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_RESUME, "Resume"));
-  ui.stopNow?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_STOP_NOW, "Stop Now"));
+  ui.pauseProject?.addEventListener("click", () => lifecycleCommand("pause", "Pause"));
+  ui.resumeProject?.addEventListener("click", () => lifecycleCommand("resume", "Resume"));
+  ui.stopNow?.addEventListener("click", () => lifecycleCommand("stopNow", "Stop Now"));
   ui.exportProject?.addEventListener("click", exportProject);
   ui.importProject?.addEventListener("click", () => ui.importProjectFile?.click());
   ui.importProjectFile?.addEventListener("change", async () => {
