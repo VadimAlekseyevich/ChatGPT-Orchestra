@@ -24,11 +24,7 @@ function runSpec() {
   };
 }
 
-test("persists integration run, conflict and bounded repair task", async () => {
-  const storage = fakeStorage();
-  let repairId = 0;
-  const store = new IntegrationStore({ storageArea: storage, idFactory: () => `R${++repairId}` });
-  await store.load();
+async function seedActiveRepair(store) {
   await store.createRun(runSpec());
   await store.assign("I1", "A3");
   await store.markRunning("I1");
@@ -38,9 +34,17 @@ test("persists integration run, conflict and bounded repair task", async () => {
     responsibleTaskIds: ["T1"],
     nextSequence: 2
   });
-  assert.equal(repair.ok, true);
-  assert.equal(repair.repairTask.repairTaskId, "integration-repair-R1");
   await store.markRepairActive(repair.repairTask.repairTaskId);
+  return repair.repairTask.repairTaskId;
+}
+
+test("persists integration run, conflict and bounded repair task", async () => {
+  const storage = fakeStorage();
+  let repairId = 0;
+  const store = new IntegrationStore({ storageArea: storage, idFactory: () => `R${++repairId}` });
+  await store.load();
+  const repairTaskId = await seedActiveRepair(store);
+  assert.equal(repairTaskId, "integration-repair-R1");
   assert.equal(store.currentRun().status, "REPAIRING");
 
   const restored = new IntegrationStore({ storageArea: storage });
@@ -70,4 +74,26 @@ test("completion stores verified summary without changing target policy", async 
   assert.equal(store.summary().status, "INTEGRATION_VERIFIED");
   assert.equal(store.summary().summary.commit, "d".repeat(40));
   assert.equal(store.summary().settings.targetPolicy, "integration_branch_only");
+});
+
+test("abandon terminalizes an active repair record", async () => {
+  const store = new IntegrationStore({ storageArea: fakeStorage(), idFactory: () => "R1" });
+  await store.load();
+  const repairTaskId = await seedActiveRepair(store);
+  await store.abandon("I1", "integrator_unavailable");
+  const repair = store.listRepairs().find((item) => item.repairTaskId === repairTaskId);
+  assert.equal(repair.status, "ABANDONED");
+  assert.equal(repair.result.outcome, "integration_run_abandoned");
+  assert.equal(store.getRun("I1").activeRepairTaskId, null);
+});
+
+test("failure terminalizes an active repair record", async () => {
+  const store = new IntegrationStore({ storageArea: fakeStorage(), idFactory: () => "R1" });
+  await store.load();
+  const repairTaskId = await seedActiveRepair(store);
+  await store.fail("I1", "semantic_conflict_unresolved", { check: "npm test" });
+  const repair = store.listRepairs().find((item) => item.repairTaskId === repairTaskId);
+  assert.equal(repair.status, "FAILED");
+  assert.equal(repair.result.outcome, "integration_run_failed");
+  assert.equal(store.getRun("I1").activeRepairTaskId, null);
 });
