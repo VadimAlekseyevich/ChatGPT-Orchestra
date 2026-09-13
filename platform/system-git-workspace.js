@@ -1,6 +1,7 @@
 "use strict";
 
 const { GitCliWorkspace } = require("./git-cli-workspace.js");
+const { evaluateScope } = require("./workspace-scope-policy.js");
 
 function safeRemote(value) {
   const remote = String(value || "origin").trim();
@@ -11,24 +12,14 @@ function safeRemote(value) {
 class SystemGitWorkspace extends GitCliWorkspace {
   async loadRepository(input) {
     let request = input;
-    if (input && typeof input === "object" && input.url && !input.path && !input.sourceUrl && !input.mode) {
-      request = { ...input, mode: "clone", sourceUrl: input.url };
-    }
+    if (input && typeof input === "object" && input.url && !input.path && !input.sourceUrl && !input.mode) request = { ...input, mode: "clone", sourceUrl: input.url };
     const repository = await super.loadRepository(request);
     return { ok: true, repository };
   }
 
   async snapshotBase(ref = "HEAD") {
     const base = await super.snapshotBase(ref);
-    return {
-      ok: true,
-      repositoryId: base.repositoryId,
-      baseSha: base.sha,
-      sha: base.sha,
-      targetBranch: base.branch,
-      branch: base.branch,
-      changedFiles: base.changedFiles
-    };
+    return { ok: true, repositoryId: base.repositoryId, baseSha: base.sha, sha: base.sha, targetBranch: base.branch, branch: base.branch, changedFiles: base.changedFiles };
   }
 
   async createTaskWorkspace(input = {}) {
@@ -43,13 +34,8 @@ class SystemGitWorkspace extends GitCliWorkspace {
     return super.createIntegrationWorkspace(input.runId, input.startSha || "HEAD");
   }
 
-  async status(workspaceId) {
-    return { ok: true, ...(await super.status(workspaceId)) };
-  }
-
-  async diff(workspaceId) {
-    return { ok: true, ...(await super.diff(workspaceId)) };
-  }
+  async status(workspaceId) { return { ok: true, ...(await super.status(workspaceId)) }; }
+  async diff(workspaceId) { return { ok: true, ...(await super.diff(workspaceId)) }; }
 
   async artifactState(workspaceId) {
     const record = this.workspaceRecord(workspaceId);
@@ -57,31 +43,22 @@ class SystemGitWorkspace extends GitCliWorkspace {
     const range = `${record.startSha}..${status.head}`;
     const { stdout } = await this.execGit(["diff", "--name-only", "-z", range, "--"], { cwd: record.path });
     const changedFiles = stdout.split("\0").filter(Boolean).map((item) => item.replace(/\\/g, "/")).sort();
-    return {
-      ok: true,
-      workspaceId,
-      startSha: record.startSha,
-      head: status.head,
-      branch: record.branch,
-      changedFiles,
-      clean: status.clean
-    };
+    return { ok: true, workspaceId, startSha: record.startSha, head: status.head, branch: record.branch, changedFiles, clean: status.clean };
   }
 
   async validateScope(workspaceId, scope = {}) {
-    const allow = Array.isArray(scope) ? scope : (Array.isArray(scope?.allow) ? scope.allow : []);
-    const live = await super.validateScope(workspaceId, allow);
+    const normalizedScope = Array.isArray(scope) ? { allow: scope, deny: [] } : { allow: Array.isArray(scope?.allow) ? scope.allow : [], deny: Array.isArray(scope?.deny) ? scope.deny : [] };
+    const liveStatus = await super.status(workspaceId);
+    const live = evaluateScope(liveStatus.changedFiles, normalizedScope);
     const artifact = await this.artifactState(workspaceId);
-    const allowed = live.allowedPaths;
-    const artifactViolations = artifact.changedFiles.filter((changed) => !allowed.some((allowedPath) => (
-      changed === allowedPath || changed.startsWith(`${allowedPath}/`)
-    )));
+    const artifactScope = evaluateScope(artifact.changedFiles, normalizedScope);
     return {
+      workspaceId,
       ...live,
       artifactChangedFiles: artifact.changedFiles,
-      artifactViolations,
-      ok: live.ok && artifactViolations.length === 0,
-      violations: [...new Set([...(live.violations || []), ...artifactViolations])].sort()
+      artifactViolations: artifactScope.violations,
+      ok: live.ok && artifactScope.ok,
+      violations: [...new Set([...(live.violations || []), ...(artifactScope.violations || [])])].sort()
     };
   }
 
@@ -146,17 +123,7 @@ class SystemGitWorkspace extends GitCliWorkspace {
     const message = String(options.message || `Integrate task artifact ${commit.slice(0, 12)}`).trim();
     if (!message || /\0/.test(message)) throw new Error("git_merge_message_invalid");
     try {
-      await this.execGit([
-        "-c",
-        `core.hooksPath=${this.hooksDirectory}`,
-        "merge",
-        "--no-ff",
-        "--no-edit",
-        "--no-gpg-sign",
-        "-m",
-        message,
-        commit
-      ], { cwd: record.path });
+      await this.execGit(["-c", `core.hooksPath=${this.hooksDirectory}`, "merge", "--no-ff", "--no-edit", "--no-gpg-sign", "-m", message, commit], { cwd: record.path });
     } catch (error) {
       let files = [];
       try {
@@ -173,14 +140,7 @@ class SystemGitWorkspace extends GitCliWorkspace {
     const { stdout: parents } = await this.execGit(["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: record.path });
     const parentShas = parents.trim().split(/\s+/).slice(1);
     if (parentShas.length < 2) throw new Error("git_integration_merge_not_no_ff");
-    return {
-      ok: true,
-      alreadyIntegrated: false,
-      workspaceId: integrationWorkspaceId,
-      taskCommit: commit,
-      head: head.trim(),
-      parents: parentShas
-    };
+    return { ok: true, alreadyIntegrated: false, workspaceId: integrationWorkspaceId, taskCommit: commit, head: head.trim(), parents: parentShas };
   }
 
   async push(workspaceId, options = {}) {
@@ -194,6 +154,8 @@ class SystemGitWorkspace extends GitCliWorkspace {
     const { stdout, stderr } = await this.execGit(["push", "--porcelain", remote, `${branch}:${branch}`], { cwd: record.path });
     return { ok: true, workspaceId, remote, branch, stdout, stderr };
   }
+
+  cancelVerification(runId) { return this.commandRunner?.cancel?.(runId) === true; }
 
   async cleanup(workspaceId, options = {}) {
     await super.cleanup(workspaceId, options);
