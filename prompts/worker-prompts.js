@@ -56,8 +56,22 @@
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
     const completeness = packetCompleteness(contextPacket);
-    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
     const eventBase = { v: 1, projectId: project.projectId, taskId: task.id, runId, agentId };
+    if (!completeness.ok) {
+      return [
+        "You are a ChatGPT Orchestra Worker for one bounded logical task.",
+        `Worker prompt contract version: ${PROMPT_VERSION}.`,
+        "This turn is FAIL-CLOSED because the portable task packet is incomplete.",
+        "Do NOT inspect or modify the repository, create/fetch a task branch, run tests, infer omitted task context, or attempt the assignment.",
+        `PORTABLE TASK PACKET:\n${json(failClosedPacket(contextPacket, completeness))}`,
+        "PROTOCOL CONTRACT:",
+        `- Identity: ${json(eventBase)}`,
+        "- Emit NEEDS_USER with sequence=1, the normal run-scoped eventId, and payload.reason=context_packet_incomplete.",
+        "- Include packet.completeness in payload details. DONE, BLOCKED and ERROR are not valid outcomes for this turn.",
+        "- The final non-empty line must be exactly one @@ORCH JSON envelope; no text follows it."
+      ].join("\n");
+    }
+
     const gitRequired = gitAssignment?.required !== false;
     const gitExample = gitRequired ? {
       branch: gitAssignment.branch,
@@ -110,16 +124,6 @@
       "- Address every requiredChanges item from contextPacket.assignment.rework. Do not silently ignore a finding; if one is incorrect or impossible, return BLOCKED/NEEDS_USER with evidence."
     ] : [];
 
-    const completenessInstructions = completeness.ok ? [
-      "PACKET COMPLETENESS GATE:",
-      "- The v1 packet passed the host-side size/structural completeness check."
-    ] : [
-      "PACKET COMPLETENESS GATE — FAIL CLOSED:",
-      "- The host detected an incomplete v1 task packet. Do NOT inspect or modify the repository, create a branch, run task work, or infer omitted context.",
-      "- Return NEEDS_USER using the protocol identity below with payload.reason=context_packet_incomplete and include the completeness details from the packet.",
-      "- DONE, BLOCKED and ERROR are not valid outcomes for this turn."
-    ];
-
     return [
       "You are a ChatGPT Orchestra Worker executing one bounded task.",
       `Worker prompt contract version: ${PROMPT_VERSION}.`,
@@ -128,9 +132,10 @@
       "Work only on the assigned task. Do not broaden scope without reporting BLOCKED or NEEDS_USER.",
       "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and its result is ready for independent Git validation and Reviewer evaluation.",
       "",
-      `PORTABLE TASK PACKET:\n${json(packetForPrompt)}`,
+      `PORTABLE TASK PACKET:\n${json(contextPacket)}`,
       "",
-      ...completenessInstructions,
+      "PACKET COMPLETENESS GATE:",
+      "- The v1 packet passed the host-side size/structural completeness check.",
       "",
       ...gitInstructions,
       ...reworkInstructions,
@@ -139,7 +144,7 @@
       `- Identity: ${json(eventBase)}`,
       "- This assignment expects one final protocol event in this response. Use sequence=1.",
       `- Use eventId=${runId}-final for the final event; runId makes it unique across assignments.`,
-      "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER, except an incomplete packet requires NEEDS_USER as stated above.",
+      "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER.",
       "- The final non-empty response line must be one valid @@ORCH JSON envelope; no text may follow it and do not emit a second @@ORCH line.",
       `- DONE example: @@ORCH ${JSON.stringify(finalExample)}`,
       "- For DONE payload include summary, testsPerformed and knownLimitations. For mutating tasks payload.git is mandatory as specified above.",
