@@ -3,6 +3,7 @@
 const { ensureDesktopPaths } = require("./app-data.js");
 const { StructuredLogger } = require("./structured-logger.js");
 const { loadDesktopCore } = require("./core-loader.js");
+const { DesktopRepositoryService } = require("./repository-service.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -22,6 +23,7 @@ class DesktopHost {
     agentRuntime = null,
     timerRuntime = null,
     gitProvider = null,
+    repositoryService = null,
     logger = null,
     clock = () => Date.now(),
     autoSeedFakeLead = true
@@ -37,6 +39,7 @@ class DesktopHost {
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
     this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.logger });
     this.gitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
+    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock });
     this.autoSeedFakeLead = autoSeedFakeLead;
     this.initialized = false;
     this.closed = false;
@@ -170,7 +173,8 @@ class DesktopHost {
       observabilityService: this.observabilityService,
       taskControlService: this.taskControlService,
       contextStore: this.contextStore,
-      contextPackets: this.contextPackets
+      contextPackets: this.contextPackets,
+      repositoryService: this.repositoryService
     });
   }
 
