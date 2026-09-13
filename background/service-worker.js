@@ -7,6 +7,7 @@ importScripts(
   "../prompts/worker-prompts.js",
   "../prompts/review-prompts.js",
   "../prompts/integration-prompts.js",
+  "../context/context-packets.js",
   "../platform/contracts.js",
   "../platform/extension-runtime.js",
   "../platform/transactional-state-store.js",
@@ -17,6 +18,7 @@ importScripts(
   "event-store.js",
   "event-bus.js",
   "project-store.js",
+  "context-store.js",
   "dag-validator.js",
   "planning-engine.js",
   "conflict-policy.js",
@@ -70,6 +72,7 @@ const schedulerStore = new root.SchedulerStore({ storageArea: stateStore });
 const reviewStore = new root.ReviewStore({ storageArea: stateStore });
 const integrationStore = new root.IntegrationStore({ storageArea: stateStore });
 const recoveryStore = new root.RecoveryStore({ storageArea: stateStore });
+const contextStore = new root.ContextStore({ storageArea: stateStore });
 const migrationRegistry = new root.MigrationRegistry({ currentVersion: root.PortableState.PORTABLE_SCHEMA_VERSION });
 const portableStateManager = new root.PortableState.PortableStateManager({ stateStore, migrations: migrationRegistry });
 const projectBundleService = new root.ProjectBundle.ProjectBundleService({ portableStateManager, sourceHost: "edge-extension" });
@@ -77,6 +80,16 @@ const gitProvider = new root.GitProvider.GitHubRestProvider();
 const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
 root.PlatformContracts.assertTimerRuntime(timerRuntime);
 const persistenceInfo = () => ({ backend: "chrome.storage.local", transactionalWrapper: true });
+
+const contextPackets = new root.ContextPackets.ContextPacketService({
+  contextStore,
+  projectStore,
+  schedulerStore,
+  reviewStore,
+  integrationStore,
+  recoveryStore
+});
+root.ContextPackets.setDefaultService(contextPackets);
 
 let schedulerEngine = null;
 const planningEngine = new root.PlanningEngine({
@@ -171,11 +184,14 @@ const orchestratorApi = new root.OrchestratorApi({
   projectBundleService,
   persistenceInfo,
   observabilityService,
-  taskControlService
+  taskControlService,
+  contextStore,
+  contextPackets
 });
 
 function initializeRuntime() {
-  return recoveryController.prepareForBoot()
+  return Promise.resolve(contextPackets.init())
+    .then(() => recoveryController.prepareForBoot())
     .then(() => orchestrator.init())
     .then(() => integrationEngine.init())
     .then(() => recoveryController.afterRuntimeInit());
