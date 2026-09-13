@@ -28,6 +28,20 @@ test("service worker parses and imports companion mode before routing runtime me
   assert.match(source, /COMPANION_ENABLE/);
   assert.match(source, /COMPANION_DISABLE/);
   assert.match(source, /COMPANION_RECONNECT/);
+  assert.match(source, /COMPANION_MIGRATE_PROJECT/);
+  assert.match(source, /COMPANION_GET_MIGRATION_STATUS/);
+});
+
+test("companion project migration is restricted to safe recovery states", () => {
+  const source = read("background/service-worker.js");
+  assert.match(source, /MIGRATION_SAFE_RECOVERY_STATES/);
+  assert.match(source, /"IDLE"/);
+  assert.match(source, /"PAUSED"/);
+  assert.match(source, /"STOPPED"/);
+  assert.match(source, /"RECOVERY_REQUIRED"/);
+  assert.match(source, /companion_migration_requires_safe_point/);
+  assert.match(source, /projectBundleService\.exportBundle/);
+  assert.match(source, /companionController\.stageMigrationBundle/);
 });
 
 test("companion mode is fail-closed and suppresses the local watchdog", () => {
