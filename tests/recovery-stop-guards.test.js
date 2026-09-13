@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-let status = "STOPPING";
+const recoveryState = { status: "STOPPING", stopBoundaryActive: true };
 let workerCompletions = 0;
 let reviewVerdicts = 0;
 let integrationConflicts = 0;
@@ -23,7 +23,7 @@ class IntegrationEngine {
 }
 
 globalThis.ChatGPTOrchestra = {
-  RecoveryRuntime: { controller: { getPublicState: () => ({ status }) } },
+  RecoveryRuntime: { controller: { getPublicState: () => ({ ...recoveryState }) } },
   PlanningEngine,
   SchedulerEngine,
   ReviewEngine,
@@ -31,7 +31,7 @@ globalThis.ChatGPTOrchestra = {
 };
 require("../background/recovery-stop-guards.js");
 
-test("late DONE and review/integration events are ignored while Stop Now boundary is active", async () => {
+async function assertStopBoundaryBlocksHandlers() {
   const scheduler = new SchedulerEngine();
   const review = new ReviewEngine();
   const integration = new IntegrationEngine();
@@ -41,10 +41,21 @@ test("late DONE and review/integration events are ignored while Stop Now boundar
   assert.equal(workerCompletions, 0);
   assert.equal(reviewVerdicts, 0);
   assert.equal(integrationConflicts, 0);
+}
+
+test("late DONE and review/integration events are ignored while Stop Now boundary is active", async () => {
+  await assertStopBoundaryBlocksHandlers();
 });
 
-test("normal handlers resume after lifecycle returns to RUNNING", async () => {
-  status = "RUNNING";
+test("crash during STOPPING keeps late events blocked after status becomes RECOVERY_REQUIRED", async () => {
+  recoveryState.status = "RECOVERY_REQUIRED";
+  recoveryState.stopBoundaryActive = true;
+  await assertStopBoundaryBlocksHandlers();
+});
+
+test("normal handlers resume only after persisted stop boundary is cleared", async () => {
+  recoveryState.status = "RUNNING";
+  recoveryState.stopBoundaryActive = false;
   const scheduler = new SchedulerEngine();
   const review = new ReviewEngine();
   const integration = new IntegrationEngine();
