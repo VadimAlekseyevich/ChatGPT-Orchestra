@@ -4,6 +4,66 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.9] - 2026-09-13
+
+### Added
+
+- persisted `IntegrationStore` для integration runs, conflicts, bounded repair tasks и verified integration summary;
+- dynamic Integrator role поверх свободного Worker tab без permanent integration agent;
+- unique integration branch `orchestra/<projectId>/integration/<integrationRunId>`;
+- deterministic DAG-derived integration order с foundation/API/schema priority среди одновременно доступных tasks;
+- versioned `IntegrationPrompts` contract с mandatory `git merge --no-ff --no-edit` composition;
+- independently verified task-commit ancestry и first-parent merge order;
+- structured `CONFLICT` handling для text и semantic incompatibility;
+- responsible upstream task attribution для text conflicts по current task + approved artifact file ownership;
+- explicit semantic responsibility contract с failed-check evidence;
+- persisted bounded `integration-repair-*` tasks, default max 2 repairs per integration run;
+- integration verification command aggregation из repository discovery и task verification contracts;
+- privileged Event Bus boundary для `taskId=integration` и integration route events;
+- fail-safe ambiguous MV3 restart policy с fresh integration run identity вместо uncertain prompt replay;
+- `INTEGRATION_VERIFIED` project/scheduler state и integration branch/head visibility в popup;
+- Phase 8 architecture doc, smoke test, ADR 0007 и dedicated regression tests;
+- `npm run test:phase8`.
+
+### Reliability and safety
+
+- `APPROVED` mutating task без canonical branch/commit provenance fail closed до Integrator dispatch;
+- target branch проверяется против immutable Phase 6 base перед integration и перед final acceptance;
+- Integrator не пишет напрямую в target branch; alpha.9 policy фиксирована как `integration_branch_only`;
+- squash/rebase/cherry-pick task composition запрещены, чтобы reviewed task commits оставались independently verifiable ancestors;
+- integration `DONE` не принимается только по LLM report: remote branch head, merge base, changed files, task ancestry и first-parent merge history проверяются через GitHub REST;
+- integration changed files ограничены union уже approved task artifact files;
+- text conflict обязан сообщить exact merged prefix/current task/files и создаёт отдельный repair turn;
+- semantic conflict без explicit responsible task attribution переводится в `NEEDS_USER`, а не угадывает виновника;
+- exhausted repair budget переводит integration в `NEEDS_USER` вместо бесконечного remediation loop;
+- unbound integration events отклоняются до eventId/idempotency reservation;
+- ambiguous persisted `ASSIGNED`/`REPAIR_PENDING` integration state после MV3 restart abandon'ится вместо повторной отправки potentially delivered prompt.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.9`;
+- project lifecycle после Phase 7 продолжается `READY_FOR_INTEGRATION -> INTEGRATING -> INTEGRATION_REPAIRING? -> INTEGRATION_VERIFIED`;
+- `READY_FOR_INTEGRATION` больше не считается terminal состоянием для старта другого проекта;
+- service worker загружает Integrator prompts/policy/store/engine/recovery modules и запускает integration после Review/Scheduler initialization;
+- popup показывает integration branch и verified head;
+- успешный Phase 8 завершает verified composition, но не меняет target branch.
+
+### Known limitations
+
+- initial GitHub provider остаётся read-only/unauthenticated для independent verification; private/unavailable repositories fail closed;
+- semantic repair намеренно ограничен уже approved artifact file union и не выполняет широкие архитектурные refactors;
+- automated promotion verified integration branch в target branch отсутствует по policy;
+- full user-driven Pause/Resume/Stop/reconciliation остаётся Phase 9.
+
+### Not yet implemented
+
+- project-wide Pause / Stop Now / Resume UI and state machine;
+- browser-restart reconciliation всех active Worker/Reviewer/Integrator runs;
+- automatic safe target-branch promotion policy;
+- Dashboard/observability and context-compaction phases.
+
+---
+
 ## [2.0.0-alpha.8] - 2026-09-12
 
 ### Added
