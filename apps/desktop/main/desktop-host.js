@@ -182,6 +182,18 @@ class DesktopHost {
     return this.agentRuntime.createAgentForSession({ role: "lead", session, chatUrl: session.url, label: "Lead", status: "IDLE" });
   }
 
+  async readyFakeWorkers(reason = "desktop_fake_runtime") {
+    if (!(this.agentRuntime instanceof this.root.FakeAgentRuntime)) return { ready: 0 };
+    let ready = 0;
+    for (const agent of this.agentRuntime.listAgents()) {
+      if (agent.role !== "worker" || agent.status !== "CONNECTING") continue;
+      const ping = await this.agentRuntime.pingAgent(agent.agentId);
+      if (ping?.ok) ready += 1;
+    }
+    if (ready > 0) await this.schedulerEngine.tick({ reason: `fake_workers_ready:${reason}` });
+    return { ready };
+  }
+
   async init() {
     if (this.closed) throw new Error("desktop_host_closed");
     if (this.initialized) return this.query("state");
@@ -219,6 +231,9 @@ class DesktopHost {
     if (result?.ok && command === "startExecution") {
       const projectId = this.projectStore.getActiveProject()?.projectId;
       if (projectId && this.recoveryStore.summary().projectId !== projectId) await this.recoveryController.attachProject(projectId, "execution_started");
+    }
+    if (result?.ok && ["startExecution", "resume", "createWorkers"].includes(command)) {
+      await this.readyFakeWorkers(command);
     }
     if (!(command === "importProjectBundle" && result?.ok && result?.reloadRequired)) {
       await this.recoveryController.tick({ reason: `desktop_api:${command || "unknown"}` });
