@@ -25,11 +25,7 @@ class LocalValidatingGitProvider {
 
   async reviewComparison(project, artifact) {
     if (artifact?.localOnly === true && artifact?.repositoryId && artifact?.workspaceId) {
-      return this.repositoryService.workspaceReviewComparison({
-        projectId: project?.projectId,
-        repositoryId: artifact.repositoryId,
-        workspaceId: artifact.workspaceId
-      });
+      return this.repositoryService.workspaceReviewComparison({ projectId: project?.projectId, repositoryId: artifact.repositoryId, workspaceId: artifact.workspaceId });
     }
     return this.remoteProvider.compare(project, artifact?.baseSha, artifact?.commit);
   }
@@ -40,13 +36,7 @@ class LocalValidatingGitProvider {
     if (!project?.projectId || !task?.id || !run?.runId) return { ok: false, reason: "local_run_identity_missing" };
     const workspaceId = `task:${task.id}:${run.runId}`;
     try {
-      const created = await this.repositoryService.createTaskWorkspace({
-        projectId: project.projectId,
-        repositoryId,
-        taskId: task.id,
-        runId: run.runId,
-        startSha: run.git?.startSha || run.git?.baseSha || snapshot?.baseSha || "HEAD"
-      });
+      const created = await this.repositoryService.createTaskWorkspace({ projectId: project.projectId, repositoryId, taskId: task.id, runId: run.runId, startSha: run.git?.startSha || run.git?.baseSha || snapshot?.baseSha || "HEAD" });
       return { ok: true, workspaceId: created?.workspace?.workspaceId || workspaceId, created: true, repositoryId };
     } catch (error) {
       if (String(error?.message || "") !== "git_workspace_already_exists") return { ok: false, reason: "local_workspace_create_failed", error: String(error?.message || error), repositoryId };
@@ -90,8 +80,12 @@ class LocalValidatingGitProvider {
     return { ok: true, verification, verificationWaived: waived && verification.length === 0 };
   }
 
+  workerChangeArtifact(input = {}) {
+    return input.source?.workerArtifact || input.payload?.localChanges || null;
+  }
+
   async validateLocalChangeArtifact(input, { project, task, run, repositoryId } = {}) {
-    const normalized = normalizeLocalChangeSet(input.payload?.localChanges);
+    const normalized = normalizeLocalChangeSet(this.workerChangeArtifact(input));
     if (!normalized.ok) return { ok: false, reason: normalized.reason, local: { ok: false, reason: normalized.reason } };
     const freshness = this.remoteProvider?.checkBaseFresh && input.snapshot
       ? await this.remoteProvider.checkBaseFresh(project, input.snapshot)
@@ -146,7 +140,7 @@ class LocalValidatingGitProvider {
     const task = input.task || null;
     const run = input.run || null;
     const repositoryId = project?.repositoryRuntime?.repositoryId || null;
-    if (repositoryId && input.payload?.localChanges) return this.validateLocalChangeArtifact(input, { project, task, run, repositoryId });
+    if (repositoryId && this.workerChangeArtifact(input)) return this.validateLocalChangeArtifact(input, { project, task, run, repositoryId });
 
     const remote = await this.remoteProvider.validateArtifact(input);
     if (!remote?.ok) return remote;
