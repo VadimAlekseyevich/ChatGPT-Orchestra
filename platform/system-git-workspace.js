@@ -51,9 +51,74 @@ class SystemGitWorkspace extends GitCliWorkspace {
     return { ok: true, ...(await super.diff(workspaceId)) };
   }
 
+  async artifactState(workspaceId) {
+    const record = this.workspaceRecord(workspaceId);
+    const status = await super.status(workspaceId);
+    const range = `${record.startSha}..${status.head}`;
+    const { stdout } = await this.execGit(["diff", "--name-only", "-z", range, "--"], { cwd: record.path });
+    const changedFiles = stdout.split("\0").filter(Boolean).map((item) => item.replace(/\\/g, "/")).sort();
+    return {
+      ok: true,
+      workspaceId,
+      startSha: record.startSha,
+      head: status.head,
+      branch: record.branch,
+      changedFiles,
+      clean: status.clean
+    };
+  }
+
   async validateScope(workspaceId, scope = {}) {
     const allow = Array.isArray(scope) ? scope : (Array.isArray(scope?.allow) ? scope.allow : []);
-    return super.validateScope(workspaceId, allow);
+    const live = await super.validateScope(workspaceId, allow);
+    const artifact = await this.artifactState(workspaceId);
+    const allowed = live.allowedPaths;
+    const artifactViolations = artifact.changedFiles.filter((changed) => !allowed.some((allowedPath) => (
+      changed === allowedPath || changed.startsWith(`${allowedPath}/`)
+    )));
+    return {
+      ...live,
+      artifactChangedFiles: artifact.changedFiles,
+      artifactViolations,
+      ok: live.ok && artifactViolations.length === 0,
+      violations: [...new Set([...(live.violations || []), ...artifactViolations])].sort()
+    };
+  }
+
+  async materializeTaskArtifact(workspaceId, artifact = {}) {
+    const record = this.workspaceRecord(workspaceId);
+    if (record.kind !== "task") throw new Error("git_materialize_requires_task_workspace");
+    const status = await super.status(workspaceId);
+    if (!status.clean) throw new Error("git_materialize_requires_clean_workspace");
+    const expectedCommit = String(artifact.commit || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{40,64}$/.test(expectedCommit)) throw new Error("git_artifact_commit_invalid");
+    const remote = safeRemote(artifact.remote || "origin");
+    const branch = String(artifact.branch || record.branch || "").trim();
+    if (branch !== record.branch) throw new Error("git_artifact_branch_mismatch");
+
+    let commitAvailable = true;
+    try {
+      await this.verifyStartSha(expectedCommit);
+    } catch {
+      commitAvailable = false;
+    }
+    if (!commitAvailable) {
+      await this.execGit(["fetch", "--no-tags", remote, branch], { cwd: record.path });
+      const { stdout: fetchedHead } = await this.execGit(["rev-parse", "FETCH_HEAD"], { cwd: record.path });
+      if (fetchedHead.trim().toLowerCase() !== expectedCommit) throw new Error("git_artifact_commit_not_branch_head");
+      await this.verifyStartSha(expectedCommit);
+    }
+
+    try {
+      await this.execGit(["merge-base", "--is-ancestor", record.startSha, expectedCommit], { cwd: record.path });
+    } catch {
+      throw new Error("git_artifact_not_descendant_of_start_sha");
+    }
+
+    await this.execGit(["reset", "--hard", expectedCommit], { cwd: record.path });
+    const state = await this.artifactState(workspaceId);
+    if (state.head.toLowerCase() !== expectedCommit) throw new Error("git_artifact_materialize_head_mismatch");
+    return { ok: true, ...state, remote, branch };
   }
 
   async runVerification(workspaceId, verification = {}) {
