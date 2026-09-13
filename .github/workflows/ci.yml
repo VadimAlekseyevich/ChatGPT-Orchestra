@@ -71,6 +71,17 @@ jobs:
           node-version: 22.x
       - run: npm run test:phase16
 
+  local-git:
+    name: Local Git worktrees / Node 22
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - run: git --version
+      - run: npm run test:phase17
+
   browser-fixtures:
     name: Extension browser fixtures / Node 18
     runs-on: ubuntu-latest
@@ -129,7 +140,7 @@ jobs:
   phase14:
     name: Phase 14 aggregate / Node 22
     runs-on: ubuntu-latest
-    needs: [core, contracts, persistence, browser-fixtures, release-contract, desktop, companion, alpha-package]
+    needs: [core, contracts, persistence, browser-fixtures, release-contract, desktop, companion, local-git, alpha-package]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
