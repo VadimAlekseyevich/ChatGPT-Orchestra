@@ -196,6 +196,8 @@
       else if (command === "createIntegrationWorkspace") result = await this.repositoryService?.createIntegrationWorkspace?.(payload);
       else if (command === "verifyWorkspace") result = await this.repositoryService?.verifyWorkspace?.(payload);
       else if (command === "commitWorkspace") result = await this.repositoryService?.commitWorkspace?.(payload);
+      else if (command === "mergeTaskArtifact") result = await this.repositoryService?.mergeTaskArtifact?.(payload);
+      else if (command === "pushWorkspace") result = await this.repositoryService?.pushWorkspace?.(payload);
       else if (command === "cleanupWorkspace") result = await this.repositoryService?.cleanupWorkspace?.(payload);
       else return this.envelope({ ok: false, reason: "unknown_api_command", command });
       if (result === undefined) return this.envelope({ ok: false, reason: "api_dependency_unavailable", command });
