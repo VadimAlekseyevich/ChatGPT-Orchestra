@@ -23,6 +23,8 @@
 - [`phase-10-smoke-test.md`](phase-10-smoke-test.md) — Node/Edge/API acceptance gates для behavior-preserving portability layer;
 - [`phase-11-portable-persistence.md`](phase-11-portable-persistence.md) — canonical portable state, migration registry, transactional persistence, Project Bundle и SQLite adapter;
 - [`phase-11-smoke-test.md`](phase-11-smoke-test.md) — extension export/import, corruption checks и extension → SQLite migration gate;
+- [`phase-12-dashboard-observability.md`](phase-12-dashboard-observability.md) — portable Dashboard, versioned Observability read model, Orchestrator API v3 и safe task controls;
+- [`phase-12-smoke-test.md`](phase-12-smoke-test.md) — extension + standalone Fake transport acceptance checks для Dashboard/observability;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
