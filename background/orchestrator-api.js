@@ -19,7 +19,8 @@
       observabilityService = null,
       taskControlService = null,
       contextStore = null,
-      contextPackets = null
+      contextPackets = null,
+      repositoryService = null
     } = {}) {
       this.orchestrator = orchestrator;
       this.planningEngine = planningEngine;
@@ -34,6 +35,7 @@
       this.taskControlService = taskControlService;
       this.contextStore = contextStore;
       this.contextPackets = contextPackets;
+      this.repositoryService = repositoryService;
     }
 
     envelope(data = {}) { return { apiVersion: API_VERSION, ...data }; }
@@ -100,6 +102,31 @@
         const info = typeof this.persistenceInfo === "function" ? this.persistenceInfo() : (this.persistenceInfo || {});
         return this.envelope({ ok: true, persistence: { portableSchemaVersion: root.PortableState?.PORTABLE_SCHEMA_VERSION || 1, bundleVersion: root.ProjectBundle?.BUNDLE_VERSION || 1, contextPacketVersion: root.ContextPackets?.PACKET_VERSION || 1, ...info } });
       }
+      if (query === "repositories") {
+        if (!this.repositoryService?.listRepositories) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        const result = await this.repositoryService.listRepositories(payload);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "repository_query_failed" });
+      }
+      if (query === "repository") {
+        if (!this.repositoryService?.getRepository) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        const result = await this.repositoryService.getRepository(payload.repositoryId);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "repository_query_failed" });
+      }
+      if (query === "workspaceStatus") {
+        if (!this.repositoryService?.workspaceStatus) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        const result = await this.repositoryService.workspaceStatus(payload);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+      }
+      if (query === "workspaceDiff") {
+        if (!this.repositoryService?.workspaceDiff) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        const result = await this.repositoryService.workspaceDiff(payload);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+      }
+      if (query === "workspaceScope") {
+        if (!this.repositoryService?.workspaceScope) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        const result = await this.repositoryService.workspaceScope(payload);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+      }
       return this.envelope({ ok: false, reason: "unknown_api_query", query });
     }
 
@@ -151,9 +178,7 @@
       else if (command === "pause") result = await this.recoveryController?.pause?.();
       else if (command === "stopNow") result = await this.recoveryController?.stopNow?.();
       else if (command === "resume") result = await this.recoveryController?.resume?.();
-      else if (command === "exportProjectBundle") {
-        result = await this.projectBundleService?.exportBundle?.({ projectId: payload.projectId || null });
-      }
+      else if (command === "exportProjectBundle") result = await this.projectBundleService?.exportBundle?.({ projectId: payload.projectId || null });
       else if (command === "importProjectBundle") {
         const recoveryStatus = String(this.recoveryController?.getPublicState?.()?.status || "IDLE");
         if (!IMPORT_SAFE_RECOVERY_STATES.has(recoveryStatus)) {
@@ -164,6 +189,14 @@
         }
       }
       else if (command === "exportDebugBundle") result = this.observabilityService?.debugBundle?.(payload);
+      else if (command === "openLocalRepository") result = await this.repositoryService?.openLocalRepository?.(payload);
+      else if (command === "cloneRepository") result = await this.repositoryService?.cloneRepository?.(payload);
+      else if (command === "setRepositoryTrust") result = await this.repositoryService?.setRepositoryTrust?.(payload);
+      else if (command === "createTaskWorkspace") result = await this.repositoryService?.createTaskWorkspace?.(payload);
+      else if (command === "createIntegrationWorkspace") result = await this.repositoryService?.createIntegrationWorkspace?.(payload);
+      else if (command === "verifyWorkspace") result = await this.repositoryService?.verifyWorkspace?.(payload);
+      else if (command === "commitWorkspace") result = await this.repositoryService?.commitWorkspace?.(payload);
+      else if (command === "cleanupWorkspace") result = await this.repositoryService?.cleanupWorkspace?.(payload);
       else return this.envelope({ ok: false, reason: "unknown_api_command", command });
       if (result === undefined) return this.envelope({ ok: false, reason: "api_dependency_unavailable", command });
       return this.envelope(result && typeof result === "object" ? result : { ok: true, result });
