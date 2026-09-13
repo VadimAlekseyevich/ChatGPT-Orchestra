@@ -154,10 +154,10 @@
       if (!projectState) return { ok: false, reason: "portable_project_not_found", projectId: id };
 
       const namespaces = {
-        projects: projectState,
-        scheduler: projectScoped(raw?.[STORE_KEYS.scheduler], id),
-        reviews: projectScoped(raw?.[STORE_KEYS.reviews], id),
-        integration: projectScoped(raw?.[STORE_KEYS.integration], id),
+        projects: stripRuntimeBindingsDeep(projectState),
+        scheduler: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.scheduler], id)),
+        reviews: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.reviews], id)),
+        integration: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.integration], id)),
         recovery: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.recovery], id)),
         events: sanitizeEventStore(raw?.[STORE_KEYS.events], id),
         agents: emptyPortableAgentRegistry()
@@ -180,6 +180,16 @@
       if (!projectId) return { ok: false, reason: "portable_project_id_missing" };
       if (!snapshot.namespaces || typeof snapshot.namespaces !== "object" || Array.isArray(snapshot.namespaces)) return { ok: false, reason: "portable_namespaces_missing" };
       if (!snapshot.namespaces.projects?.projects?.[projectId]) return { ok: false, reason: "portable_project_payload_missing" };
+      for (const name of ["scheduler", "reviews", "integration", "recovery"]) {
+        const namespace = snapshot.namespaces[name];
+        if (namespace !== null && namespace !== undefined && (typeof namespace !== "object" || Array.isArray(namespace))) {
+          return { ok: false, reason: "portable_namespace_invalid", namespace: name };
+        }
+        const namespaceProjectId = String(namespace?.projectId || "").trim();
+        if (namespaceProjectId && namespaceProjectId !== projectId) {
+          return { ok: false, reason: "portable_namespace_project_mismatch", namespace: name, projectId: namespaceProjectId };
+        }
+      }
       return { ok: true, schemaVersion: version, projectId };
     }
 
@@ -223,7 +233,7 @@
       if (!this.stateStore?.transaction) return { ok: false, reason: "state_store_transaction_required" };
       const migrated = this.migrate(snapshot);
       if (!migrated.ok) return migrated;
-      const portable = redactSecrets(migrated.snapshot);
+      const portable = redactSecrets(stripRuntimeBindingsDeep(migrated.snapshot));
       const projectId = portable.projectId;
       const now = this.clock();
 
