@@ -11,6 +11,7 @@ const {
 } = require("../desktop/main/companion-auth.js");
 
 const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
+const NATIVE_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}\/$/;
 
 class NativeMessageDecoder {
   constructor(onMessage) {
@@ -41,6 +42,14 @@ function writeNative(stream, value) {
 
 function dataDirectoryFromEnvironment() {
   return process.env.ORCHESTRA_DATA_DIR || resolveDesktopDataDirectory();
+}
+
+function nativeMessagingOrigin(argv = process.argv.slice(1)) {
+  return (argv || []).map((item) => String(item || "")).find((item) => NATIVE_ORIGIN_PATTERN.test(item)) || null;
+}
+
+function isNativeMessagingLaunch(argv = process.argv.slice(1)) {
+  return Boolean(nativeMessagingOrigin(argv) || (argv || []).includes("--native-messaging-host"));
 }
 
 async function main() {
@@ -92,4 +101,13 @@ if (require.main === module) {
   });
 }
 
-module.exports = { NativeMessageDecoder, writeNative, MAX_NATIVE_MESSAGE_BYTES, dataDirectoryFromEnvironment };
+module.exports = {
+  NativeMessageDecoder,
+  writeNative,
+  MAX_NATIVE_MESSAGE_BYTES,
+  NATIVE_ORIGIN_PATTERN,
+  dataDirectoryFromEnvironment,
+  nativeMessagingOrigin,
+  isNativeMessagingLaunch,
+  main
+};
