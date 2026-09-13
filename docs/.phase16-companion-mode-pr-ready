@@ -1,0 +1,1 @@
+This marker records that the companion-mode integration slice includes explicit mode routing, fail-closed disconnect behavior, migration gating, popup status controls, desktop companion launch mode, tests, and smoke documentation. It may be removed before release packaging if repository hygiene prefers no marker files.
