@@ -22,6 +22,8 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     logsDirectory: path.join(root, "logs"),
     bundlesDirectory: path.join(root, "bundles"),
     companionDirectory: path.join(root, "companion"),
+    repositoriesDirectory: path.join(root, "repositories"),
+    workspacesDirectory: path.join(root, "workspaces"),
     stateDatabase: path.join(root, "state", "orchestra.sqlite"),
     logFile: path.join(root, "logs", "orchestra.jsonl"),
     companionSecretFile: path.join(root, "companion", "pairing-secret"),
@@ -30,7 +32,15 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     companionMigrationReceiptFile: path.join(root, "companion", "migration-applied.json"),
     companionNativeHostManifestFile: path.join(root, "companion", "native-host-manifest.json")
   };
-  for (const directory of [paths.root, paths.stateDirectory, paths.logsDirectory, paths.bundlesDirectory, paths.companionDirectory]) fs.mkdirSync(directory, { recursive: true });
+  for (const directory of [
+    paths.root,
+    paths.stateDirectory,
+    paths.logsDirectory,
+    paths.bundlesDirectory,
+    paths.companionDirectory,
+    paths.repositoriesDirectory,
+    paths.workspacesDirectory
+  ]) fs.mkdirSync(directory, { recursive: true });
   return paths;
 }
 
