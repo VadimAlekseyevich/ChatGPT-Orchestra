@@ -5,6 +5,44 @@
   const PROMPT_VERSION = 2;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
+  function bytes(value) {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(serialized).length;
+    if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
+    return serialized.length;
+  }
+  function hasStructuralTruncation(value) {
+    if (!value || typeof value !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
+    if (Array.isArray(value)) return value.some(hasStructuralTruncation);
+    return Object.values(value).some(hasStructuralTruncation);
+  }
+  function packetCompleteness(packet) {
+    if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
+    const maxBytes = Number(root.ContextPackets?.BUDGETS?.review || 36000);
+    const actualBytes = bytes(packet);
+    const incompleteSections = ["task", "review", "evidence", "artifactRefs"]
+      .filter((key) => hasStructuralTruncation(packet?.[key]));
+    const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    return {
+      ok: budgetOk && incompleteSections.length === 0,
+      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      actualBytes,
+      maxBytes,
+      incompleteSections
+    };
+  }
+  function failClosedPacket(packet, gate) {
+    return {
+      packetVersion: Number(packet?.packetVersion) || 1,
+      packetType: "review",
+      identity: packet?.identity || null,
+      logicalRole: packet?.logicalRole || null,
+      project: packet?.project ? { projectId: packet.project.projectId, repository: packet.project.repository || null } : null,
+      provenance: packet?.provenance || null,
+      completeness: gate
+    };
+  }
 
   function buildReviewPrompt({ project, task, review, packet, agentId }) {
     if (!project?.projectId || !task?.id || !review?.reviewId || !agentId) throw new Error("invalid_review_assignment");
@@ -18,6 +56,8 @@
       evidence: packet,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
+    const completeness = packetCompleteness(contextPacket);
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
     const identity = { v: 1, projectId: project.projectId, taskId: task.id, runId: review.reviewId, agentId };
     const approvedExample = {
       ...identity,
@@ -34,6 +74,16 @@
       }
     };
 
+    const completenessInstructions = completeness.ok ? [
+      "PACKET COMPLETENESS GATE:",
+      "- The v1 packet passed the host-side size/structural completeness check."
+    ] : [
+      "PACKET COMPLETENESS GATE — FAIL CLOSED:",
+      "- The host detected incomplete review evidence. Do NOT approve, request code changes, inspect additional repository state, or infer omitted diff/task context.",
+      "- Return NEEDS_USER with payload.reason=context_packet_incomplete and include the completeness details from the packet.",
+      "- REVIEW_APPROVED and CHANGES_REQUIRED are not valid outcomes for this turn."
+    ];
+
     return [
       "You are the independent ChatGPT Orchestra Reviewer for one completed task.",
       `Reviewer prompt contract version: ${PROMPT_VERSION}.`,
@@ -43,7 +93,9 @@
       "Do not approve because the Worker said DONE. Compare the result against every acceptance criterion, task scope, verification evidence and known limitations.",
       "Do not claim MERGED, VERIFIED or integrated. This role only produces review approval or requests rework.",
       "",
-      `PORTABLE REVIEW PACKET:\n${json(contextPacket)}`,
+      `PORTABLE REVIEW PACKET:\n${json(packetForPrompt)}`,
+      "",
+      ...completenessInstructions,
       "",
       "REVIEW RULES:",
       "- Evaluate every acceptance criterion explicitly. Use the exact criterion text in payload.criteria.",
@@ -57,11 +109,11 @@
       "PROTOCOL CONTRACT:",
       `- Identity: ${json(identity)}`,
       `- eventId must be ${review.reviewId}-final and sequence must be 1.`,
-      "- Finish with REVIEW_APPROVED or CHANGES_REQUIRED. Use BLOCKED/ERROR/NEEDS_USER only when review itself cannot be completed.",
+      "- Finish with REVIEW_APPROVED or CHANGES_REQUIRED. Use BLOCKED/ERROR/NEEDS_USER only when review itself cannot be completed; an incomplete packet requires NEEDS_USER.",
       `- APPROVED example: @@ORCH ${JSON.stringify(approvedExample)}`
     ].join("\n");
   }
 
-  root.ReviewPrompts = Object.freeze({ PROMPT_VERSION, buildReviewPrompt });
+  root.ReviewPrompts = Object.freeze({ PROMPT_VERSION, buildReviewPrompt, packetCompleteness });
   if (typeof module !== "undefined" && module.exports) module.exports = root.ReviewPrompts;
 })();
