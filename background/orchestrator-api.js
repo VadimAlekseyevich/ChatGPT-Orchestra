@@ -118,7 +118,6 @@
           result = { ...result, planningResume: planningResume || null };
         }
       }
-      else if (command === "resumeLead") result = await this.planningEngine?.resumeCurrentStage?.({ reason: payload.reason || "api_resume_lead" });
       else if (command === "createWorkers") result = await this.orchestrator?.createWorkers?.(payload.count);
       else if (command === "bindProtocolContext") result = await this.orchestrator?.bindProtocolContext?.(payload.agentId, payload.context);
       else if (command === "clearProtocolContext") result = await this.orchestrator?.clearProtocolContext?.(payload.agentId);
