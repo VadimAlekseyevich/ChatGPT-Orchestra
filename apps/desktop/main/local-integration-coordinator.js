@@ -34,6 +34,21 @@ class LocalIntegrationCoordinator {
     this.logger = logger;
   }
 
+  async ensureWorkspace({ projectId, repositoryId, runId, baseSha }) {
+    try {
+      const created = await this.repositoryService.createIntegrationWorkspace({ projectId, repositoryId, runId, startSha: baseSha });
+      const workspaceId = created?.workspace?.workspaceId;
+      if (!created?.ok || !workspaceId) return { ok: false, reason: "local_integration_workspace_create_failed", created };
+      return { ok: true, workspaceId, recovered: false };
+    } catch (error) {
+      if (String(error?.message || "") !== "git_workspace_already_exists") throw error;
+      const workspaceId = `integration:${runId}`;
+      const status = await this.repositoryService.workspaceStatus({ projectId, repositoryId, workspaceId });
+      if (!status?.ok || !status?.status) return { ok: false, reason: "local_integration_workspace_recovery_failed", workspaceId, status };
+      return { ok: true, workspaceId, recovered: true };
+    }
+  }
+
   async integrate({ project, tasks = [], runSpec } = {}) {
     const repositoryId = project?.repositoryRuntime?.repositoryId || null;
     if (!repositoryId) return { ok: false, reason: "local_integration_repository_binding_missing" };
@@ -42,14 +57,14 @@ class LocalIntegrationCoordinator {
     const plan = localIntegrationVerificationPlan(tasks);
     if (!plan.ok) return { ok: false, reason: "local_integration_verification_plan_invalid", details: plan };
 
-    const created = await this.repositoryService.createIntegrationWorkspace({
-      projectId: project.projectId,
-      repositoryId,
-      runId: runSpec.runId,
-      startSha: runSpec.baseSha
-    });
-    const workspaceId = created?.workspace?.workspaceId;
-    if (!created?.ok || !workspaceId) return { ok: false, reason: "local_integration_workspace_create_failed", created };
+    let ensured;
+    try {
+      ensured = await this.ensureWorkspace({ projectId: project.projectId, repositoryId, runId: runSpec.runId, baseSha: runSpec.baseSha });
+    } catch (error) {
+      return { ok: false, reason: "local_integration_workspace_create_failed", error: String(error?.message || error) };
+    }
+    if (!ensured.ok) return ensured;
+    const { workspaceId, recovered } = ensured;
 
     const mergedTaskIds = [];
     const merges = [];
@@ -121,25 +136,18 @@ class LocalIntegrationCoordinator {
         evidence: result?.ok ? "local command exited successfully" : `local command ${result?.status || "failed"}`,
         result
       });
-      if (!checked?.ok || !result?.ok) {
-        return { ok: false, reason: "local_integration_verification_failed", workspaceId, mergedTaskIds, checks };
-      }
+      if (!checked?.ok || !result?.ok) return { ok: false, reason: "local_integration_verification_failed", workspaceId, mergedTaskIds, checks };
     }
 
-    const artifactResult = await this.repositoryService.workspaceArtifact({
-      projectId: project.projectId,
-      repositoryId,
-      workspaceId
-    });
+    const artifactResult = await this.repositoryService.workspaceArtifact({ projectId: project.projectId, repositoryId, workspaceId });
     const artifact = artifactResult?.artifact;
-    if (!artifactResult?.ok || !artifact?.head || artifact.clean !== true) {
-      return { ok: false, reason: "local_integration_artifact_invalid", workspaceId, artifact };
-    }
+    if (!artifactResult?.ok || !artifact?.head || artifact.clean !== true) return { ok: false, reason: "local_integration_artifact_invalid", workspaceId, artifact };
 
     return {
       ok: true,
       workspaceId,
       repositoryId,
+      recovered,
       result: {
         branch: artifact.branch,
         commit: artifact.head,
@@ -150,6 +158,7 @@ class LocalIntegrationCoordinator {
         checks,
         summary: "Approved task artifacts were merged deterministically and verified in the local integration worktree.",
         localWorkspaceId: workspaceId,
+        recoveredWorkspace: recovered,
         verifiedAt: this.clock(),
         targetBranchUnmodified: true
       },
