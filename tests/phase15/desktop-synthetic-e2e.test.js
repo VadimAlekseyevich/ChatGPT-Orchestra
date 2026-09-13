@@ -413,7 +413,7 @@ test("desktop SQLite host pauses at a safe point, restarts, resumes reviews and 
     const dashboard = await host.query("dashboard");
     assert.equal(dashboard.ok, true);
     assert.equal(dashboard.dashboard.persistence.backend, "sqlite");
-    assert.equal(dashboard.dashboard.integration.status, "INTEGRATION_VERIFIED");
+    assert.equal(dashboard.dashboard.integration.summary.status, "INTEGRATION_VERIFIED");
 
     const exported = await host.execute("exportProjectBundle", {});
     assert.equal(exported.ok, true);
