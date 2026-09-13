@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.15",
+  "version": "2.0.0-alpha.16",
   "private": true,
   "description": "Development tests for ChatGPT Orchestra portable orchestration contracts and CI foundation.",
   "main": "apps/desktop/main/electron-main.js",
@@ -25,9 +25,11 @@
     "test:phase14": "npm run test:release && npm run test:contracts && npm run test:browser-fixtures && node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/project-bundle.test.js tests/context-packets.test.js tests/recovery-controller.test.js tests/integration-engine.test.js",
     "test:phase15": "node --test tests/node-timer-runtime.test.js tests/desktop-app-data.test.js tests/desktop-ipc-router.test.js tests/desktop-host.test.js tests/phase15/desktop-synthetic-e2e.test.js",
     "test:phase16": "node --test tests/companion-protocol.test.js tests/companion-rpc.test.js tests/native-messaging-transport.test.js tests/desktop-bridge-runtime.test.js tests/companion-auth.test.js tests/companion-server-transport.test.js tests/native-host-framing.test.js tests/native-host-registration.test.js tests/companion-host-binding.test.js tests/companion-desktop-host.test.js tests/extension-companion-mode.test.js tests/companion-api-routing.test.js tests/companion-service-worker.test.js tests/companion-project-migration.test.js",
+    "test:alpha": "npm run test:release && npm run test:phase15 && npm run test:phase16 && node scripts/validate-alpha-readiness.js",
     "desktop:dev": "electron .",
     "desktop:companion": "electron . --companion",
     "desktop:pack": "electron-builder --dir",
+    "extension:stage-alpha": "node scripts/stage-alpha-extension.js",
     "companion:register-host": "node scripts/register-native-host.js register",
     "companion:unregister-host": "node scripts/register-native-host.js unregister"
   },
