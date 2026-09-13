@@ -12,7 +12,7 @@
     "test:phase5": "node --test tests/conflict-policy.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase6": "node --test tests/git-provider.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase7": "node --test tests/event-bus.test.js tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
-    "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/project-store.test.js"
+    "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/project-store.test.js tests/project-integration-state.test.js"
   },
   "engines": {
     "node": ">=18"
