@@ -76,7 +76,10 @@
         replacement: true
       });
       const sent = await this.sendPrompt(lead.agentId, prompt);
-      if (!sent?.ok) return { ok: false, reason: "lead_replacement_prompt_failed", details: sent || null, project: this.getPublicState() };
+      if (!sent?.ok) {
+        await this.registry.clearProtocolContext?.(lead.agentId);
+        return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState() };
+      }
       return {
         ok: true,
         resumed: true,
