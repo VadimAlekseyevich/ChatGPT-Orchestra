@@ -1,8 +1,8 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.12",
+  "version": "2.0.0-alpha.13",
   "private": true,
-  "description": "Development tests for ChatGPT Orchestra portable persistence, project bundles and platform contracts.",
+  "description": "Development tests for ChatGPT Orchestra portable Dashboard, observability API and platform contracts.",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
@@ -15,7 +15,8 @@
     "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/integration-recovery.test.js tests/project-store.test.js tests/project-integration-state.test.js",
     "test:phase9": "node --test tests/recovery-store.test.js tests/recovery-controller.test.js tests/recovery-reconciliation.test.js tests/recovery-stop-guards.test.js tests/integration-recovery.test.js tests/event-bus.test.js",
     "test:phase10": "node --test tests/platform-contracts.test.js tests/platform-boundary.test.js tests/orchestrator-api.test.js tests/orchestrator-portable.test.js tests/orchestrator.test.js tests/event-bus.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js tests/recovery-controller.test.js",
-    "test:phase11": "node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/portable-state.test.js tests/project-bundle.test.js tests/persistence-api.test.js tests/platform-contracts.test.js tests/orchestrator-api.test.js tests/recovery-controller.test.js"
+    "test:phase11": "node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/portable-state.test.js tests/project-bundle.test.js tests/persistence-api.test.js tests/platform-contracts.test.js tests/orchestrator-api.test.js tests/recovery-controller.test.js",
+    "test:phase12": "node --test tests/observability-service.test.js tests/task-control-service.test.js tests/dashboard-app.test.js tests/orchestrator-api.test.js tests/platform-contracts.test.js tests/platform-boundary.test.js tests/persistence-api.test.js"
   },
   "engines": {
     "node": ">=18"
