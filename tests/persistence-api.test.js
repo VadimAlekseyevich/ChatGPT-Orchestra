@@ -36,10 +36,10 @@ test("live RUNNING recovery state blocks import before storage mutation", async 
   assert.equal(calls.length, 0);
 });
 
-test("safe import returns reloadRequired and delegates replace flag", async () => {
+test("safe import returns reloadRequired and requests a post-import write freeze", async () => {
   const { api, calls } = apiWith({ recoveryStatus: "STOPPED" });
   const result = await api.execute("importProjectBundle", { bundle: "bundle", replace: true });
   assert.equal(result.ok, true);
   assert.equal(result.reloadRequired, true);
-  assert.deepEqual(calls[0], ["import", "bundle", { replace: true }]);
+  assert.deepEqual(calls[0], ["import", "bundle", { replace: true, freezeAfter: true }]);
 });
