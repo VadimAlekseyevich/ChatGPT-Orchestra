@@ -269,8 +269,11 @@ async function handleCompanionControl(message) {
     return { ok: true, companion: companionController.getStatus(), localRuntimeActive };
   }
   if (message?.type === TYPES.COMPANION_ENABLE) {
-    await suspendLocalRuntime();
     const companion = await companionController.setEnabled(true);
+    if (!companion.enabled) {
+      return { ok: false, reason: companion.reason || "companion_enable_rejected", companion, localRuntimeActive };
+    }
+    await suspendLocalRuntime();
     return { ok: true, companion, localRuntimeActive: false };
   }
   if (message?.type === TYPES.COMPANION_DISABLE) {
