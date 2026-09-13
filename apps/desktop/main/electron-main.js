@@ -2,6 +2,7 @@
 
 const CompanionNativeHost = require("../../companion/native-host.js");
 const NativeHostRegistration = require("../../companion/native-host-registration.js");
+const { resolveDesktopDataDirectory } = require("./app-data.js");
 
 function companionRequested(argv = process.argv, env = process.env) {
   return argv.includes("--companion") || env.ORCHESTRA_COMPANION === "1";
@@ -25,11 +26,15 @@ function nativeHostRegistrationRequest(argv = process.argv.slice(1)) {
   return extensionId ? { action: "register", extensionId, browsers } : { action: "unregister", browsers };
 }
 
+function orchestraDataDirectory(env = process.env) {
+  return env.ORCHESTRA_DATA_DIR || resolveDesktopDataDirectory();
+}
+
 async function runNativeMessagingHost() {
   return CompanionNativeHost.main();
 }
 
-function runNativeHostRegistration(request, { executable = process.execPath, dataDirectory = process.env.ORCHESTRA_DATA_DIR || null } = {}) {
+function runNativeHostRegistration(request, { executable = process.execPath, dataDirectory = orchestraDataDirectory() } = {}) {
   if (!request) throw new TypeError("native_host_registration_request_required");
   if (request.action === "register") {
     return NativeHostRegistration.registerNativeHost({
@@ -74,7 +79,7 @@ if (registrationRequest) {
   let mainWindow = null;
 
   async function createMainWindow() {
-    const dataDirectory = app.getPath("userData");
+    const dataDirectory = orchestraDataDirectory();
     host = companionRequested()
       ? await createNativeCompanionDesktopHost({ dataDirectory })
       : await createDesktopHost({ dataDirectory });
@@ -130,6 +135,7 @@ module.exports = {
   companionRequested,
   nativeMessagingRequested,
   nativeHostRegistrationRequest,
+  orchestraDataDirectory,
   runNativeMessagingHost,
   runNativeHostRegistration
 };
