@@ -1,10 +1,12 @@
-# ChatGPT Orchestra 2.0.0-alpha.16 — Product Smoke Test
+# ChatGPT Orchestra 2.0.0-alpha.16 — Phase 16 Checkpoint Smoke Test
 
-This is the release gate before any Phase 17 work or the external-execution idea in issue #26. The purpose of this alpha is to validate the current desktop control plane + Edge companion on a real machine and a real ChatGPT multi-agent project.
+This build is a **Phase 16 desktop-control-plane checkpoint**, not the final Desktop-first Alpha release from Phase 20. Its purpose is to validate the current desktop Core + SQLite + Edge Companion path on a real Windows machine before continuing the planned desktop migration.
 
-## Scope freeze
+Phase 17 is **not blocked** by this checkpoint. The external-execution feedback-loop idea in issue #26 remains explicitly deferred until the Phase 20 Desktop-first Alpha has been completed and tested.
 
-Included in this alpha:
+## Checkpoint scope
+
+Included in this checkpoint:
 
 - desktop Core + SQLite canonical state;
 - Edge extension as the ChatGPT DOM/agent companion;
@@ -14,9 +16,15 @@ Included in this alpha:
 - pause/resume/recovery across desktop/extension restarts;
 - Dashboard/observability and Project Bundle portability.
 
-Explicitly deferred until after alpha testing:
+Not part of this Phase 16 checkpoint because they are planned for later roadmap phases:
 
 - Phase 17 local Git/worktrees and local command execution;
+- Phase 18 direct desktop ChatGPT runtime;
+- Phase 19 parity/reliability/security hardening;
+- Phase 20 Desktop-first Alpha release gate.
+
+Explicitly deferred until **after Phase 20 alpha validation**:
+
 - issue #26 external execution feedback loop;
 - automatic CI/Android result delivery back into ChatGPT;
 - `ExecutionRuntime`, `ArtifactStore`, automatic attachment delivery or self-hosted-runner orchestration.
@@ -136,7 +144,7 @@ Verify:
 
 ## 8. Unregister after testing
 
-When the alpha test is finished:
+When the checkpoint test is finished:
 
 ```powershell
 & ".\desktop\win-unpacked\ChatGPT Orchestra.exe" --unregister-native-host --native-host-browsers=edge
@@ -146,7 +154,7 @@ Then remove the unpacked extension if desired.
 
 ## Pass criteria
 
-Alpha.16 passes only when all of the following are observed on a real Windows + Edge + ChatGPT run:
+The Phase 16 checkpoint passes when all of the following are observed on a real Windows + Edge + ChatGPT run:
 
 - Native Messaging registration works from the packaged executable;
 - desktop/extension pairing works after restart;
@@ -157,4 +165,4 @@ Alpha.16 passes only when all of the following are observed on a real Windows + 
 - no duplicate task/review/integration side effects are observed;
 - no obvious secret or browser-handle leakage is found in portable state/logs.
 
-If any item fails, record the exact step, Orchestra structured log excerpt, project/recovery state and whether the failure reproduces after a clean restart. Do not start Phase 17 or issue #26 implementation until the alpha result is reviewed.
+A failure here is a Phase 16 defect to fix, but it does not redefine the roadmap. **Phase 17 is the next implementation phase. Issue #26 remains deferred until after the Phase 20 Desktop-first Alpha and its real validation.**
