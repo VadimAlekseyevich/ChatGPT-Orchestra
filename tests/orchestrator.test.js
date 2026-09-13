@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 require("../content/message-types.js");
+require("../platform/contracts.js");
+const { ExtensionAgentRuntime } = require("../platform/extension-runtime.js");
 const { TabRegistry } = require("../background/tab-registry.js");
 const { ServiceWorkerOrchestrator } = require("../background/orchestrator.js");
 
@@ -38,6 +40,7 @@ function createFakeChrome() {
         Object.assign(tab, changes);
         return { ...tab };
       },
+      async remove(tabId) { tabs.delete(tabId); },
       async sendMessage(tabId, message) {
         sent.push({ tabId, message });
         if (!tabs.has(tabId)) throw new Error("No receiver");
@@ -53,15 +56,13 @@ function createFakeChrome() {
 function makeOrchestrator() {
   let id = 0;
   const chromeApi = createFakeChrome();
-  const registry = new TabRegistry({
-    storageArea: fakeStorage(),
-    idFactory: () => `agent-${++id}`
-  });
-  const orchestrator = new ServiceWorkerOrchestrator({ chromeApi, registry, logger: { warn() {} } });
-  return { orchestrator, registry, chromeApi };
+  const registry = new TabRegistry({ stateStore: fakeStorage(), idFactory: () => `agent-${++id}` });
+  const agentRuntime = new ExtensionAgentRuntime({ chromeApi, registry, messageTypes: globalThis.ChatGPTOrchestra.MESSAGE_TYPES });
+  const orchestrator = new ServiceWorkerOrchestrator({ agentRuntime, logger: { warn() {} } });
+  return { orchestrator, registry, agentRuntime, chromeApi };
 }
 
-test("normal ChatGPT tab is ignored until explicitly registered", async () => {
+test("normal ChatGPT session is ignored until explicitly registered", async () => {
   const { orchestrator, registry } = makeOrchestrator();
   await orchestrator.init();
   const response = await orchestrator.handleContentMessage(
@@ -72,7 +73,7 @@ test("normal ChatGPT tab is ignored until explicitly registered", async () => {
   assert.equal(registry.getAgentByTabId(77), null);
 });
 
-test("active ChatGPT tab becomes Lead only through explicit registration", async () => {
+test("active ChatGPT session becomes Lead only through explicit registration", async () => {
   const { orchestrator, registry } = makeOrchestrator();
   await orchestrator.init();
   const response = await orchestrator.registerActiveLead();
@@ -81,7 +82,7 @@ test("active ChatGPT tab becomes Lead only through explicit registration", async
   assert.equal(registry.getAgentByTabId(1).status, "IDLE");
 });
 
-test("workers are bound to tab ids before navigation to ChatGPT", async () => {
+test("workers are bound before navigation to ChatGPT", async () => {
   const { orchestrator, registry, chromeApi } = makeOrchestrator();
   await orchestrator.init();
   const response = await orchestrator.createWorkers(3);
@@ -95,7 +96,7 @@ test("workers are bound to tab ids before navigation to ChatGPT", async () => {
   }
 });
 
-test("heartbeat after reload keeps same agent id", async () => {
+test("heartbeat after reload keeps same logical agent id", async () => {
   const { orchestrator, registry } = makeOrchestrator();
   await orchestrator.init();
   const created = await orchestrator.createWorkers(1);
@@ -116,7 +117,7 @@ test("heartbeat after reload keeps same agent id", async () => {
   assert.equal(registry.getAgent(agentId).status, "BUSY");
 });
 
-test("prompt routing targets only the selected agent tab", async () => {
+test("prompt routing targets only selected agent through AgentRuntime", async () => {
   const { orchestrator, registry, chromeApi } = makeOrchestrator();
   await orchestrator.init();
   const created = await orchestrator.createWorkers(2);
@@ -131,18 +132,18 @@ test("prompt routing targets only the selected agent tab", async () => {
   assert.equal(promptMessages[0].message.payload.prompt, "task B");
 });
 
-test("closing a registered tab marks its agent offline", async () => {
+test("closing registered session marks agent offline", async () => {
   const { orchestrator, registry } = makeOrchestrator();
   await orchestrator.init();
   const created = await orchestrator.createWorkers(1);
   const agentId = created.created[0];
   const tabId = registry.getAgent(agentId).tabId;
-  await orchestrator.handleTabRemoved(tabId);
+  await orchestrator.handleSessionRemoved(String(tabId));
   assert.equal(registry.getAgent(agentId).status, "OFFLINE");
   assert.equal(registry.getAgent(agentId).tabId, null);
 });
 
-test("orchestrator control commands are rejected from tab senders", async () => {
+test("orchestrator control commands are rejected from agent sessions", async () => {
   const { orchestrator } = makeOrchestrator();
   await orchestrator.init();
   const response = await orchestrator.handleRuntimeMessage(
@@ -150,7 +151,7 @@ test("orchestrator control commands are rejected from tab senders", async () => 
     { tab: { id: 99, url: "https://chatgpt.com/c/random" } }
   );
   assert.equal(response.ok, false);
-  assert.equal(response.reason, "orchestrator_command_forbidden_from_tab");
+  assert.equal(response.reason, "orchestrator_command_forbidden_from_agent_session");
 });
 
 test("explicit createWorkers reuses an offline worker identity", async () => {
@@ -159,7 +160,7 @@ test("explicit createWorkers reuses an offline worker identity", async () => {
   const first = await orchestrator.createWorkers(1);
   const agentId = first.created[0];
   const oldTabId = registry.getAgent(agentId).tabId;
-  await orchestrator.handleTabRemoved(oldTabId);
+  await orchestrator.handleSessionRemoved(String(oldTabId));
 
   const second = await orchestrator.createWorkers(1);
   assert.equal(second.ok, true);
