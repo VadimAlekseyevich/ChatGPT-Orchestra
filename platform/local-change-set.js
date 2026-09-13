@@ -1,8 +1,8 @@
 "use strict";
 
 const MAX_LOCAL_CHANGE_FILES = 64;
-const MAX_LOCAL_CHANGE_BYTES = 256 * 1024;
-const MAX_LOCAL_FILE_BYTES = 128 * 1024;
+const MAX_LOCAL_CHANGE_BYTES = 96 * 1024;
+const MAX_LOCAL_FILE_BYTES = 64 * 1024;
 const FORMAT = "file-set-v1";
 
 function utf8Bytes(value) {
@@ -67,12 +67,4 @@ function changeSetSummary(changeSet) {
   };
 }
 
-module.exports = {
-  FORMAT,
-  MAX_LOCAL_CHANGE_FILES,
-  MAX_LOCAL_CHANGE_BYTES,
-  MAX_LOCAL_FILE_BYTES,
-  normalizeChangePath,
-  normalizeLocalChangeSet,
-  changeSetSummary
-};
+module.exports = { FORMAT, MAX_LOCAL_CHANGE_FILES, MAX_LOCAL_CHANGE_BYTES, MAX_LOCAL_FILE_BYTES, normalizeChangePath, normalizeLocalChangeSet, changeSetSummary };
