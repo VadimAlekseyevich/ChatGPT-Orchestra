@@ -21,6 +21,7 @@
       previousStatus: null,
       reason: null,
       issues: [],
+      stopBoundaryActive: false,
       snapshotCursor: 0,
       snapshot: null,
       requestedAt: null,
@@ -38,6 +39,12 @@
     return CONTROL_STATES.includes(status) ? status : "RECOVERY_REQUIRED";
   }
 
+  function normalizeStopBoundary(candidate, status) {
+    if (candidate?.stopBoundaryActive === true) return true;
+    if (["STOPPING", "STOPPED"].includes(status)) return true;
+    return candidate?.previousStatus === "STOPPING" && ["RECOVERING", "RECOVERY_REQUIRED"].includes(status);
+  }
+
   class RecoveryStore {
     constructor({ storageArea = globalThis.chrome?.storage?.local, clock = () => Date.now() } = {}) {
       this.storageArea = storageArea;
@@ -51,11 +58,13 @@
       const stored = await this.storageArea.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
       if (candidate?.schemaVersion === SCHEMA_VERSION) {
+        const status = normalizeStatus(candidate.status);
         this.state = {
           ...defaultState(),
           ...candidate,
-          status: normalizeStatus(candidate.status),
-          issues: Array.isArray(candidate.issues) ? clone(candidate.issues) : []
+          status,
+          issues: Array.isArray(candidate.issues) ? clone(candidate.issues) : [],
+          stopBoundaryActive: normalizeStopBoundary(candidate, status)
         };
       }
       return this.snapshot();
@@ -71,6 +80,7 @@
         previousStatus: this.state.previousStatus,
         reason: this.state.reason,
         issues: clone(this.state.issues),
+        stopBoundaryActive: Boolean(this.state.stopBoundaryActive),
         snapshotCursor: this.state.snapshotCursor,
         snapshot: this.state.snapshot ? clone(this.state.snapshot) : null,
         requestedAt: this.state.requestedAt,
@@ -114,9 +124,13 @@
       if (issues !== null) this.state.issues = Array.isArray(issues) ? clone(issues) : [];
       const now = this.clock();
       if (["PAUSING", "STOPPING", "RECOVERING"].includes(next)) this.state.requestedAt = now;
+      if (next === "STOPPING") this.state.stopBoundaryActive = true;
       if (next === "PAUSED") this.state.safePointAt = now;
       if (next === "STOPPED") this.state.stoppedAt = now;
-      if (next === "RUNNING") this.state.resumedAt = now;
+      if (next === "RUNNING") {
+        this.state.resumedAt = now;
+        if (reconciled) this.state.stopBoundaryActive = false;
+      }
       if (reconciled) this.state.lastReconciledAt = now;
       if (snapshot !== undefined) await this.setSnapshot(snapshot, { persist: false });
       await this.persist();
@@ -152,6 +166,6 @@
   root.RECOVERY_CONTROL_STATES = CONTROL_STATES;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { RecoveryStore, STORAGE_KEY, SCHEMA_VERSION, CONTROL_STATES, normalizeStatus };
+    module.exports = { RecoveryStore, STORAGE_KEY, SCHEMA_VERSION, CONTROL_STATES, normalizeStatus, normalizeStopBoundary };
   }
 })();
