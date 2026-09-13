@@ -40,6 +40,7 @@
       if (query === "workspaceDiff") { if (!this.repositoryService?.workspaceDiff) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceDiff(payload)); }
       if (query === "workspaceArtifact") { if (!this.repositoryService?.workspaceArtifact) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceArtifact(payload)); }
       if (query === "workspaceScope") { if (!this.repositoryService?.workspaceScope) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceScope(payload)); }
+      if (query === "workspaceRecovery") { if (!this.repositoryService?.workspaceRecoveryReport) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceRecoveryReport(payload)); }
       return this.envelope({ ok: false, reason: "unknown_api_query", query });
     }
 
@@ -95,6 +96,7 @@
       else if (command === "mergeTaskArtifact") result = await this.repositoryService?.mergeTaskArtifact?.(payload);
       else if (command === "pushWorkspace") result = await this.repositoryService?.pushWorkspace?.(payload);
       else if (command === "cleanupWorkspace") result = await this.repositoryService?.cleanupWorkspace?.(payload);
+      else if (command === "cleanupAbandonedWorkspaces") result = await this.repositoryService?.cleanupAbandonedWorkspaces?.(payload);
       else return this.envelope({ ok: false, reason: "unknown_api_command", command });
       if (result === undefined) return this.envelope({ ok: false, reason: "api_dependency_unavailable", command });
       return this.envelope(result && typeof result === "object" ? result : { ok: true, result });
