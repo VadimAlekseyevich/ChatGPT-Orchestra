@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 require("../content/message-types.js");
 require("../persistence/portable-state.js");
 require("../persistence/project-bundle.js");
+require("../context/context-packets.js");
 const { OrchestratorApi, API_VERSION } = require("../background/orchestrator-api.js");
 
 function apiWith({ recoveryStatus = "PAUSED", importResult = { ok: true, projectId: "P1" } } = {}) {
@@ -16,13 +17,14 @@ function apiWith({ recoveryStatus = "PAUSED", importResult = { ok: true, project
   return { api: new OrchestratorApi({ projectBundleService, recoveryController, persistenceInfo: { backend: "test" } }), calls };
 }
 
-test("Orchestrator API v3 preserves persistence metadata and bundle export", async () => {
+test("Orchestrator API v4 preserves persistence metadata and bundle export", async () => {
   const { api, calls } = apiWith();
-  assert.equal(API_VERSION, 3);
+  assert.equal(API_VERSION, 4);
   const info = await api.query("persistence");
   assert.equal(info.ok, true);
   assert.equal(info.persistence.backend, "test");
   assert.equal(info.persistence.portableSchemaVersion, 1);
+  assert.equal(info.persistence.contextPacketVersion, 1);
   const exported = await api.execute("exportProjectBundle", { projectId: "P1" });
   assert.equal(exported.ok, true);
   assert.deepEqual(calls[0], ["export", { projectId: "P1" }]);

@@ -7,7 +7,7 @@ const { OrchestratorApi, API_VERSION } = require("../background/orchestrator-api
 function makeApi() {
   const calls = [];
   const orchestrator = {
-    getPublicState() { return { runtimeStatus: "pool_active", lead: { agentId: "L1" }, workers: [] }; },
+    getPublicState() { return { runtimeStatus: "pool_active", lead: { agentId: "L1", status: "IDLE" }, workers: [] }; },
     async startExecution(payload) { calls.push(["startExecution", payload]); return { ok: true, started: true }; },
     async registerActiveLead() { calls.push(["registerActiveLead"]); return { ok: true }; },
     async createWorkers(count) { calls.push(["createWorkers", count]); return { ok: true, created: [] }; },
@@ -18,7 +18,8 @@ function makeApi() {
   };
   const planningEngine = {
     getPublicState() { return { projectId: "P1", status: "READY" }; },
-    async startProject(payload) { calls.push(["startProject", payload]); return { ok: true, project: { projectId: "P1" } }; }
+    async startProject(payload) { calls.push(["startProject", payload]); return { ok: true, project: { projectId: "P1" } }; },
+    async resumeCurrentStage(payload) { calls.push(["resumeLead", payload]); return { ok: true, resumed: true }; }
   };
   const schedulerEngine = {
     getPublicState() { return { status: "RUNNING", taskCount: 2 }; },
@@ -60,15 +61,17 @@ function makeApi() {
     async startIntegration() { calls.push(["startIntegration"]); return { ok: true }; },
     async openExecutor(agentId) { calls.push(["openExecutor", agentId]); return { ok: true }; }
   };
+  const contextStore = { summary: () => ({ projectId: "P1", decisionCount: 7, packetCount: 3 }) };
+  const contextPackets = { packetForRole: (payload) => ({ ok: true, packet: { packetVersion: 1, packetType: payload.role, logicalRole: { logicalRoleId: `${payload.role}:P1` } } }) };
   return {
     calls,
-    api: new OrchestratorApi({ orchestrator, planningEngine, schedulerEngine, reviewEngine, integrationEngine, recoveryController, eventBus, observabilityService, taskControlService })
+    api: new OrchestratorApi({ orchestrator, planningEngine, schedulerEngine, reviewEngine, integrationEngine, recoveryController, eventBus, observabilityService, taskControlService, contextStore, contextPackets })
   };
 }
 
-test("Orchestrator API v3 exposes stable aggregated state DTO", async () => {
+test("Orchestrator API v4 exposes stable aggregated state DTO", async () => {
   const { api } = makeApi();
-  assert.equal(API_VERSION, 3);
+  assert.equal(API_VERSION, 4);
   const result = await api.query("state");
   assert.equal(result.apiVersion, API_VERSION);
   assert.equal(result.ok, true);
@@ -77,9 +80,10 @@ test("Orchestrator API v3 exposes stable aggregated state DTO", async () => {
   assert.equal(result.state.review.pending, 1);
   assert.equal(result.state.integration.status, "IDLE");
   assert.equal(result.state.recovery.bootReady, true);
+  assert.equal(result.state.context.decisionCount, 7);
 });
 
-test("observability queries are available through one API surface", async () => {
+test("observability and context queries are available through one API surface", async () => {
   const { api } = makeApi();
   assert.equal((await api.query("dashboard")).dashboard.project.projectId, "P1");
   assert.equal((await api.query("taskGraph")).tasks.length, 1);
@@ -89,6 +93,10 @@ test("observability queries are available through one API surface", async () => 
   assert.equal((await api.query("metrics")).metrics.tasks.total, 1);
   assert.equal((await api.query("reviewDetails", { reviewId: "V1" })).review.reviewId, "V1");
   assert.equal((await api.query("integrationEvidence")).integration.summary.status, "IDLE");
+  assert.equal((await api.query("contextSummary")).context.packetCount, 3);
+  const packet = await api.query("contextPacket", { role: "worker", taskId: "T1" });
+  assert.equal(packet.ok, true);
+  assert.equal(packet.packet.packetVersion, 1);
   assert.equal((await api.query("taskDetails", { taskId: "missing" })).reason, "unknown_task");
 });
 
@@ -118,7 +126,24 @@ test("existing commands remain platform-neutral", async () => {
   assert.deepEqual(calls[2], ["pause"]);
 });
 
-test("generic extension transport maps query and execute onto API v3", async () => {
+test("fresh Lead registration resumes an unfinished persisted planning role", async () => {
+  const calls = [];
+  const orchestrator = {
+    getPublicState: () => ({ lead: null, workers: [] }),
+    async registerActiveLead() { calls.push(["register"]); return { ok: true, agent: { agentId: "L-new" } }; }
+  };
+  const planningEngine = {
+    getPublicState: () => ({ projectId: "P1", status: "PLANNING", stage: "CRITIQUE", currentRunId: "R1" }),
+    async resumeCurrentStage(payload) { calls.push(["resume", payload]); return { ok: true, resumed: true, runId: "R1" }; }
+  };
+  const api = new OrchestratorApi({ orchestrator, planningEngine });
+  const result = await api.execute("registerActiveLead");
+  assert.equal(result.ok, true);
+  assert.equal(result.planningResume.resumed, true);
+  assert.deepEqual(calls, [["register"], ["resume", { reason: "fresh_lead_registered" }]]);
+});
+
+test("generic extension transport maps query and execute onto API v4", async () => {
   const { api, calls } = makeApi();
   const dashboard = await api.handleLegacyMessage({ type: MESSAGE_TYPES.ORCHESTRATOR_API_QUERY, payload: { name: "dashboard", payload: {} } }, { kind: "extension-ui", sessionId: null });
   assert.equal(dashboard.ok, true);

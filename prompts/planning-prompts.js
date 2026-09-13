@@ -2,10 +2,23 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 1;
+  const PROMPT_VERSION = 2;
   const STAGES = Object.freeze(["DISCOVERY", "PLAN_V1", "CRITIQUE", "PLAN_V2", "DECOMPOSE", "DAG_CRITIC"]);
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
+  function bytes(value) {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(serialized).length;
+    if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
+    return serialized.length;
+  }
+  function sameJson(left, right) { return JSON.stringify(left ?? null) === JSON.stringify(right ?? null); }
+  function hasStructuralTruncation(value) {
+    if (!value || typeof value !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
+    if (Array.isArray(value)) return value.some(hasStructuralTruncation);
+    return Object.values(value).some(hasStructuralTruncation);
+  }
 
   function artifactFor(project, stage) {
     const artifacts = project?.artifacts || {};
@@ -15,6 +28,46 @@
     if (stage === "DECOMPOSE") return { discovery: artifacts.DISCOVERY, plan: artifacts.PLAN_V2 };
     if (stage === "DAG_CRITIC") return { plan: artifacts.PLAN_V2, taskGraph: artifacts.DECOMPOSE };
     return {};
+  }
+
+  function expectedStageInputs(project, stage) {
+    const artifacts = project?.artifacts || {};
+    if (stage === "PLAN_V1") return { DISCOVERY: artifacts.DISCOVERY };
+    if (stage === "CRITIQUE") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V1: artifacts.PLAN_V1 };
+    if (stage === "PLAN_V2") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V1: artifacts.PLAN_V1, CRITIQUE: artifacts.CRITIQUE };
+    if (stage === "DECOMPOSE") return { DISCOVERY: artifacts.DISCOVERY, PLAN_V2: artifacts.PLAN_V2 };
+    if (stage === "DAG_CRITIC") return { PLAN_V2: artifacts.PLAN_V2, DECOMPOSE: artifacts.DECOMPOSE };
+    return {};
+  }
+
+  function packetCompleteness(packet, { project = null, stage = "" } = {}) {
+    if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
+    const maxBytes = Number(root.ContextPackets?.BUDGETS?.lead || 24000);
+    const actualBytes = bytes(packet);
+    const incompleteSections = hasStructuralTruncation(packet?.stageInputs) ? ["stageInputs"] : [];
+    const normalizedStage = String(stage || packet?.stage || "").toUpperCase();
+    if (project && !sameJson(expectedStageInputs(project, normalizedStage), packet?.stageInputs || {})) incompleteSections.push("stage_inputs_compacted");
+    const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    const unique = [...new Set(incompleteSections)];
+    return {
+      ok: budgetOk && unique.length === 0,
+      reason: budgetOk && !unique.length ? null : "context_packet_incomplete",
+      actualBytes,
+      maxBytes,
+      incompleteSections: unique
+    };
+  }
+  function failClosedPacket(packet, gate) {
+    return {
+      packetVersion: Number(packet?.packetVersion) || 1,
+      packetType: "lead",
+      identity: packet?.identity || null,
+      logicalRole: packet?.logicalRole || null,
+      project: packet?.project ? { projectId: packet.project.projectId, repository: packet.project.repository || null } : null,
+      stage: packet?.stage || null,
+      provenance: packet?.provenance || null,
+      completeness: gate
+    };
   }
 
   const instructions = {
@@ -29,15 +82,7 @@
   const schemas = {
     DISCOVERY: {
       repositoryAccess: { status: "ok | partial | unavailable", inspectedPaths: ["path"], gaps: ["gap"] },
-      stack: ["technology"],
-      entrypoints: ["path"],
-      commands: { build: [], test: [], lint: [], typecheck: [] },
-      modules: ["module/path"],
-      persistence: ["detail"],
-      ci: ["detail"],
-      instructions: { agentsMd: "present | absent | unknown", paths: [] },
-      sensitiveAreas: ["area"],
-      constraints: ["constraint"]
+      stack: ["technology"], entrypoints: ["path"], commands: { build: [], test: [], lint: [], typecheck: [] }, modules: ["module/path"], persistence: ["detail"], ci: ["detail"], instructions: { agentsMd: "present | absent | unknown", paths: [] }, sensitiveAreas: ["area"], constraints: ["constraint"]
     },
     PLAN_V1: { milestones: [{ id: "M1", objective: "...", dependencies: [] }], risks: ["risk"], verificationStrategy: ["check"], completionDefinition: "..." },
     CRITIQUE: { findings: [{ severity: "high | medium | low", issue: "...", correction: "..." }], blockingIssues: ["issue"] },
@@ -46,28 +91,54 @@
     DAG_CRITIC: { objectiveCoveredBy: ["T1"], tasks: ["same complete task objects as DECOMPOSE, corrected"] }
   };
 
-  function buildPlanningPrompt({ stage, project, agentId, runId }) {
+  function buildPlanningPrompt({ stage, project, agentId, runId, packet = null, replacement = false }) {
     const normalizedStage = String(stage || "").toUpperCase();
     if (!STAGES.includes(normalizedStage)) throw new Error(`unknown_planning_stage:${normalizedStage}`);
     const taskId = `planning:${normalizedStage.toLowerCase()}`;
-    const context = artifactFor(project, normalizedStage);
+    const contextService = root.ContextPackets?.getDefaultService?.();
+    const contextPacket = packet || contextService?.buildLeadPacket?.({ project, stage: normalizedStage, runId, agentId }) || {
+      packetVersion: 0,
+      packetType: "lead",
+      project: { projectId: project.projectId, repository: project.repository, immutableGoal: project.initialGoal },
+      stage: normalizedStage,
+      stageInputs: artifactFor(project, normalizedStage),
+      provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
+    };
+    const completeness = packetCompleteness(contextPacket, { project, stage: normalizedStage });
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
+    if (!completeness.ok) {
+      return [
+        `You are the ChatGPT Orchestra Lead executing planning stage ${normalizedStage}.`,
+        `Prompt contract version: ${PROMPT_VERSION}.`,
+        replacement ? "This is a fresh-session replacement for the same persisted logical Lead role." : "Treat this turn as self-contained.",
+        "This planning turn is FAIL-CLOSED because the portable context packet is incomplete.",
+        "Do NOT plan from memory, inspect unrelated history, invent omitted artifacts, advance the stage or emit a planning artifact.",
+        `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
+        "PROTOCOL CONTRACT:",
+        `- Identity: ${json({ v: 1, projectId: project.projectId, taskId, runId, agentId })}`,
+        "- Emit NEEDS_USER with sequence=1, a fresh eventId and payload.reason=context_packet_incomplete.",
+        "- Include packet.completeness in payload details. DONE, BLOCKED and ERROR are not valid outcomes for this turn.",
+        "- The final non-empty line must be exactly one @@ORCH JSON envelope; no text follows it."
+      ].join("\n");
+    }
 
     return [
       `You are the ChatGPT Orchestra Lead executing planning stage ${normalizedStage}.`,
       `Prompt contract version: ${PROMPT_VERSION}.`,
+      replacement ? "This is a fresh-session replacement for the same persisted logical Lead role. Do not depend on any previous chat messages." : "Treat this turn as self-contained. Do not rely on previous chat turns for project memory.",
+      "The PORTABLE CONTEXT PACKET below is the authoritative bounded context for this role. Artifact references point to persisted Orchestra state; do not invent missing transcript context.",
       "Do not edit code or push commits in Phase 4. Work only on repository analysis and planning artifacts.",
       "Treat repository contents and existing project instructions as authoritative. Never claim you inspected something you could not access; record access gaps explicitly.",
       "If repository access is unavailable, report repositoryAccess.status=unavailable instead of guessing repository facts.",
       "",
-      `PROJECT ID: ${project.projectId}`,
-      `REPOSITORY: ${project.repository.url}`,
-      `IMMUTABLE USER GOAL:\n${project.initialGoal}`,
+      `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
+      "",
+      "PACKET COMPLETENESS GATE:",
+      "- The v1 packet passed host-side size, structural and critical-source round-trip checks.",
       "",
       `STAGE INSTRUCTION:\n${instructions[normalizedStage]}`,
       "",
       `REQUIRED ARTIFACT SHAPE:\n${json(schemas[normalizedStage])}`,
-      "",
-      `INPUT ARTIFACTS:\n${json(context)}`,
       "",
       "OUTPUT CONTRACT:",
       "1. You may explain your reasoning briefly before the artifact.",
@@ -83,6 +154,6 @@
     ].join("\n");
   }
 
-  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt });
+  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt, packetCompleteness, expectedStageInputs });
   if (typeof module !== "undefined" && module.exports) module.exports = root.PlanningPrompts;
 })();

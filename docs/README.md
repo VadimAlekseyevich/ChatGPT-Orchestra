@@ -25,6 +25,8 @@
 - [`phase-11-smoke-test.md`](phase-11-smoke-test.md) — extension export/import, corruption checks и extension → SQLite migration gate;
 - [`phase-12-dashboard-observability.md`](phase-12-dashboard-observability.md) — portable Dashboard, versioned Observability read model, Orchestrator API v3 и safe task controls;
 - [`phase-12-smoke-test.md`](phase-12-smoke-test.md) — extension + standalone Fake transport acceptance checks для Dashboard/observability;
+- [`phase-13-context-agent-packets.md`](phase-13-context-agent-packets.md) — ContextStore, bounded role packets, context budgets, decision register и fresh-session role bootstrap;
+- [`phase-13-smoke-test.md`](phase-13-smoke-test.md) — fresh Lead/Worker/Reviewer/Integrator replacement и portable context acceptance checks;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`

@@ -5,7 +5,7 @@
 Multi-agent orchestration for ChatGPT coding workflows, migrating gradually from an Edge extension to a desktop application.
 
 [![Platform](https://img.shields.io/badge/platform-Microsoft%20Edge-0A7EA4?style=for-the-badge)](#requirements-and-permissions)
-[![Version](https://img.shields.io/badge/version-2.0.0--alpha.13-orange?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0--alpha.14-orange?style=for-the-badge)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/VadimAlekseyevich/ChatGPT-Orchestra?style=for-the-badge&label=license)](LICENSE)
 
 [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Documentation](docs/README.md)
@@ -18,9 +18,9 @@ Multi-agent orchestration for ChatGPT coding workflows, migrating gradually from
 
 ChatGPT Orchestra coordinates multiple ChatGPT sessions as Lead, Workers, Reviewers and Integrator around a persisted project state.
 
-Core rule: **chats are executors, not the source of truth**. Planning, DAG state, task/run identities, Git provenance, review, integration, recovery and observability belong to the Orchestrator Core.
+Core rule: **chats are executors, not the source of truth**. Planning, DAG state, task/run identities, Git provenance, review, integration, recovery, observability and portable role context belong to the Orchestrator Core.
 
-Current prerelease: **`2.0.0-alpha.13`**.
+Current prerelease: **`2.0.0-alpha.14`**.
 
 Completed foundation:
 
@@ -34,6 +34,7 @@ Phase 9     Pause / Stop Now / Resume / crash recovery
 Phase 10    platform boundary + Orchestrator API
 Phase 11    portable persistence + Project Bundle + SQLiteStateStore
 Phase 12    portable Dashboard + Observability API
+Phase 13    bounded portable agent context packets + fresh-session replacement
 ```
 
 ---
@@ -63,7 +64,7 @@ text / semantic conflict remediation
 INTEGRATION_VERIFIED
 ```
 
-`INTEGRATION_VERIFIED` means the integration branch was independently verified. Alpha.13 still does **not** automatically write the target branch.
+`INTEGRATION_VERIFIED` means the integration branch was independently verified. Alpha.14 still does **not** automatically write the target branch.
 
 ---
 
@@ -82,9 +83,10 @@ Extension host
   Planning / Scheduler
   Review / Integration
   Recovery / EventBus
+  ContextPacketService
           │
           ▼
-   Orchestrator API v3
+   Orchestrator API v4
           │
    ┌──────┴────────┐
    │               │
@@ -98,9 +100,10 @@ Primary contracts:
 - `AgentRuntime` — logical executor/session lifecycle;
 - `StateStore` — portable persistence backend;
 - `TimerRuntime` — recurring scheduling/watchdogs;
-- `OrchestratorApi` — platform-neutral command/query surface.
+- `OrchestratorApi` — platform-neutral command/query surface;
+- `ContextPacketService` — bounded persisted role bootstrap independent from one chat transcript.
 
-See [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md).
+See [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md) and [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md).
 
 ---
 
@@ -109,6 +112,8 @@ See [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md).
 Phase 11 introduced a canonical project-scoped snapshot and Project Bundle migration bridge.
 
 Portable state keeps logical identities (`projectId`, `taskId`, `runId`, `agentId`, Git refs/SHAs) but strips browser runtime bindings such as `tabId`, `legacyTabId`, `sessionId` and runtime sender handles.
+
+Phase 13 adds the portable Context namespace to that snapshot: compact Lead summary, decisions register and packet audit metadata survive extension → future desktop import without restoring browser sessions or copying chat transcripts.
 
 Import is allowed only from safe recovery states and always returns to `RECOVERY_REQUIRED` before host-specific reconciliation.
 
@@ -120,7 +125,7 @@ See [`docs/phase-11-portable-persistence.md`](docs/phase-11-portable-persistence
 
 ## Portable Dashboard / Observability API
 
-Phase 12 adds a shared Dashboard frontend that talks only to Orchestrator API v3.
+Phase 12 adds a shared Dashboard frontend that talks only to Orchestrator API. Alpha.14 exposes API v4 while preserving the Phase 12 dashboard contracts.
 
 The Dashboard can display:
 
@@ -146,6 +151,29 @@ See [`docs/phase-12-dashboard-observability.md`](docs/phase-12-dashboard-observa
 
 ---
 
+## Portable agent context
+
+Phase 13 makes logical roles replaceable without treating an old ChatGPT conversation as project memory.
+
+`ContextPacketService` builds versioned role packets for:
+
+- Lead planning stages;
+- Worker task/rework runs;
+- independent Reviewer turns;
+- Integrator composition and repair turns.
+
+Packets are assembled from canonical persisted stores, compact completed-task summaries, repository discovery/architecture rules, decisions and Git/artifact references. Runtime bindings and transcript-like fields are recursively excluded.
+
+Each role has a bounded context budget and prompt-contract provenance. Host-side prompt guards fail closed when a v1 packet exceeds its real serialized budget or structurally truncates work-critical task/evidence/merge data: the role must emit `NEEDS_USER` with `context_packet_incomplete` instead of guessing omitted state.
+
+A replacement Lead can continue the same persisted planning stage and `runId`; Worker/Reviewer/Integrator replacement continues through the existing scheduler/review/integration recovery state machines using a newly assembled packet rather than a copied transcript.
+
+Orchestrator API v4 exposes sanitized `contextSummary` and `contextPacket` queries for diagnostics/future desktop use.
+
+See [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md), [`docs/phase-13-smoke-test.md`](docs/phase-13-smoke-test.md) and [`docs/adr/0013-portable-agent-context-packets.md`](docs/adr/0013-portable-agent-context-packets.md).
+
+---
+
 ## Safety invariants
 
 - dispatch stays closed until recovery reconciliation completes;
@@ -155,12 +183,14 @@ See [`docs/phase-12-dashboard-observability.md`](docs/phase-12-dashboard-observa
 - dependencies unlock only after `APPROVED`;
 - Integrator uses deterministic verified composition;
 - target movement fails closed;
+- agent roles do not require previous ChatGPT transcript history to resume;
+- incomplete/oversized work-critical context packets fail closed to `NEEDS_USER`;
 - import never restores live browser handles;
 - stale post-import writes are blocked until reload;
 - privileged Orchestrator API commands are rejected from agent/browser sessions;
 - Dashboard task controls fail closed for active/unsafe states;
 - cancelling every task terminates the project as `CANCELLED`, not integration-ready;
-- target branch writes remain outside alpha.13.
+- target branch writes remain outside alpha.14.
 
 ---
 
@@ -170,12 +200,12 @@ See [`docs/phase-12-dashboard-observability.md`](docs/phase-12-dashboard-observa
 git clone https://github.com/VadimAlekseyevich/ChatGPT-Orchestra.git
 cd ChatGPT-Orchestra
 npm test
-npm run test:phase12
+npm run test:phase13
 ```
 
-Then load the repository as an unpacked Edge extension, open ChatGPT, explicitly register a Lead, create/plan a project, create Workers and start execution. The popup now includes the portable Dashboard alongside the existing bootstrap/legacy controls.
+Then load the repository as an unpacked Edge extension, open ChatGPT, explicitly register a Lead, create/plan a project, create Workers and start execution. The popup includes the portable Dashboard alongside bootstrap/legacy controls.
 
-For acceptance steps see [`docs/phase-12-smoke-test.md`](docs/phase-12-smoke-test.md).
+For Phase 13 acceptance steps see [`docs/phase-13-smoke-test.md`](docs/phase-13-smoke-test.md).
 
 ---
 
@@ -194,7 +224,7 @@ Manifest permissions remain:
 - ChatGPT hosts — content adapter;
 - `https://api.github.com/*` — read-only Git provenance/recovery validation.
 
-Phase 12 adds no new extension permission.
+Phase 13 adds no new extension permission.
 
 ---
 
@@ -205,8 +235,8 @@ The migration remains incremental rather than a desktop rewrite:
 - Phase 10 — Platform Boundary + Orchestrator API — `alpha.11`;
 - Phase 11 — Portable Persistence + Project Export/Import — `alpha.12`;
 - Phase 12 — Portable Dashboard + Observability API — `alpha.13`;
-- **Phase 13 — Context Management + Portable Agent Packets — next;**
-- Phase 14 — Contract Tests + CI Foundation;
+- Phase 13 — Context Management + Portable Agent Packets — `alpha.14`;
+- **Phase 14 — Contract Tests + CI Foundation — next;**
 - Phase 15 — Desktop Shell Bootstrap;
 - Phase 16 — Desktop Control Plane + Extension Companion Bridge;
 - Phase 17 — Local Repository Runtime + Git Worktrees;
@@ -225,5 +255,6 @@ Full plan: [`ROADMAP.md`](ROADMAP.md).
 - [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md)
 - [`docs/phase-11-portable-persistence.md`](docs/phase-11-portable-persistence.md)
 - [`docs/phase-12-dashboard-observability.md`](docs/phase-12-dashboard-observability.md)
-- [`docs/phase-12-smoke-test.md`](docs/phase-12-smoke-test.md)
-- [`docs/adr/0012-portable-dashboard-observability.md`](docs/adr/0012-portable-dashboard-observability.md)
+- [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md)
+- [`docs/phase-13-smoke-test.md`](docs/phase-13-smoke-test.md)
+- [`docs/adr/0013-portable-agent-context-packets.md`](docs/adr/0013-portable-agent-context-packets.md)

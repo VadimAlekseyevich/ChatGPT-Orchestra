@@ -58,6 +58,41 @@
       return this.dispatchStage(created.project.projectId, "DISCOVERY");
     }
 
+    async resumeCurrentStage({ reason = "fresh_lead_replacement" } = {}) {
+      const project = this.projectStore.getActiveProject();
+      const lead = this.getLead();
+      if (!project || project.status !== "PLANNING" || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
+      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      const stage = String(project.stage || "").toUpperCase();
+      if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
+      const taskId = `planning:${stage.toLowerCase()}`;
+      const runId = project.currentRunId;
+      await this.registry.setProtocolContext(lead.agentId, { projectId: project.projectId, taskId, runId });
+      const prompt = root.PlanningPrompts.buildPlanningPrompt({
+        stage,
+        project,
+        agentId: lead.agentId,
+        runId,
+        replacement: true
+      });
+      const sent = await this.sendPrompt(lead.agentId, prompt);
+      if (!sent?.ok) {
+        await this.registry.clearProtocolContext?.(lead.agentId);
+        return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState() };
+      }
+      return {
+        ok: true,
+        resumed: true,
+        reason,
+        logicalRoleId: `lead:${project.projectId}:${stage}`,
+        projectId: project.projectId,
+        stage,
+        runId,
+        agentId: lead.agentId,
+        project: this.getPublicState()
+      };
+    }
+
     async dispatchStage(projectId, stage) {
       const project = this.projectStore.getProject(projectId);
       const lead = this.getLead();

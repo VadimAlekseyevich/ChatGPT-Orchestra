@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const API_VERSION = 3;
+  const API_VERSION = 4;
   const IMPORT_SAFE_RECOVERY_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
 
   class OrchestratorApi {
@@ -17,7 +17,9 @@
       projectBundleService = null,
       persistenceInfo = null,
       observabilityService = null,
-      taskControlService = null
+      taskControlService = null,
+      contextStore = null,
+      contextPackets = null
     } = {}) {
       this.orchestrator = orchestrator;
       this.planningEngine = planningEngine;
@@ -30,6 +32,8 @@
       this.persistenceInfo = persistenceInfo;
       this.observabilityService = observabilityService;
       this.taskControlService = taskControlService;
+      this.contextStore = contextStore;
+      this.contextPackets = contextPackets;
     }
 
     envelope(data = {}) { return { apiVersion: API_VERSION, ...data }; }
@@ -50,7 +54,8 @@
             scheduler: this.schedulerEngine?.getPublicState?.() || state.scheduler || null,
             review: this.reviewEngine?.getPublicState?.() || null,
             integration: this.integrationEngine?.getPublicState?.() || null,
-            recovery: this.recoveryController?.getPublicState?.() || null
+            recovery: this.recoveryController?.getPublicState?.() || null,
+            context: this.contextStore?.summary?.() || null
           }
         });
       }
@@ -80,6 +85,12 @@
         const dashboard = this.dashboard({ eventLimit: 1, decisionLimit: 1 });
         return this.envelope({ ok: true, integration: dashboard?.integration || null });
       }
+      if (query === "contextSummary") return this.envelope({ ok: true, context: this.contextStore?.summary?.() || null });
+      if (query === "contextPacket") {
+        if (!this.contextPackets?.packetForRole) return this.envelope({ ok: false, reason: "context_packets_unavailable" });
+        const result = this.contextPackets.packetForRole(payload);
+        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "context_packet_query_failed" });
+      }
       if (query === "events") return this.envelope({ ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) });
       if (query === "project") return this.envelope({ ok: true, project: this.planningEngine?.getPublicState?.() || null });
       if (query === "scheduler") return this.envelope({ ok: true, scheduler: this.schedulerEngine?.getPublicState?.() || null });
@@ -87,7 +98,7 @@
       if (query === "recovery") return this.envelope({ ok: true, recovery: this.recoveryController?.getPublicState?.() || null });
       if (query === "persistence") {
         const info = typeof this.persistenceInfo === "function" ? this.persistenceInfo() : (this.persistenceInfo || {});
-        return this.envelope({ ok: true, persistence: { portableSchemaVersion: root.PortableState?.PORTABLE_SCHEMA_VERSION || 1, bundleVersion: root.ProjectBundle?.BUNDLE_VERSION || 1, ...info } });
+        return this.envelope({ ok: true, persistence: { portableSchemaVersion: root.PortableState?.PORTABLE_SCHEMA_VERSION || 1, bundleVersion: root.ProjectBundle?.BUNDLE_VERSION || 1, contextPacketVersion: root.ContextPackets?.PACKET_VERSION || 1, ...info } });
       }
       return this.envelope({ ok: false, reason: "unknown_api_query", query });
     }
@@ -97,7 +108,33 @@
       let result;
       if (command === "startProject") result = await this.planningEngine?.startProject?.({ goal: payload.goal, repositoryUrl: payload.repositoryUrl });
       else if (command === "startExecution") result = await this.orchestrator?.startExecution?.(payload);
-      else if (command === "registerActiveLead") result = await this.orchestrator?.registerActiveLead?.();
+      else if (command === "registerActiveLead") {
+        const beforeLead = this.orchestrator?.getPublicState?.()?.lead || null;
+        const projectBefore = this.planningEngine?.getPublicState?.() || null;
+        const expectedContext = projectBefore?.status === "PLANNING" && projectBefore.currentRunId
+          ? {
+              projectId: projectBefore.projectId,
+              taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`,
+              runId: projectBefore.currentRunId
+            }
+          : null;
+        const bound = beforeLead?.protocolContext || null;
+        const missingExpectedContext = Boolean(expectedContext && (
+          !bound
+          || bound.projectId !== expectedContext.projectId
+          || bound.taskId !== expectedContext.taskId
+          || bound.runId !== expectedContext.runId
+        ));
+        const replacementCandidate = !beforeLead
+          || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || ""))
+          || missingExpectedContext;
+        result = await this.orchestrator?.registerActiveLead?.();
+        const project = this.planningEngine?.getPublicState?.();
+        if (result?.ok && replacementCandidate && project?.status === "PLANNING") {
+          const planningResume = await this.planningEngine?.resumeCurrentStage?.({ reason: "fresh_lead_registered" });
+          result = { ...result, planningResume: planningResume || null };
+        }
+      }
       else if (command === "createWorkers") result = await this.orchestrator?.createWorkers?.(payload.count);
       else if (command === "bindProtocolContext") result = await this.orchestrator?.bindProtocolContext?.(payload.agentId, payload.context);
       else if (command === "clearProtocolContext") result = await this.orchestrator?.clearProtocolContext?.(payload.agentId);
