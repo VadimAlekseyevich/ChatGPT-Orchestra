@@ -5,6 +5,45 @@
   const PROMPT_VERSION = 2;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
+  function bytes(value) {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(serialized).length;
+    if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
+    return serialized.length;
+  }
+  function hasStructuralTruncation(value) {
+    if (!value || typeof value !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
+    if (Array.isArray(value)) return value.some(hasStructuralTruncation);
+    return Object.values(value).some(hasStructuralTruncation);
+  }
+  function packetCompleteness(packet, repair = false) {
+    if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
+    const type = repair ? "repair" : "integration";
+    const maxBytes = Number(root.ContextPackets?.BUDGETS?.[type] || (repair ? 32000 : 36000));
+    const actualBytes = bytes(packet);
+    const required = repair ? ["integration", "approvedTasks", "artifactRefs", "repair"] : ["integration", "approvedTasks", "artifactRefs"];
+    const incompleteSections = required.filter((key) => hasStructuralTruncation(packet?.[key]));
+    const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    return {
+      ok: budgetOk && incompleteSections.length === 0,
+      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      actualBytes,
+      maxBytes,
+      incompleteSections
+    };
+  }
+  function failClosedPacket(packet, gate, repair = false) {
+    return {
+      packetVersion: Number(packet?.packetVersion) || 1,
+      packetType: repair ? "repair" : "integration",
+      identity: packet?.identity || null,
+      logicalRole: packet?.logicalRole || null,
+      project: packet?.project ? { projectId: packet.project.projectId, repository: packet.project.repository || null } : null,
+      provenance: packet?.provenance || null,
+      completeness: gate
+    };
+  }
 
   function eventBase(run, agentId) {
     return { v: 1, projectId: run.projectId, taskId: "integration", runId: run.runId, agentId };
@@ -20,6 +59,23 @@
       integration: run,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
+    const completeness = packetCompleteness(contextPacket, false);
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness, false);
+    if (!completeness.ok) {
+      return [
+        "You are the ChatGPT Orchestra Integrator for one reviewed project.",
+        `Integrator prompt contract version: ${PROMPT_VERSION}.`,
+        "This turn is self-contained and FAIL-CLOSED because the portable integration packet is incomplete.",
+        "Do NOT fetch, merge, modify, verify, commit or push repository state and do not infer omitted task/artifact context.",
+        `PORTABLE INTEGRATION PACKET:\n${json(packetForPrompt)}`,
+        "PROTOCOL CONTRACT:",
+        `- Identity: ${json(base)}`,
+        "- Emit NEEDS_USER with sequence=1, a unique eventId beginning with the runId, and payload.reason=context_packet_incomplete.",
+        "- Include packet.completeness in the payload details.",
+        "- DONE, CONFLICT, BLOCKED and ERROR are not valid outcomes for this turn.",
+        "- Final non-empty line must be exactly one @@ORCH JSON envelope; nothing follows it."
+      ].join("\n");
+    }
     return [
       "You are the ChatGPT Orchestra Integrator for one reviewed project.",
       `Integrator prompt contract version: ${PROMPT_VERSION}.`,
@@ -28,10 +84,10 @@
       "Your job is composition only: integrate approved task branches, detect conflicts, run integration verification, and report structured evidence.",
       "Do not modify or push the target branch. Do not squash, rebase or cherry-pick task commits. Use merge commits so approved task commits remain ancestors of the integration head.",
       "",
-      `PORTABLE INTEGRATION PACKET:\n${json(contextPacket)}`,
+      `PORTABLE INTEGRATION PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- If budget.withinBudget=false, or any `_truncatedItems` marker appears inside integration/task-order/artifact data required for composition, do not merge a partial manifest. Emit NEEDS_USER with reason=context_packet_incomplete.",
+      "- The v1 packet passed the host-side size/structural completeness check.",
       "",
       "GIT CONTRACT:",
       `1. Fetch ${run.targetBranch} and verify it is still exactly ${run.baseSha}. If it moved, stop with NEEDS_USER.`,
@@ -76,16 +132,33 @@
       repair: repairTask,
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
+    const completeness = packetCompleteness(contextPacket, true);
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness, true);
+    if (!completeness.ok) {
+      return [
+        "You are the ChatGPT Orchestra Integrator for a bounded repair turn.",
+        `Integrator prompt contract version: ${PROMPT_VERSION}.`,
+        "This repair turn is FAIL-CLOSED because its portable context packet is incomplete.",
+        "Do NOT rerun merges, resolve conflicts, modify files, verify, commit or push; do not infer omitted conflict or artifact context.",
+        `PORTABLE REPAIR PACKET:\n${json(packetForPrompt)}`,
+        "PROTOCOL CONTRACT:",
+        `- Identity: ${json(base)}`,
+        `- Use sequence=${repairTask.nextSequence}.`,
+        "- Emit NEEDS_USER with payload.reason=context_packet_incomplete and include packet.completeness in payload details.",
+        "- DONE, CONFLICT, BLOCKED and ERROR are not valid outcomes for this turn.",
+        "- Final non-empty line must be exactly one @@ORCH envelope and nothing follows it."
+      ].join("\n");
+    }
     return [
       "Continue as ChatGPT Orchestra Integrator for a bounded repair turn.",
       `Integrator prompt contract version: ${PROMPT_VERSION}.`,
       "This repair turn is self-contained. The previous Integrator transcript is not required and must not be treated as source of truth.",
       "Use the PORTABLE REPAIR PACKET below; it contains persisted conflict evidence, responsible task summaries and artifact references.",
       "",
-      `PORTABLE REPAIR PACKET:\n${json(contextPacket)}`,
+      `PORTABLE REPAIR PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- If budget.withinBudget=false, or any `_truncatedItems` marker appears inside integration/repair evidence required for this repair, emit NEEDS_USER with reason=context_packet_incomplete instead of guessing omitted state.",
+      "- The v1 packet passed the host-side size/structural completeness check.",
       "",
       "REPAIR RULES:",
       "- Work only on the integration branch. Never write the target branch.",
@@ -109,6 +182,6 @@
     ].join("\n");
   }
 
-  root.IntegrationPrompts = Object.freeze({ PROMPT_VERSION, buildIntegratorPrompt, buildRepairPrompt });
+  root.IntegrationPrompts = Object.freeze({ PROMPT_VERSION, buildIntegratorPrompt, buildRepairPrompt, packetCompleteness });
   if (typeof module !== "undefined" && module.exports) module.exports = root.IntegrationPrompts;
 })();
