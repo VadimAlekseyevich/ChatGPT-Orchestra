@@ -9,6 +9,8 @@ const { LocalValidatingGitProvider } = require("./local-validating-git-provider.
 const { LocalIntegrationCoordinator } = require("./local-integration-coordinator.js");
 const { createLocalIntegrationEngine } = require("./local-integration-engine.js");
 const { createLocalReviewEngine } = require("./local-review-engine.js");
+const { createLocalSchedulerEngine } = require("./local-scheduler-engine.js");
+const { createLocalOrchestrator } = require("./local-orchestrator.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -87,6 +89,8 @@ class DesktopHost {
     const LocalPlanningEngine = createLocalPlanningEngine(root.PlanningEngine);
     const LocalIntegrationEngine = createLocalIntegrationEngine(root.RecoverableIntegrationEngine);
     const LocalReviewEngine = createLocalReviewEngine(root.ReviewEngine);
+    const LocalSchedulerEngine = createLocalSchedulerEngine(root.SchedulerEngine);
+    const LocalOrchestrator = createLocalOrchestrator(root.ServiceWorkerOrchestrator);
     this.schedulerEngine = null;
     this.planningEngine = new LocalPlanningEngine({
       projectStore: this.projectStore,
@@ -115,7 +119,7 @@ class DesktopHost {
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
       localIntegrationCoordinator: this.localIntegrationCoordinator
     });
-    this.schedulerEngine = new root.SchedulerEngine({
+    this.schedulerEngine = new LocalSchedulerEngine({
       store: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
@@ -124,7 +128,7 @@ class DesktopHost {
       reviewEngine: this.reviewEngine,
       sendPrompt: (agentId, prompt) => this.sendWorkerPromptWithWorkspace(agentId, prompt)
     });
-    this.orchestrator = new root.ServiceWorkerOrchestrator({
+    this.orchestrator = new LocalOrchestrator({
       agentRuntime: this.agentRuntime,
       eventBus: this.eventBus,
       planningEngine: this.planningEngine,
