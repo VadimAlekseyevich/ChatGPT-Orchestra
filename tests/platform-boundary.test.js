@@ -14,7 +14,11 @@ const PORTABLE_BOUNDARY_FILES = [
   "background/integration-engine.js",
   "background/recovery-controller.js",
   "platform/contracts.js",
-  "platform/fake-runtime.js"
+  "platform/fake-runtime.js",
+  "platform/transactional-state-store.js",
+  "persistence/migration-registry.js",
+  "persistence/portable-state.js",
+  "persistence/project-bundle.js"
 ];
 
 test("portable orchestration boundary has no direct Chrome API dependency", () => {
@@ -25,11 +29,14 @@ test("portable orchestration boundary has no direct Chrome API dependency", () =
   }
 });
 
-test("browser APIs live in extension composition/adapters", () => {
+test("browser and Node persistence APIs live in platform adapters", () => {
   const extensionRuntime = fs.readFileSync(path.join(ROOT, "platform/extension-runtime.js"), "utf8");
+  const sqliteRuntime = fs.readFileSync(path.join(ROOT, "platform/sqlite-state-store.js"), "utf8");
   const serviceWorker = fs.readFileSync(path.join(ROOT, "background/service-worker.js"), "utf8");
   assert.match(extensionRuntime, /globalThis\.chrome|chromeApi/);
+  assert.match(sqliteRuntime, /node:sqlite/);
   assert.match(serviceWorker, /ChromeStorageStateStore/);
+  assert.match(serviceWorker, /TransactionalStateStore/);
   assert.match(serviceWorker, /ExtensionAgentRuntime/);
   assert.match(serviceWorker, /ChromeAlarmRuntime/);
   assert.match(serviceWorker, /OrchestratorApi/);
