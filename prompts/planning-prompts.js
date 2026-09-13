@@ -6,6 +6,44 @@
   const STAGES = Object.freeze(["DISCOVERY", "PLAN_V1", "CRITIQUE", "PLAN_V2", "DECOMPOSE", "DAG_CRITIC"]);
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
+  function bytes(value) {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(serialized).length;
+    if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
+    return serialized.length;
+  }
+  function hasStructuralTruncation(value) {
+    if (!value || typeof value !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
+    if (Array.isArray(value)) return value.some(hasStructuralTruncation);
+    return Object.values(value).some(hasStructuralTruncation);
+  }
+  function packetCompleteness(packet) {
+    if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
+    const maxBytes = Number(root.ContextPackets?.BUDGETS?.lead || 24000);
+    const actualBytes = bytes(packet);
+    const incompleteSections = hasStructuralTruncation(packet?.stageInputs) ? ["stageInputs"] : [];
+    const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    return {
+      ok: budgetOk && incompleteSections.length === 0,
+      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      actualBytes,
+      maxBytes,
+      incompleteSections
+    };
+  }
+  function failClosedPacket(packet, gate) {
+    return {
+      packetVersion: Number(packet?.packetVersion) || 1,
+      packetType: "lead",
+      identity: packet?.identity || null,
+      logicalRole: packet?.logicalRole || null,
+      project: packet?.project ? { projectId: packet.project.projectId, repository: packet.project.repository || null } : null,
+      stage: packet?.stage || null,
+      provenance: packet?.provenance || null,
+      completeness: gate
+    };
+  }
 
   function artifactFor(project, stage) {
     const artifacts = project?.artifacts || {};
@@ -51,6 +89,23 @@
       stageInputs: artifactFor(project, normalizedStage),
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
+    const completeness = packetCompleteness(contextPacket);
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
+    if (!completeness.ok) {
+      return [
+        `You are the ChatGPT Orchestra Lead executing planning stage ${normalizedStage}.`,
+        `Prompt contract version: ${PROMPT_VERSION}.`,
+        replacement ? "This is a fresh-session replacement for the same persisted logical Lead role." : "Treat this turn as self-contained.",
+        "This planning turn is FAIL-CLOSED because the portable context packet is incomplete.",
+        "Do NOT plan from memory, inspect unrelated history, invent omitted artifacts, advance the stage or emit a planning artifact.",
+        `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
+        "PROTOCOL CONTRACT:",
+        `- Identity: ${json({ v: 1, projectId: project.projectId, taskId, runId, agentId })}`,
+        "- Emit NEEDS_USER with sequence=1, a fresh eventId and payload.reason=context_packet_incomplete.",
+        "- Include packet.completeness in payload details. DONE, BLOCKED and ERROR are not valid outcomes for this turn.",
+        "- The final non-empty line must be exactly one @@ORCH JSON envelope; no text follows it."
+      ].join("\n");
+    }
 
     return [
       `You are the ChatGPT Orchestra Lead executing planning stage ${normalizedStage}.`,
@@ -61,10 +116,10 @@
       "Treat repository contents and existing project instructions as authoritative. Never claim you inspected something you could not access; record access gaps explicitly.",
       "If repository access is unavailable, report repositoryAccess.status=unavailable instead of guessing repository facts.",
       "",
-      `PORTABLE CONTEXT PACKET:\n${json(contextPacket)}`,
+      `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
       "",
       "PACKET COMPLETENESS GATE:",
-      "- If budget.withinBudget=false, or `_truncatedItems` appears inside required stageInputs, emit NEEDS_USER with reason=context_packet_incomplete instead of inventing omitted planning state.",
+      "- The v1 packet passed the host-side size/structural completeness check.",
       "",
       `STAGE INSTRUCTION:\n${instructions[normalizedStage]}`,
       "",
@@ -84,6 +139,6 @@
     ].join("\n");
   }
 
-  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt });
+  root.PlanningPrompts = Object.freeze({ PROMPT_VERSION, STAGES, buildPlanningPrompt, packetCompleteness });
   if (typeof module !== "undefined" && module.exports) module.exports = root.PlanningPrompts;
 })();
