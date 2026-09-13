@@ -32,7 +32,8 @@ function fixtures() {
     listAgents() { return [...agents.values()].map((agent) => ({ ...agent })); },
     getAgent(id) { const value = agents.get(id); return value ? { ...value } : null; },
     async setProtocolContext(id, context) { const value = agents.get(id); if (value) value.protocolContext = context; return value; },
-    async clearProtocolContext(id) { const value = agents.get(id); if (value) value.protocolContext = null; return value; }
+    async clearProtocolContext(id) { const value = agents.get(id); if (value) value.protocolContext = null; return value; },
+    async removeAgent(id) { return agents.delete(id); }
   };
   const planningEngine = {
     hasActiveGeneration() { return false; },
@@ -58,11 +59,23 @@ function fixtures() {
   return { activeRuns, agents, projectStore, schedulerStore, reviewStore, integrationStore, registry, planningEngine, schedulerEngine, reviewEngine, integrationEngine };
 }
 
-function controllerFrom(fx) {
+function controllerFrom(fx, { bootReady = true } = {}) {
   const store = new RecoveryStore({ storageArea: fakeStorage(), clock: (() => { let n = 100; return () => ++n; })() });
   const controller = new RecoveryController({ store, ...fx });
+  controller.bootReady = bootReady;
   return { store, controller };
 }
+
+test("boot gate blocks prompt dispatch until runtime reconciliation completes", async () => {
+  const fx = fixtures();
+  const { store, controller } = controllerFrom(fx, { bootReady: false });
+  assert.equal(controller.canDispatchNewPrompts(), false);
+  await controller.prepareForBoot();
+  assert.equal(controller.canDispatchNewPrompts(), false);
+  await controller.afterRuntimeInit();
+  assert.equal(store.summary().status, "RUNNING");
+  assert.equal(controller.canDispatchNewPrompts(), true);
+});
 
 test("Pause waits for active work and only then reaches PAUSED safe point", async () => {
   const fx = fixtures();
@@ -120,4 +133,27 @@ test("Resume reconciles before opening dispatch gate", async () => {
   assert.equal(controller.canDispatchNewPrompts(), true);
   assert.deepEqual(order.slice(0, 5), ["tabs", "workers", "scheduler", "reviews", "integration"]);
   assert.ok(order.indexOf("scheduler-kick") > order.indexOf("integration"));
+});
+
+test("Resume removes offline worker identities before creating replacement tabs", async () => {
+  const fx = fixtures();
+  fx.activeRuns.splice(0);
+  fx.agents.set("A-old", { agentId: "A-old", role: "worker", status: "OFFLINE", tabId: null, protocolContext: null });
+  const { store, controller } = controllerFrom(fx);
+  await store.load();
+  await store.attachProject("P1", { status: "STOPPED" });
+  let observedOldIdentity = null;
+  controller.setActions({
+    reconcileTabs: async () => {},
+    createWorkers: async () => {
+      observedOldIdentity = fx.agents.has("A-old");
+      fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", tabId: 20, protocolContext: null });
+      return { ok: true, created: ["A-new"] };
+    }
+  });
+  const result = await controller.resume();
+  assert.equal(result.ok, true);
+  assert.equal(observedOldIdentity, false);
+  assert.equal(fx.agents.has("A-old"), false);
+  assert.equal(fx.agents.has("A-new"), true);
 });
