@@ -23,11 +23,11 @@ test("abandoned workspace cleanup removes only clean stale worktrees and preserv
   const cleaned = [];
   const adapter = {
     workspaces: new Map([
-      ["active", record("active", 0)],
-      ["old-clean", record("old-clean", 0)],
-      ["old-dirty", record("old-dirty", 0)],
+      ["active", record("active", 1_000)],
+      ["old-clean", record("old-clean", 1_000)],
+      ["old-dirty", record("old-dirty", 1_000)],
       ["fresh-clean", record("fresh-clean", 9_900)],
-      ["missing", record("missing", 0)]
+      ["missing", record("missing", 1_000)]
     ]),
     async status(id) {
       if (id === "missing") throw new Error("git_workspace_missing");
