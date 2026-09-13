@@ -18,6 +18,7 @@
     }
 
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
+    isConnected(agent) { return Boolean(agent && this.registry?.isAgentConnected?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
 
     async init() {
@@ -51,7 +52,7 @@
 
     async startProject({ goal, repositoryUrl }) {
       const lead = this.getLead();
-      if (!lead || !Number.isInteger(lead.tabId)) return { ok: false, reason: "lead_not_connected" };
+      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
       const created = await this.projectStore.createProject({ goal, repositoryUrl });
       if (!created.ok) return created;
       return this.dispatchStage(created.project.projectId, "DISCOVERY");
@@ -61,7 +62,7 @@
       const project = this.projectStore.getProject(projectId);
       const lead = this.getLead();
       if (!project) return { ok: false, reason: "unknown_project" };
-      if (!lead || !Number.isInteger(lead.tabId)) return { ok: false, reason: "lead_not_connected" };
+      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
 
       const runId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
       const taskId = `planning:${stage.toLowerCase()}`;
