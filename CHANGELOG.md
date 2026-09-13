@@ -4,6 +4,53 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.14] - 2026-09-13
+
+### Added
+
+- persisted `ContextStore` для compact Lead summary, bounded decisions register и packet audit metadata;
+- `ContextPacketService` с versioned Lead, Task, Review, Integration и Repair packets;
+- role-specific context budgets и prompt/packet provenance;
+- fresh-session Lead replacement с сохранением существующего planning stage/run identity;
+- Orchestrator API v4 queries `contextSummary` и `contextPacket`;
+- Portable State v1 additive `context` namespace с backward compatibility для alpha.13 bundles;
+- Phase 13 architecture doc, smoke test и ADR 0013;
+- dedicated `npm run test:phase13` suite, включая fail-closed prompt gates и Lead replacement/registration regressions.
+
+### Portability and safety
+
+- chats остаются executors, а persisted Orchestra state + Context Packets являются source of truth для bootstrap роли;
+- packets удаляют browser/runtime identifiers и transcript/history/raw-response fields;
+- completed tasks и repository context передаются как bounded summaries/artifact refs вместо replay старого чата;
+- work-critical planning/task/review/integration/repair source сохраняется дословно после runtime/transcript sanitization;
+- optional Lead summary, decisions, completed-task summaries и repository context compact'ятся раньше critical payload;
+- если critical payload не помещается в budget либо был structural/string-truncated, роль fail closed в `NEEDS_USER` с `reason=context_packet_incomplete`;
+- Reviewer не может approve по неполному evidence packet, Integrator не может merge partial manifest;
+- fresh Lead replay выполняется только при отсутствующем/mismatched planning protocol context;
+- failed Lead bootstrap очищает protocol binding, чтобы последующая регистрация могла безопасно повторить delivery;
+- extension permissions, Git validation, review separation и integration target policy не ослаблялись.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.14`;
+- Worker prompt contract обновлён до v4, Planning/Reviewer/Integrator contracts — до v2;
+- Orchestrator API обновлён до v4;
+- Phase 14 — Contract Tests + CI Foundation — становится следующим roadmap этапом.
+
+### Validation
+
+- frozen PR review выполнен для packet compaction, critical-source completeness, Lead replacement delivery, API boundary, portable persistence и service-worker composition;
+- feature branch перед merge была `behind=0`, PR #23 был `mergeable=true` и merged через exact-head squash;
+- repository пока не имеет CI — это Phase 14;
+- полный `npm test` / `npm run test:phase13` из checkout в текущей environment не запускался из-за отсутствующего DNS-доступа к GitHub;
+- documented Edge fresh-session/replacement smoke-test остаётся внешний release gate.
+
+### Next
+
+- Phase 14 — Contract Tests + CI Foundation.
+
+---
+
 ## [2.0.0-alpha.13] - 2026-09-13
 
 ### Added
