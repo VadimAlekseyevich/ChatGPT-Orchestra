@@ -11,22 +11,14 @@
   }
 
   function defaultState() {
-    return {
-      schemaVersion: SCHEMA_VERSION,
-      runtimeStatus: "idle",
-      agents: {},
-      updatedAt: 0
-    };
+    return { schemaVersion: SCHEMA_VERSION, runtimeStatus: "idle", agents: {}, updatedAt: 0 };
   }
 
   function isChatGPTUrl(url) {
     try {
       const parsed = new URL(String(url || ""));
-      return parsed.protocol === "https:"
-        && (parsed.hostname === "chatgpt.com" || parsed.hostname === "chat.openai.com");
-    } catch (_) {
-      return false;
-    }
+      return parsed.protocol === "https:" && (parsed.hostname === "chatgpt.com" || parsed.hostname === "chat.openai.com");
+    } catch (_) { return false; }
   }
 
   function deriveAgentStatus(payload = {}) {
@@ -46,12 +38,8 @@
   }
 
   class TabRegistry {
-    constructor({
-      storageArea = globalThis.chrome?.storage?.local,
-      clock = () => Date.now(),
-      idFactory = () => `agent-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
-    } = {}) {
-      this.storageArea = storageArea;
+    constructor({ stateStore = null, storageArea = null, clock = () => Date.now(), idFactory = () => `agent-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}` } = {}) {
+      this.stateStore = stateStore || storageArea || null;
       this.clock = clock;
       this.idFactory = idFactory;
       this.state = defaultState();
@@ -60,19 +48,11 @@
     }
 
     async load() {
-      if (!this.storageArea?.get) {
-        this.loaded = true;
-        return this.snapshot();
-      }
-
-      const stored = await this.storageArea.get(STORAGE_KEY);
+      if (!this.stateStore?.get) { this.loaded = true; return this.snapshot(); }
+      const stored = await this.stateStore.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
       if (candidate?.schemaVersion === SCHEMA_VERSION && candidate.agents && typeof candidate.agents === "object") {
-        this.state = {
-          ...defaultState(),
-          ...candidate,
-          agents: { ...candidate.agents }
-        };
+        this.state = { ...defaultState(), ...candidate, agents: { ...candidate.agents } };
       }
       this.loaded = true;
       return this.snapshot();
@@ -89,9 +69,9 @@
 
     async persist() {
       this.state.updatedAt = this.clock();
-      if (!this.storageArea?.set) return this.snapshot();
+      if (!this.stateStore?.set) return this.snapshot();
       const payload = clone(this.state);
-      this.writeChain = this.writeChain.catch(() => {}).then(() => this.storageArea.set({ [STORAGE_KEY]: payload }));
+      this.writeChain = this.writeChain.catch(() => {}).then(() => this.stateStore.set({ [STORAGE_KEY]: payload }));
       await this.writeChain;
       return this.snapshot();
     }
@@ -142,9 +122,7 @@
       return this.getAgent(agentId);
     }
 
-    async clearProtocolContext(agentId) {
-      return this.setProtocolContext(agentId, null);
-    }
+    async clearProtocolContext(agentId) { return this.setProtocolContext(agentId, null); }
 
     async updateHeartbeat(tabId, payload = {}, chatUrl = "") {
       const existing = this.getAgentByTabId(tabId);
