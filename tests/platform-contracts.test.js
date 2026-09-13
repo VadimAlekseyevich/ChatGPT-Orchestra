@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const Contracts = require("../platform/contracts.js");
+const { ExtensionAgentRuntime } = require("../platform/extension-runtime.js");
 const { MemoryStateStore, FakeAgentRuntime, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
 
 function assertStateStoreConformance(store) {
@@ -39,6 +40,26 @@ test("FakeAgentRuntime satisfies AgentRuntime contract without Chrome globals", 
   } finally {
     if (previousChrome !== undefined) globalThis.chrome = previousChrome;
   }
+});
+
+test("runtime connectivity is distinct from agent health", () => {
+  const fakeRuntime = new FakeAgentRuntime({
+    agents: [{ agentId: "worker-error", role: "worker", status: "ERROR", sessionId: "session-error" }]
+  });
+  assert.equal(fakeRuntime.isAgentConnected("worker-error"), true);
+  fakeRuntime.agents.get("worker-error").status = "OFFLINE";
+  assert.equal(fakeRuntime.isAgentConnected("worker-error"), false);
+
+  const records = new Map([
+    ["worker-error", { agentId: "worker-error", role: "worker", status: "ERROR", tabId: 42 }],
+    ["worker-offline", { agentId: "worker-offline", role: "worker", status: "OFFLINE", tabId: 43 }]
+  ]);
+  const extensionRuntime = new ExtensionAgentRuntime({
+    chromeApi: {},
+    registry: { getAgent: (agentId) => records.get(agentId) || null }
+  });
+  assert.equal(extensionRuntime.isAgentConnected("worker-error"), true);
+  assert.equal(extensionRuntime.isAgentConnected("worker-offline"), false);
 });
 
 test("DeterministicTimerRuntime satisfies TimerRuntime and fires only on demand", async () => {
