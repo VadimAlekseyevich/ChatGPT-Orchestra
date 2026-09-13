@@ -42,7 +42,7 @@ class LocalValidatingGitProvider {
     if (!verificationPlan.ok) {
       return {
         ok: false,
-        reason: verificationPlan.reason,
+        reason: "git_provider_local_verification_plan_invalid",
         remote,
         local: { ok: false, reason: verificationPlan.reason, verificationPlan }
       };
@@ -112,7 +112,7 @@ class LocalValidatingGitProvider {
           if (String(error?.message || "") === "repository_execution_not_trusted") {
             return {
               ok: false,
-              reason: "repository_execution_not_trusted",
+              reason: "git_provider_repository_execution_not_trusted",
               remote,
               local: { ok: false, reason: "repository_execution_not_trusted", workspaceId, artifact: localArtifact, scope: localScope, verification }
             };
