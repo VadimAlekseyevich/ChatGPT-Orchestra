@@ -49,6 +49,29 @@ test("MemoryStateStore satisfies Phase 11 transactional conformance through wrap
   await exercise(new TransactionalStateStore({ store: new MemoryStateStore() }));
 });
 
+test("TransactionalStateStore serializes ordinary writes behind an active transaction", async () => {
+  const store = new TransactionalStateStore({ store: new MemoryStateStore() });
+  const order = [];
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const transaction = store.transaction(async (tx) => {
+    order.push("transaction-start");
+    await tx.set({ imported: true });
+    await blocked;
+    order.push("transaction-end");
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const ordinaryWrite = store.set({ heartbeat: true }).then(() => order.push("ordinary-write"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["transaction-start"]);
+  release();
+  await Promise.all([transaction, ordinaryWrite]);
+  assert.deepEqual(order, ["transaction-start", "transaction-end", "ordinary-write"]);
+  const state = await store.get(null);
+  assert.equal(state.imported, true);
+  assert.equal(state.heartbeat, true);
+});
+
 test("SQLiteStateStore provides native transactional conformance", { skip: !sqliteAvailable }, async () => {
   const store = new SQLiteStateStore({ filename: ":memory:" });
   try { await exercise(store); }
