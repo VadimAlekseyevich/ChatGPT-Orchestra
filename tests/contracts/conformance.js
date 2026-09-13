@@ -68,10 +68,24 @@ async function gitWorkspaceConformance(workspace) {
   assert.equal(await workspace.cleanup(task.workspaceId), true);
 }
 
+async function orchestratorApiConformance(api) {
+  assert.equal(typeof api?.query, "function");
+  assert.equal(typeof api?.execute, "function");
+  for (const query of Contracts.API_QUERIES) {
+    const result = await api.query(query, {});
+    assert.notEqual(result?.reason, "unknown_api_query", `query not implemented: ${query}`);
+  }
+  for (const command of Contracts.API_COMMANDS) {
+    const result = await api.execute(command, {});
+    assert.notEqual(result?.reason, "unknown_api_command", `command not implemented: ${command}`);
+  }
+}
+
 module.exports = {
   agentRuntimeConformance,
   stateStoreConformance,
   transactionalStateStoreConformance,
   timerRuntimeConformance,
-  gitWorkspaceConformance
+  gitWorkspaceConformance,
+  orchestratorApiConformance
 };
