@@ -35,4 +35,5 @@ Date: YYYY-MM-DD
 - [`0003-persisted-planning-pipeline.md`](0003-persisted-planning-pipeline.md) — staged persisted planning, separate large artifacts and deterministic DAG readiness gate;
 - [`0004-conflict-aware-scheduler.md`](0004-conflict-aware-scheduler.md) — persisted task/run scheduler, conflict-prevention policy and transitional `DONE_UNVERIFIED` semantics;
 - [`0005-git-task-isolation.md`](0005-git-task-isolation.md) — per-run task branches, immutable base snapshot and independent Git artifact validation;
-- [`0006-independent-review-loop.md`](0006-independent-review-loop.md) — dynamic Reviewer role, author/reviewer separation, structured approval and bounded rework loop.
+- [`0006-independent-review-loop.md`](0006-independent-review-loop.md) — dynamic Reviewer role, author/reviewer separation, structured approval and bounded rework loop;
+- [`0007-verified-integration-branches.md`](0007-verified-integration-branches.md) — dynamic Integrator role, deterministic `--no-ff` composition, independently verified integration branches and bounded semantic conflict remediation.

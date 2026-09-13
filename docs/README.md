@@ -15,6 +15,8 @@
 - [`phase-6-smoke-test.md`](phase-6-smoke-test.md) — local Node + Edge acceptance checks для Git isolation;
 - [`phase-7-review-loop.md`](phase-7-review-loop.md) — dynamic independent Reviewer role, structured acceptance checks и bounded rework loop;
 - [`phase-7-smoke-test.md`](phase-7-smoke-test.md) — local Node + Edge acceptance checks для independent review;
+- [`phase-8-integrator.md`](phase-8-integrator.md) — dynamic Integrator role, deterministic merge composition, remote provenance verification и semantic conflict remediation;
+- [`phase-8-smoke-test.md`](phase-8-smoke-test.md) — local Node + Edge acceptance checks для verified integration, text conflicts и semantic conflicts;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`

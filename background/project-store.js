@@ -85,7 +85,7 @@
       if (normalizedGoal.length > 12000) return { ok: false, reason: "goal_too_long" };
       if (!repository) return { ok: false, reason: "invalid_repository_url" };
       const active = this.getActiveProject();
-      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER", "COMPLETED_UNVERIFIED", "READY_FOR_INTEGRATION"].includes(active.status)) {
+      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER", "COMPLETED_UNVERIFIED", "INTEGRATION_VERIFIED"].includes(active.status)) {
         return { ok: false, reason: "active_project_in_progress", projectId: active.projectId };
       }
 
@@ -158,6 +158,9 @@
       const stageByStatus = {
         COMPLETED_UNVERIFIED: "REVIEW_REQUIRED",
         READY_FOR_INTEGRATION: "REVIEW_COMPLETE",
+        INTEGRATING: "INTEGRATION",
+        INTEGRATION_REPAIRING: "INTEGRATION_REPAIR",
+        INTEGRATION_VERIFIED: "INTEGRATION_COMPLETE",
         NEEDS_USER: "EXECUTION_BLOCKED"
       };
       project.stage = stageByStatus[project.status] || "EXECUTION";

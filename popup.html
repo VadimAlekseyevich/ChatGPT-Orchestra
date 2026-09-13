@@ -10,7 +10,7 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Project planning · scheduler · Git isolation · independent review</p>
+      <p>Project planning · scheduler · Git isolation · independent review · verified integration</p>
     </header>
 
     <section class="orchestra-section" aria-labelledby="projectTitle">
@@ -61,18 +61,18 @@
         <button id="createWorkers" class="secondary" type="button">Создать Workers</button>
       </div>
 
-      <p class="hint">Lead привязывается только явно. Worker-вкладки создаёт расширение; свободный Worker может временно стать Reviewer, но никогда не review'ит собственный run. При maxWorkers=1 Orchestra всё равно держит второй tab для независимой проверки.</p>
+      <p class="hint">Lead привязывается только явно. Worker-вкладки создаёт расширение; свободный Worker может временно стать Reviewer или Integrator. Reviewer никогда не проверяет собственный run.</p>
     </section>
 
     <section class="orchestra-section" aria-labelledby="executionTitle">
       <div class="section-heading">
         <div>
-          <h2 id="executionTitle">Execution + Review</h2>
+          <h2 id="executionTitle">Execution + Review + Integration</h2>
           <p id="executionStatus">Execution: not started</p>
         </div>
       </div>
       <button id="startExecution" type="button">Start Execution</button>
-      <p class="hint">Alpha.8 принимает Worker `DONE` только после Git validation, затем отправляет результат другому агенту на structured review. `CHANGES_REQUIRED` создаёт rework run; только `APPROVED` разблокирует dependencies. Финал Phase 7 — `READY_FOR_INTEGRATION`, а не merge.</p>
+      <p class="hint">Alpha.9 после `APPROVED` автоматически собирает task branches в отдельную integration branch через deterministic `--no-ff` merge order. Text/semantic conflicts создают bounded repair tasks. Финал — `INTEGRATION_VERIFIED`; target branch расширение напрямую не изменяет.</p>
     </section>
 
     <label class="toggle-row">
