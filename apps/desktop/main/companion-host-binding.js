@@ -1,5 +1,8 @@
 "use strict";
 
+const { STORE_KEYS } = require("../../../persistence/portable-state.js");
+const { stageCompanionMigration, migrationStatus } = require("./companion-migration.js");
+
 async function handleRuntimeMessage(host, message, sender) {
   const result = await host.orchestrator.handleRuntimeMessage(message, sender);
   if (sender?.agentId) {
@@ -35,14 +38,56 @@ async function handleSessionUpdated(host, sessionId, changeInfo, session) {
   return { ok: true };
 }
 
+async function handleMigrationStage(host, bundle) {
+  const checked = host.projectBundleService?.validateBundle?.(bundle);
+  if (!checked?.ok) return checked || { ok: false, reason: "project_bundle_invalid" };
+  const current = await host.stateStore.get(STORE_KEYS.projects);
+  const activeProjectId = String(current?.[STORE_KEYS.projects]?.activeProjectId || "");
+  if (activeProjectId && activeProjectId !== checked.projectId) {
+    return {
+      ok: false,
+      reason: "companion_migration_destination_busy",
+      activeProjectId,
+      incomingProjectId: checked.projectId
+    };
+  }
+  return stageCompanionMigration({
+    paths: host.paths,
+    bundle,
+    validateBundle: (input) => host.projectBundleService.validateBundle(input),
+    clock: host.clock
+  });
+}
+
 function bindCompanionAgentRuntime(host) {
   if (typeof host?.agentRuntime?.bindHostHandlers !== "function") return null;
-  return host.agentRuntime.bindHostHandlers({
+  const disposers = [];
+  const runtimeUnbind = host.agentRuntime.bindHostHandlers({
     onRuntimeMessage: (message, sender) => handleRuntimeMessage(host, message, sender),
     onApiMessage: (message, sender) => handleApiMessage(host, message, sender),
     onSessionRemoved: (sessionId) => handleSessionRemoved(host, sessionId),
     onSessionUpdated: (sessionId, changeInfo, session) => handleSessionUpdated(host, sessionId, changeInfo, session)
   });
+  if (typeof runtimeUnbind === "function") disposers.push(runtimeUnbind);
+
+  const rpc = host.agentRuntime.rpc;
+  if (rpc?.onRequest) {
+    disposers.push(rpc.onRequest("migration.stageBundle", ({ bundle } = {}) => handleMigrationStage(host, bundle)));
+    disposers.push(rpc.onRequest("migration.status", () => ({ ok: true, ...migrationStatus(host.paths) })));
+  }
+
+  return () => {
+    for (const dispose of disposers.splice(0)) {
+      try { dispose?.(); } catch (_) {}
+    }
+  };
 }
 
-module.exports = { bindCompanionAgentRuntime, handleRuntimeMessage, handleApiMessage, handleSessionRemoved, handleSessionUpdated };
+module.exports = {
+  bindCompanionAgentRuntime,
+  handleRuntimeMessage,
+  handleApiMessage,
+  handleSessionRemoved,
+  handleSessionUpdated,
+  handleMigrationStage
+};
