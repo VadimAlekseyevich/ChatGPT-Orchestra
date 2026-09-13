@@ -16,10 +16,6 @@
   </main>
   <script src="fake-transport.js"></script>
   <script src="dashboard-app.js"></script>
-  <script>
-    const transport = new ChatGPTOrchestra.FakeDashboardTransport();
-    const app = new ChatGPTOrchestra.DashboardApp({ rootElement: document.querySelector("#orchestraDashboard"), transport, pollMs: 5000 });
-    app.start();
-  </script>
+  <script src="standalone.js"></script>
 </body>
 </html>
