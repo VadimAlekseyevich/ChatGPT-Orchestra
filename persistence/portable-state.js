@@ -203,11 +203,15 @@
     async createBackup(transactionStore, reason = "portable_import") {
       const current = await transactionStore.get([...ALL_STORE_KEYS, BACKUP_KEY]);
       const backups = Array.isArray(current?.[BACKUP_KEY]) ? clone(current[BACKUP_KEY]) : [];
+      const storage = {};
+      for (const key of ALL_STORE_KEYS) {
+        if (current?.[key] !== undefined) storage[key] = clone(current[key]);
+      }
       const backup = {
         backupId: `backup-${this.clock()}`,
         createdAt: this.clock(),
         reason,
-        storage: Object.fromEntries(ALL_STORE_KEYS.map((key) => [key, clone(current?.[key])]))
+        storage
       };
       backups.push(backup);
       while (backups.length > this.maxBackups) backups.shift();
