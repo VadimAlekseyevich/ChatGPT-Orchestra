@@ -16,6 +16,11 @@
     PING: "orchestra/ping",
     PONG: "orchestra/pong",
 
+    COMPANION_GET_STATUS: "orchestra/companion-get-status",
+    COMPANION_ENABLE: "orchestra/companion-enable",
+    COMPANION_DISABLE: "orchestra/companion-disable",
+    COMPANION_RECONNECT: "orchestra/companion-reconnect",
+
     ORCHESTRATOR_API_QUERY: "orchestra/api-query",
     ORCHESTRATOR_API_EXECUTE: "orchestra/api-execute",
     ORCHESTRATOR_GET_STATE: "orchestra/orchestrator-get-state",
