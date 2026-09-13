@@ -1,6 +1,6 @@
 # Phase 16 — Desktop Control Plane + Extension Companion Bridge
 
-Phase 16 moves canonical orchestration toward the desktop process while preserving the existing ChatGPT DOM automation in the Edge extension. The work is intentionally stacked: the first slice established a secure transport/runtime boundary; the second slice enables an explicit, fail-closed companion mode without changing the default standalone-extension behavior.
+Phase 16 moves canonical orchestration into the desktop process while preserving the existing ChatGPT DOM automation in the Edge extension. The work is intentionally stacked: the first slice established a secure transport/runtime boundary, the second added explicit fail-closed companion mode, and the current slice adds crash-safe project migration into desktop SQLite.
 
 ## Current architecture
 
@@ -49,15 +49,42 @@ When companion mode is enabled:
 
 This fail-closed rule prevents two canonical control planes from making side effects at the same time.
 
-## Migration safety gate
+## Crash-safe project migration
 
-The migration wizard is not implemented yet. Until it exists, the controller refuses to switch an extension with an active project into companion mode:
+Existing extension projects can now cross the source-of-truth boundary without mutating a live desktop Core in place.
+
+The handoff is deliberately two-phase:
 
 ```text
-companion_enable_requires_project_migration
+Extension canonical project
+        │
+        │ Export Project Bundle at safe point
+        ▼
+Authenticated companion RPC
+        │
+        │ validate + stage
+        ▼
+<OrchestraData>/companion/migration-pending.json
+        │
+        │ restart Desktop Companion
+        ▼
+pre-Core boot validation + SQLite import
+        │
+        ▼
+RECOVERY_REQUIRED state + migration-applied.json
+        │
+        │ exact projectId + checksum receipt
+        ▼
+Enable Desktop companion mode
 ```
 
-This is deliberate. The user must not create a second canonical copy of an active project simply by toggling a bridge setting. Fresh/no-project extension state can be used for companion development now; active projects will move through the Project Bundle → SQLite migration flow in the next slice.
+Migration can be staged only while standalone extension mode is still canonical and recovery is at `IDLE`, `PAUSED`, `STOPPED` or `RECOVERY_REQUIRED`. The extension exports through the existing `ProjectBundleService`, so browser/session bindings and secrets are already stripped by the portable-state layer.
+
+Desktop validates the bundle before staging and validates it again before import. The pending handoff is written atomically under the companion app-data directory. On the next `desktop:companion` boot, `applyPendingCompanionMigration()` runs before `DesktopHost.init()`. A failed validation/import aborts desktop companion boot and leaves the pending file for diagnosis; successful import writes a durable applied receipt and deletes the pending file.
+
+The import itself uses the existing `PortableStateManager` transaction path, creates a backup and forces `RECOVERY_REQUIRED` so reconciliation happens before dispatch.
+
+The extension records the checksum returned by the staging operation. Companion cutover is allowed only when desktop reports an applied receipt with the exact same `projectId + checksum`. A stale receipt for an older snapshot of the same project cannot authorize cutover.
 
 ## Authentication
 
@@ -83,9 +110,9 @@ It contains only loopback host/port, protocol versions and a transient instance 
 
 `apps/companion/native-host.js` translates Chrome's 4-byte little-endian length-prefixed JSON messages into the authenticated desktop loopback stream. `native-host-manifest.template.json` still contains placeholders for the packaged executable path and exact extension id; installer/registration automation is a remaining Phase 16 task.
 
-The extension manifest now declares `nativeMessaging`, and release validation explicitly allowlists that permission.
+The extension manifest declares `nativeMessaging`, and release validation explicitly allowlists that permission.
 
-## Development flow
+## Development migration flow
 
 The normal Phase 15 desktop path is unchanged:
 
@@ -93,23 +120,31 @@ The normal Phase 15 desktop path is unchanged:
 npm run desktop:dev
 ```
 
-To run the desktop as the Phase 16 control plane:
+For a fresh companion session:
 
 ```bash
 npm run desktop:companion
 ```
 
-The desktop opens the authenticated companion server and waits for the extension peer. In the extension popup, use **Enable Desktop** or **Open / Reconnect**. The native host must already be registered from the manifest template for this developer flow.
+For an existing extension project:
+
+1. Pause or Stop Now until recovery reaches a safe state.
+2. Start `npm run desktop:companion` with the Native Messaging host registered.
+3. In the extension popup choose **Migrate Project → Desktop**.
+4. Confirm the popup reports the bundle staged.
+5. Restart Desktop Companion. The pending bundle is imported before Core boot.
+6. Click **Enable Desktop**. The extension verifies the applied receipt checksum before disabling its local control plane.
+7. Desktop opens the imported project in `RECOVERY_REQUIRED`; reconciliation/resume remains an explicit control-plane step.
 
 ## Remaining Phase 16 work
 
-The bridge is now explicit and routable, but Phase 16 is not complete until these pieces land:
+The control-plane cutover path now exists, but Phase 16 still needs:
 
-1. migration wizard Chrome storage → Project Bundle → desktop SQLite;
-2. packaged Native Messaging host install/register/uninstall flow;
-3. richer desktop connection diagnostics and recovery UI;
-4. a real ChatGPT multi-agent smoke run with desktop as canonical state owner;
-5. recovery coverage across extension/service-worker/native-host restarts.
+1. packaged Native Messaging host install/register/uninstall flow;
+2. richer desktop connection/migration diagnostics and recovery UI;
+3. a real ChatGPT multi-agent smoke run with desktop as canonical state owner;
+4. recovery coverage across extension/service-worker/native-host restarts;
+5. final roadmap/release-state update after the stacked Phase 16 PRs merge.
 
 ## Test gate
 
@@ -117,4 +152,4 @@ The bridge is now explicit and routable, but Phase 16 is not complete until thes
 npm run test:phase16
 ```
 
-The gate covers protocol bounds/versioning, bidirectional RPC, bridged AgentRuntime behavior, Native Messaging framing, pairing-secret persistence, mutual HMAC authentication, authenticated desktop loopback transport, desktop host event routing, explicit companion mode persistence, reconnect, fail-closed disconnect behavior, active-project migration gating, service-worker boundary guards and popup/API routing.
+The gate covers protocol bounds/versioning, bidirectional RPC, bridged AgentRuntime behavior, Native Messaging framing, pairing-secret persistence, mutual HMAC authentication, authenticated desktop loopback transport, desktop host event routing, explicit companion mode persistence, reconnect, fail-closed disconnect behavior, migration staging, pre-Core SQLite apply, exact-checksum receipt gating, service-worker boundary guards and popup/API routing.
