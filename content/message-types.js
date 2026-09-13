@@ -16,6 +16,8 @@
     PING: "orchestra/ping",
     PONG: "orchestra/pong",
 
+    ORCHESTRATOR_API_QUERY: "orchestra/api-query",
+    ORCHESTRATOR_API_EXECUTE: "orchestra/api-execute",
     ORCHESTRATOR_GET_STATE: "orchestra/orchestrator-get-state",
     ORCHESTRATOR_GET_EVENTS: "orchestra/orchestrator-get-events",
     ORCHESTRATOR_GET_PROJECT: "orchestra/orchestrator-get-project",
