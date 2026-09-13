@@ -5,6 +5,44 @@
   const PROMPT_VERSION = 4;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
+  function bytes(value) {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(serialized).length;
+    if (typeof Buffer !== "undefined") return Buffer.byteLength(serialized, "utf8");
+    return serialized.length;
+  }
+  function hasStructuralTruncation(value) {
+    if (!value || typeof value !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(value, "_truncatedItems") || Object.prototype.hasOwnProperty.call(value, "_truncatedFields")) return true;
+    if (Array.isArray(value)) return value.some(hasStructuralTruncation);
+    return Object.values(value).some(hasStructuralTruncation);
+  }
+  function packetCompleteness(packet) {
+    if (Number(packet?.packetVersion) < 1) return { ok: true, legacyFallback: true };
+    const maxBytes = Number(root.ContextPackets?.BUDGETS?.task || 26000);
+    const actualBytes = bytes(packet);
+    const incompleteSections = ["task", "dependencies", "assignment", "artifactRefs"]
+      .filter((key) => hasStructuralTruncation(packet?.[key]));
+    const budgetOk = packet?.budget?.withinBudget === true && actualBytes <= maxBytes;
+    return {
+      ok: budgetOk && incompleteSections.length === 0,
+      reason: budgetOk && !incompleteSections.length ? null : "context_packet_incomplete",
+      actualBytes,
+      maxBytes,
+      incompleteSections
+    };
+  }
+  function failClosedPacket(packet, gate) {
+    return {
+      packetVersion: Number(packet?.packetVersion) || 1,
+      packetType: "task",
+      identity: packet?.identity || null,
+      logicalRole: packet?.logicalRole || null,
+      project: packet?.project ? { projectId: packet.project.projectId, repository: packet.project.repository || null } : null,
+      provenance: packet?.provenance || null,
+      completeness: gate
+    };
+  }
 
   function buildWorkerPrompt({ project, task, runId, agentId, gitAssignment = null, reworkContext = null, packet = null }) {
     if (!project?.projectId || !task?.id || !runId || !agentId) throw new Error("invalid_worker_assignment");
@@ -17,6 +55,8 @@
       assignment: { git: gitAssignment, rework: reworkContext },
       provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
     };
+    const completeness = packetCompleteness(contextPacket);
+    const packetForPrompt = completeness.ok ? contextPacket : failClosedPacket(contextPacket, completeness);
     const eventBase = { v: 1, projectId: project.projectId, taskId: task.id, runId, agentId };
     const gitRequired = gitAssignment?.required !== false;
     const gitExample = gitRequired ? {
@@ -70,6 +110,16 @@
       "- Address every requiredChanges item from contextPacket.assignment.rework. Do not silently ignore a finding; if one is incorrect or impossible, return BLOCKED/NEEDS_USER with evidence."
     ] : [];
 
+    const completenessInstructions = completeness.ok ? [
+      "PACKET COMPLETENESS GATE:",
+      "- The v1 packet passed the host-side size/structural completeness check."
+    ] : [
+      "PACKET COMPLETENESS GATE — FAIL CLOSED:",
+      "- The host detected an incomplete v1 task packet. Do NOT inspect or modify the repository, create a branch, run task work, or infer omitted context.",
+      "- Return NEEDS_USER using the protocol identity below with payload.reason=context_packet_incomplete and include the completeness details from the packet.",
+      "- DONE, BLOCKED and ERROR are not valid outcomes for this turn."
+    ];
+
     return [
       "You are a ChatGPT Orchestra Worker executing one bounded task.",
       `Worker prompt contract version: ${PROMPT_VERSION}.`,
@@ -78,7 +128,9 @@
       "Work only on the assigned task. Do not broaden scope without reporting BLOCKED or NEEDS_USER.",
       "Do not claim APPROVED, VERIFIED or MERGED. DONE means the run is complete and its result is ready for independent Git validation and Reviewer evaluation.",
       "",
-      `PORTABLE TASK PACKET:\n${json(contextPacket)}`,
+      `PORTABLE TASK PACKET:\n${json(packetForPrompt)}`,
+      "",
+      ...completenessInstructions,
       "",
       ...gitInstructions,
       ...reworkInstructions,
@@ -87,14 +139,14 @@
       `- Identity: ${json(eventBase)}`,
       "- This assignment expects one final protocol event in this response. Use sequence=1.",
       `- Use eventId=${runId}-final for the final event; runId makes it unique across assignments.`,
-      "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER.",
+      "- Finish with exactly one of DONE, BLOCKED, ERROR or NEEDS_USER, except an incomplete packet requires NEEDS_USER as stated above.",
       "- The final non-empty response line must be one valid @@ORCH JSON envelope; no text may follow it and do not emit a second @@ORCH line.",
       `- DONE example: @@ORCH ${JSON.stringify(finalExample)}`,
       "- For DONE payload include summary, testsPerformed and knownLimitations. For mutating tasks payload.git is mandatory as specified above.",
-      "- For BLOCKED/ERROR use the same identity/eventId/sequence and include reason plus retryable=true/false. Use NEEDS_USER when external user input or permission is required."
+      "- For BLOCKED/ERROR use the same identity/eventId/sequence and include reason plus retryable=true/false. Use NEEDS_USER when external user input, permission or complete context is required."
     ].join("\n");
   }
 
-  root.WorkerPrompts = Object.freeze({ PROMPT_VERSION, buildWorkerPrompt });
+  root.WorkerPrompts = Object.freeze({ PROMPT_VERSION, buildWorkerPrompt, packetCompleteness });
   if (typeof module !== "undefined" && module.exports) module.exports = root.WorkerPrompts;
 })();
