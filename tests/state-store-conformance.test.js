@@ -72,6 +72,20 @@ test("TransactionalStateStore serializes ordinary writes behind an active transa
   assert.equal(state.heartbeat, true);
 });
 
+test("freezeAfter blocks stale writes queued behind an import transaction", async () => {
+  const store = new TransactionalStateStore({ store: new MemoryStateStore() });
+  const imported = store.transaction(async (tx) => {
+    await tx.set({ imported: true });
+  }, { freezeAfter: true });
+  const staleWrite = store.set({ staleHeartbeat: true });
+  await imported;
+  await assert.rejects(staleWrite, /state_store_writes_frozen/);
+  assert.equal(store.writesFrozen(), true);
+  const state = await store.get(null);
+  assert.equal(state.imported, true);
+  assert.equal(state.staleHeartbeat, undefined);
+});
+
 test("SQLiteStateStore provides native transactional conformance", { skip: !sqliteAvailable }, async () => {
   const store = new SQLiteStateStore({ filename: ":memory:" });
   try { await exercise(store); }
