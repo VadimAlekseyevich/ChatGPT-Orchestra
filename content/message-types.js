@@ -20,6 +20,8 @@
     COMPANION_ENABLE: "orchestra/companion-enable",
     COMPANION_DISABLE: "orchestra/companion-disable",
     COMPANION_RECONNECT: "orchestra/companion-reconnect",
+    COMPANION_MIGRATE_PROJECT: "orchestra/companion-migrate-project",
+    COMPANION_GET_MIGRATION_STATUS: "orchestra/companion-get-migration-status",
 
     ORCHESTRATOR_API_QUERY: "orchestra/api-query",
     ORCHESTRATOR_API_EXECUTE: "orchestra/api-execute",
