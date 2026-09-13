@@ -10,12 +10,13 @@
       const run = this.store.currentRun();
       if (!run) return;
 
-      // ASSIGNED means persistence happened before we can prove prompt delivery.
-      // REPAIR_PENDING means a repair task exists but delivery may not have happened.
-      // Never replay either prompt after an MV3 restart: abandon the unique branch/run
-      // and create a fresh identity. Late events from the abandoned run are rejected by
-      // the newly bound protocol context and can only affect the abandoned integration branch.
-      if (["ASSIGNED", "REPAIR_PENDING"].includes(run.status)) {
+      // ASSIGNED means persistence happened before prompt delivery is proven.
+      // REPAIR_PENDING means the repair exists, but the repair prompt may or may not
+      // have been delivered. CONFLICT means the conflict event was persisted but the
+      // repair transaction did not finish. Never replay these ambiguous boundaries
+      // after an MV3 restart: abandon the unique branch/run and create a fresh identity.
+      // Late events from the abandoned run are rejected by the newly bound context.
+      if (["ASSIGNED", "REPAIR_PENDING", "CONFLICT"].includes(run.status)) {
         if (run.agentId) await this.registry.clearProtocolContext(run.agentId);
         await this.store.abandon(run.runId, `ambiguous_restart_${run.status.toLowerCase()}`);
         await this.schedulerStore.setStatus("READY_FOR_INTEGRATION");
