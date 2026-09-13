@@ -16,7 +16,7 @@
   });
   const ALL_STORE_KEYS = Object.freeze(Object.values(STORE_KEYS));
   const SECRET_KEYS = new Set([
-    "password", "passwd", "secret", "clientsecret", "accesstoken", "refreshtoken", "apikey",
+    "password", "passwd", "secret", "token", "clientsecret", "accesstoken", "refreshtoken", "apikey",
     "authorization", "cookie", "cookies", "privatekey", "credentials", "credential"
   ]);
   const SECRET_VALUE = /^(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|Bearer\s+\S{20,}|-----BEGIN [^-]*PRIVATE KEY-----)/;
@@ -28,12 +28,16 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function normalizeSecretKey(key) {
+    return String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
   function redactSecrets(value) {
     if (Array.isArray(value)) return value.map(redactSecrets);
     if (value && typeof value === "object") {
       const output = {};
       for (const [key, item] of Object.entries(value)) {
-        if (SECRET_KEYS.has(key.toLowerCase())) output[key] = "[REDACTED]";
+        if (SECRET_KEYS.has(normalizeSecretKey(key))) output[key] = "[REDACTED]";
         else output[key] = redactSecrets(item);
       }
       return output;
