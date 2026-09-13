@@ -2,7 +2,9 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 5;
+  const PROMPT_VERSION = 6;
+  const WORKER_ARTIFACT_BEGIN = "@@ORCH_WORKER_ARTIFACT_BEGIN";
+  const WORKER_ARTIFACT_END = "@@ORCH_WORKER_ARTIFACT_END";
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
   function bytes(value) {
@@ -79,7 +81,7 @@
       targetBranch: gitAssignment.targetBranch,
       changedFiles: ["path/actually/changed.ext"]
     } : undefined;
-    const localChangesExample = localArtifactMode ? {
+    const localArtifactExample = localArtifactMode ? {
       format: "file-set-v1",
       files: [
         { path: "src/example.js", operation: "write", content: "complete UTF-8 file contents after your change\n" },
@@ -95,7 +97,7 @@
         summary: "what was completed",
         testsPerformed: [],
         knownLimitations: [],
-        ...(localArtifactMode ? { localChanges: localChangesExample } : gitRequired ? { git: gitExample } : {})
+        ...(localArtifactMode ? { artifactFormat: "file-set-v1" } : gitRequired ? { git: gitExample } : {})
       }
     };
 
@@ -104,13 +106,18 @@
       "LOCAL WORKTREE ARTIFACT CONTRACT:",
       `- Orchestra already prepared an isolated local worktree from start SHA ${startSha}. You do not need filesystem access to that worktree.`,
       "- Do NOT push an intermediate task branch and do NOT fabricate a commit SHA. Desktop Orchestra will apply, scope-check, test and commit your changes locally.",
-      "- Return the complete intended text changes as payload.localChanges using format=file-set-v1.",
+      "- Before the final @@ORCH line, output exactly one Worker artifact block using these marker lines with one JSON object between them:",
+      WORKER_ARTIFACT_BEGIN,
+      json(localArtifactExample),
+      WORKER_ARTIFACT_END,
+      "- Do not put markdown fences around the Worker artifact block or its marker lines.",
       "- Each file entry is {path, operation:'write', content:'complete UTF-8 file contents'} or {path, operation:'delete'}.",
       "- Paths must be repository-relative, must not contain '..', and must stay inside task scope.allow and outside scope.deny.",
-      "- file-set-v1 is intentionally bounded: at most 64 files, at most 128 KiB per written file and 256 KiB total written content.",
-      "- Do not include binary files in file-set-v1. If the correct task requires a binary/oversized artifact, return NEEDS_USER with reason=local_change_set_unsupported instead of pushing behind Orchestra's back.",
+      "- file-set-v1 is intentionally bounded: at most 64 files, at most 64 KiB per written file and 96 KiB total written content.",
+      "- Do not include binary files. If the correct task requires a binary or oversized artifact, return NEEDS_USER with reason=local_change_set_unsupported instead of pushing behind Orchestra's back.",
+      "- The artifact block is transported separately from the compact Orchestra event; the final event payload contains only artifactFormat and host-computed signature metadata.",
       "- Desktop Orchestra independently derives changed files, runs the structured local verification plan, creates the local task commit and provides a host-generated diff to an independent Reviewer.",
-      "- DONE payload.localChanges is mandatory for this mutating local-bound task. payload.git is not required."
+      "- For DONE, the Worker artifact block is mandatory and payload.artifactFormat must be exactly file-set-v1. payload.git is not required."
     ] : [
       "GIT ISOLATION CONTRACT:",
       `- Target branch: ${gitAssignment.targetBranch}`,
@@ -165,12 +172,12 @@
       "- The final non-empty response line must be one valid @@ORCH JSON envelope; no text may follow it and do not emit a second @@ORCH line.",
       `- DONE example: @@ORCH ${JSON.stringify(finalExample)}`,
       localArtifactMode
-        ? "- For DONE payload include summary, testsPerformed, knownLimitations and localChanges. Do not include fake git commit metadata."
+        ? "- For DONE payload include summary, testsPerformed, knownLimitations and artifactFormat=file-set-v1. The file contents live only in the preceding Worker artifact block, never inside @@ORCH."
         : "- For DONE payload include summary, testsPerformed and knownLimitations. For mutating remote-mode tasks payload.git is mandatory as specified above.",
       "- For BLOCKED/ERROR use the same identity/eventId/sequence and include reason plus retryable=true/false. Use NEEDS_USER when external user input, permission or complete context is required."
     ].join("\n");
   }
 
-  root.WorkerPrompts = Object.freeze({ PROMPT_VERSION, buildWorkerPrompt, packetCompleteness });
+  root.WorkerPrompts = Object.freeze({ PROMPT_VERSION, WORKER_ARTIFACT_BEGIN, WORKER_ARTIFACT_END, buildWorkerPrompt, packetCompleteness });
   if (typeof module !== "undefined" && module.exports) module.exports = root.WorkerPrompts;
 })();
