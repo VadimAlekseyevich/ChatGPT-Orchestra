@@ -17,6 +17,9 @@ Expected Phase 13 checks:
 - completed task summaries and decision register are bounded;
 - the same task logical role can be rebuilt for a different agent identity;
 - fresh Lead replacement preserves the existing planning stage/run ID;
+- actual serialized packet size is checked at prompt time, not only packet metadata;
+- structural truncation in work-critical Lead/Worker/Reviewer/Integrator data fails closed to `NEEDS_USER(context_packet_incomplete)`;
+- fail-closed prompts do not carry the structurally incomplete work payload into normal execution instructions;
 - Orchestrator API v4 exposes `contextSummary` / `contextPacket` and keeps privileged calls unavailable to agent sessions;
 - Portable State exports/imports ContextStore while remaining compatible with alpha.13 bundles that lack the namespace.
 
@@ -30,6 +33,7 @@ Expected Phase 13 checks:
 6. Confirm the first new prompt says it is a fresh-session replacement and contains `PORTABLE CONTEXT PACKET`.
 7. Confirm protocol context still uses the original project/stage/run ID; a new planning run must not be created.
 8. Finish the stage normally and verify planning advances exactly once.
+9. Re-register an already live Lead and confirm no duplicate planning prompt is dispatched.
 
 ## Edge smoke — Worker replacement
 
@@ -50,6 +54,19 @@ For a lost Reviewer or Integrator:
 - validated artifact/merge evidence is still present;
 - author/reviewer separation, Git provenance and integration policies remain unchanged.
 
+## Fail-closed packet smoke
+
+Use a development build/test fixture to force one work-critical packet section to contain structural truncation metadata or to exceed its real serialized role budget while metadata still claims `withinBudget=true`.
+
+Expected behavior:
+
+- Lead does not emit a planning artifact or advance stage;
+- Worker does not create/fetch a task branch or modify the repository;
+- Reviewer does not approve or request rework from partial evidence;
+- Integrator/repair does not merge, resolve conflicts, verify, commit or push;
+- the only allowed protocol outcome is `NEEDS_USER` with `payload.reason=context_packet_incomplete`;
+- the fail-closed bootstrap includes compact completeness diagnostics but does not replay the omitted/incomplete work payload.
+
 ## Project Bundle migration
 
 1. Pause/Stop a project after at least one packet has been generated.
@@ -61,4 +78,4 @@ For a lost Reviewer or Integrator:
 
 ## Release gate
 
-Do not call Phase 13 verified if a fresh executor requires scrolling/copying the old ChatGPT conversation to understand its role. Persisted state + packet must be sufficient for the orchestration contract.
+Do not call Phase 13 verified if a fresh executor requires scrolling/copying the old ChatGPT conversation to understand its role. Persisted state + packet must be sufficient for the orchestration contract. Do not call it verified if a structurally incomplete work-critical packet can reach normal task/review/integration execution.
