@@ -12,7 +12,8 @@
     integration: "orchestra.integration.v1",
     recovery: "orchestra.recovery.v1",
     events: "orchestra.eventBus.v1",
-    agents: "orchestra.tabRegistry.v1"
+    agents: "orchestra.tabRegistry.v1",
+    context: "orchestra.context.v1"
   });
   const ALL_STORE_KEYS = Object.freeze(Object.values(STORE_KEYS));
   const SECRET_KEYS = new Set([
@@ -104,6 +105,17 @@
     return { schemaVersion: 1, runtimeStatus: "idle", agents: {}, updatedAt: now };
   }
 
+  function defaultContextState(projectId, now = 0) {
+    return {
+      schemaVersion: 1,
+      projectId,
+      leadSummary: null,
+      decisions: [],
+      packetAudit: [],
+      updatedAt: now
+    };
+  }
+
   function forceRecoveryRequired(state, projectId, now) {
     const previous = state && typeof state === "object" ? clone(state) : {};
     return {
@@ -132,7 +144,8 @@
       [STORE_KEYS.integration]: clone(namespaces.integration),
       [STORE_KEYS.recovery]: forceRecoveryRequired(namespaces.recovery, projectId, now),
       [STORE_KEYS.events]: clone(namespaces.events),
-      [STORE_KEYS.agents]: importedAgentRegistry(now)
+      [STORE_KEYS.agents]: importedAgentRegistry(now),
+      [STORE_KEYS.context]: clone(namespaces.context || defaultContextState(projectId, now))
     };
   }
 
@@ -160,7 +173,8 @@
         integration: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.integration], id)),
         recovery: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.recovery], id)),
         events: sanitizeEventStore(raw?.[STORE_KEYS.events], id),
-        agents: emptyPortableAgentRegistry()
+        agents: emptyPortableAgentRegistry(),
+        context: stripRuntimeBindingsDeep(projectScoped(raw?.[STORE_KEYS.context], id) || defaultContextState(id, 0))
       };
       const snapshot = redactSecrets({
         schemaVersion: PORTABLE_SCHEMA_VERSION,
@@ -180,7 +194,7 @@
       if (!projectId) return { ok: false, reason: "portable_project_id_missing" };
       if (!snapshot.namespaces || typeof snapshot.namespaces !== "object" || Array.isArray(snapshot.namespaces)) return { ok: false, reason: "portable_namespaces_missing" };
       if (!snapshot.namespaces.projects?.projects?.[projectId]) return { ok: false, reason: "portable_project_payload_missing" };
-      for (const name of ["scheduler", "reviews", "integration", "recovery"]) {
+      for (const name of ["scheduler", "reviews", "integration", "recovery", "context"]) {
         const namespace = snapshot.namespaces[name];
         if (namespace !== null && namespace !== undefined && (typeof namespace !== "object" || Array.isArray(namespace))) {
           return { ok: false, reason: "portable_namespace_invalid", namespace: name };
