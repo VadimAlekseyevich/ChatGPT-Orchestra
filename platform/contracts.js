@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const CONTRACT_VERSION = 3;
+  const CONTRACT_VERSION = 4;
 
   const AGENT_RUNTIME_METHODS = Object.freeze([
     "load",
@@ -35,6 +35,18 @@
   const STATE_STORE_METHODS = Object.freeze(["get", "set"]);
   const TRANSACTIONAL_STATE_STORE_METHODS = Object.freeze(["get", "set", "remove", "clear", "transaction"]);
   const TIMER_RUNTIME_METHODS = Object.freeze(["scheduleRecurring", "cancel"]);
+  const GIT_WORKSPACE_METHODS = Object.freeze([
+    "loadRepository",
+    "snapshotBase",
+    "createTaskWorkspace",
+    "createIntegrationWorkspace",
+    "status",
+    "diff",
+    "validateScope",
+    "runVerification",
+    "commit",
+    "cleanup"
+  ]);
 
   const API_COMMANDS = Object.freeze([
     "startProject",
@@ -72,6 +84,8 @@
     "metrics",
     "reviewDetails",
     "integrationEvidence",
+    "contextSummary",
+    "contextPacket",
     "project",
     "scheduler",
     "schedulerDecisions",
@@ -93,6 +107,7 @@
   function assertStateStore(value) { return assertContract("state_store", value, STATE_STORE_METHODS); }
   function assertTransactionalStateStore(value) { return assertContract("transactional_state_store", value, TRANSACTIONAL_STATE_STORE_METHODS); }
   function assertTimerRuntime(value) { return assertContract("timer_runtime", value, TIMER_RUNTIME_METHODS); }
+  function assertGitWorkspace(value) { return assertContract("git_workspace", value, GIT_WORKSPACE_METHODS); }
 
   function normalizeRuntimeSender(sender = {}) {
     const kind = String(sender.kind || "unknown");
@@ -113,12 +128,14 @@
     STATE_STORE_METHODS,
     TRANSACTIONAL_STATE_STORE_METHODS,
     TIMER_RUNTIME_METHODS,
+    GIT_WORKSPACE_METHODS,
     API_COMMANDS,
     API_QUERIES,
     assertAgentRuntime,
     assertStateStore,
     assertTransactionalStateStore,
     assertTimerRuntime,
+    assertGitWorkspace,
     normalizeRuntimeSender
   };
 

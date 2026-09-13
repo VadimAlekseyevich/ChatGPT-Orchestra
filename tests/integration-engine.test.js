@@ -181,7 +181,8 @@ test("text merge conflict creates a persisted repair task and a bounded second I
   assert.deepEqual(store.listRepairs()[0].responsibleTaskIds, ["T1", "T2"]);
   assert.equal(store.listRepairs()[0].nextSequence, 2);
   assert.equal(prompts.length, 2);
-  assert.match(prompts[1].prompt, /REPAIR ATTEMPT: 1/);
+  assert.match(prompts[1].prompt, /PORTABLE REPAIR PACKET/);
+  assert.match(prompts[1].prompt, /"attempt": 1/);
   assert.match(prompts[1].prompt, /Use sequence=2/);
 });
 

@@ -88,6 +88,7 @@
         this.lastPathname = snapshot.pathname;
         this.establishBaseline(snapshot, busy, now, "startup");
         if (busy) {
+          this.fingerprintFallbackNotBefore = now;
           this.emit({ type: "generation_started", reason: "busy_at_start" }, snapshot);
         }
         return;
@@ -97,6 +98,7 @@
         const previousPathname = this.lastPathname;
         this.lastPathname = snapshot.pathname;
         this.establishBaseline(snapshot, busy, now, "navigation");
+        if (busy) this.fingerprintFallbackNotBefore = now;
         this.logger?.debug?.("conversation_navigation_baseline", {
           reason,
           from: previousPathname,
@@ -106,6 +108,14 @@
         });
         this.emit({ type: "conversation_changed" }, snapshot);
         return;
+      }
+
+      // Once an explicit generation/busy signal is observed, the current
+      // baseline is known to be active work rather than late page hydration.
+      // Disable fingerprint hydration grace for the rest of that generation,
+      // including its busy -> idle settling window.
+      if (busy && now < this.fingerprintFallbackNotBefore) {
+        this.fingerprintFallbackNotBefore = now;
       }
 
       // During startup/navigation hydration, idle text can appear late even when

@@ -102,7 +102,11 @@ test("task packet is bounded, strips transcript/runtime state and carries depend
   assert.equal(packet.logicalRole.logicalRoleId, "task:P1:T2");
   assert.equal(packet.dependencies[0].taskId, "T1");
   assert.equal(packet.artifactRefs[0].commit, "a".repeat(40));
-  assert.ok(packet.repositoryContext.modules.length <= 18);
+  assert.ok(
+    packet.repositoryContext?.omittedForBudget === true
+      || (Array.isArray(packet.repositoryContext?.modules) && packet.repositoryContext.modules.length <= 18),
+    "repository context must be bounded or explicitly omitted for budget"
+  );
   assert.equal(packet.provenance.promptContractVersion, 4);
 });
 
