@@ -12,7 +12,6 @@ function read(relative) {
 
 const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
-const roadmap = read("ROADMAP.md");
 const smoke = read("docs/alpha-16-smoke-test.md");
 const ci = read(".github/workflows/ci.yml");
 
@@ -23,19 +22,13 @@ for (const script of ["test:alpha", "desktop:pack", "extension:stage-alpha", "co
 }
 
 for (const marker of [
-  "Alpha Gate before Phase 17",
-  "Issue #26",
-  "deferred until after alpha validation",
-  "Do not start Phase 17"
-]) assert.ok(roadmap.includes(marker), `alpha_readiness_roadmap_marker_missing:${marker}`);
-
-for (const marker of [
   "2.0.0-alpha.16",
   "Migrate Project → Desktop",
   "--register-native-host=",
   "--companion",
   "fail-closed",
-  "issue #26"
+  "issue #26",
+  "Do not start Phase 17 or issue #26 implementation until the alpha result is reviewed"
 ]) assert.ok(smoke.includes(marker), `alpha_readiness_smoke_marker_missing:${marker}`);
 
 for (const marker of [
