@@ -1,1245 +1,654 @@
-# ChatGPT Orchestra — Detailed Roadmap
+# ChatGPT Orchestra — Roadmap: Browser Extension → Desktop Application
 
-> Статус документа: архитектурный и продуктовый roadmap.
+> **Статус документа:** основной архитектурный и продуктовый roadmap после `2.0.0-alpha.10`.
 >
-> Цель: превратить текущий single-tab `DONE/FAIL/ERROR` auto-continue MVP в устойчивый multi-agent orchestrator, который принимает задачу и GitHub-репозиторий, строит и критикует план, декомпозирует его в DAG независимых задач, распределяет работу между несколькими ChatGPT-агентами, организует review/integration и умеет безопасно ставить проект на паузу и продолжать после перезапуска.
+> **Текущий baseline:** Phases 0–9 завершены. Orchestra уже умеет planning, parallel scheduling, Git artifact validation, independent review, verified integration и deterministic Pause/Resume/Crash Recovery внутри Microsoft Edge extension.
+>
+> **Новая цель:** не переписывать продукт заново, а постепенно превратить существующую extension-реализацию в platform-neutral Orchestra Core и затем перенести основной runtime в отдельное desktop-приложение.
 
 ---
 
-## 1. Видение продукта
+# 1. Новое видение продукта
 
-### 1.1. Целевой пользовательский сценарий
+ChatGPT Orchestra должна эволюционировать из браузерного расширения в локальную инженерную программу, которая:
 
-Пользователь должен иметь возможность сделать минимум действий:
+1. хранит проект и orchestration state локально;
+2. управляет несколькими ChatGPT executor sessions;
+3. работает с локальным Git repository/worktrees;
+4. запускает локальные verification commands;
+5. переживает закрытие браузера, приложения и перезапуск компьютера;
+6. показывает весь проект через единый desktop Dashboard;
+7. использует extension только как временный/опциональный browser bridge;
+8. в конечном состоянии может работать без extension.
 
-1. открыть ChatGPT;
-2. дать цель проекта/изменения;
-3. дать ссылку на GitHub-репозиторий;
-4. нажать `Start Orchestra`;
-5. наблюдать за процессом или уйти;
-6. при необходимости нажать `Pause`;
-7. позже открыть браузер и нажать `Resume`;
-8. получить готовые изменения, историю решений, результаты проверок и понятный итоговый отчёт.
-
-Идеальный UX:
+Целевой пользовательский сценарий:
 
 ```text
-USER GOAL + REPOSITORY
-        |
-        v
-DISCOVERY -> PLAN -> CRITIQUE -> REPLAN -> DECOMPOSE
-                                      |
-                                      v
-                                  TASK DAG
-                                      |
-                                      v
-                     SCHEDULER / ORCHESTRATOR CORE
-                     /        |        |        \
-                    v         v        v         v
-                Worker A  Worker B Worker C  Worker D
-                     \        |        |        /
-                      \       v        v       /
-                       ------ Reviewer -------
-                              |
-                              v
-                          Integrator
-                              |
-                              v
-                           Git/CI
-                              |
-                              v
-                         FINAL REVIEW
-                              |
-                              v
-                            USER
+Launch ChatGPT Orchestra Desktop
+          ↓
+Open local repository / clone GitHub repository
+          ↓
+Choose project goal
+          ↓
+Start Orchestra
+          ↓
+Planning → DAG → Parallel Workers → Review → Integration
+          ↓
+Local worktrees + local verification
+          ↓
+Pause / Resume / Recovery
+          ↓
+Verified integration branch
+          ↓
+User-controlled final merge / push / PR
 ```
 
-### 1.2. Что такое ChatGPT Orchestra
-
-ChatGPT Orchestra — не «несколько вкладок, которые разговаривают друг с другом».
-
-Целевая модель:
-
-- вкладки ChatGPT — **исполнительные узлы**;
-- extension service worker — **центральный orchestrator**;
-- task graph — **план выполнения**;
-- event log — **история фактов**;
-- project state — **источник истины**;
-- Git branches/commits/PR — **артефакты работы**;
-- главный чат — **Lead/Architect/Reviewer**, но не база данных;
-- worker-чаты — **заменяемые исполнители**;
-- Integrator — **роль**, а не обязательно постоянно занятая вкладка.
-
-### 1.3. Главный принцип
-
-> Чаты не должны быть источником состояния системы.
-
-Любой чат может:
-
-- зависнуть;
-- закрыться;
-- быть перезагружен;
-- потерять часть контекста;
-- повторить старый ответ;
-- вернуть некорректный служебный флаг;
-- быть заменён новым чатом.
-
-После любого такого события Orchestra должна понимать, что уже сделано, что выполняется, кто чем занят и какой следующий безопасный шаг.
+Пользователь не должен воспринимать браузерные вкладки как сам продукт. ChatGPT sessions — только один из типов executor nodes.
 
 ---
 
-## 2. Не-цели первой большой версии
+# 2. Что уже построено и не должно быть переписано
 
-Чтобы не превратить проект в бесконечную платформу до появления работающего продукта, в первой архитектурной итерации НЕ требуется:
+Phases 0–9 остаются foundation нового desktop-продукта.
 
-- собственный LLM backend;
-- собственный inference;
-- десятки одновременно работающих агентов;
-- распределённый серверный scheduler;
-- полноценная IDE;
-- автоматическая поддержка всех AI-сервисов;
-- сложное обучение агентов на истории;
-- автономный self-modifying orchestrator;
-- гарантия полностью unattended разработки любого проекта.
+| Phase | Результат | Статус |
+|---|---|---|
+| 0 | Rename / repository hygiene | ✅ Complete |
+| 1 | Deterministic ChatGPT DOM adapter | ✅ Complete |
+| 2 | Service Worker + Tab Registry | ✅ Complete |
+| 3 | Orchestra Protocol v1 + Event Bus | ✅ Complete |
+| 4 | Project Bootstrap + Planning DAG | ✅ Complete |
+| 5 | Conflict-aware Parallel Scheduler | ✅ Complete |
+| 6 | Git Task Isolation / artifact provenance | ✅ Complete |
+| 7 | Independent Review Loop | ✅ Complete |
+| 8 | Integrator + Semantic Conflict remediation | ✅ Complete |
+| 9 | Pause / Stop Now / Resume / Crash Recovery | ✅ Complete (`2.0.0-alpha.10`) |
 
-Первый серьёзный релиз должен доказать более узкую гипотезу:
+Следующие части должны максимально переиспользоваться:
 
-> 1 Lead + N Workers + Reviewer/Integrator могут устойчиво выполнить заранее ограниченную программную задачу быстрее и надёжнее одного последовательного чата, сохраняя recoverable state и контролируемый Git workflow.
+```text
+Protocol
+Planning pipeline
+Task graph / DAG validation
+Scheduler
+Conflict policy
+Task/run state machines
+Git provenance rules
+Review loop
+Integration policy
+Recovery control plane
+Prompt contracts
+Event identity / idempotency
+```
+
+Browser-specific части будут постепенно превращены в adapters:
+
+```text
+chrome.tabs
+chrome.runtime messaging
+chrome.storage.local
+chrome.alarms
+MV3 service-worker lifecycle
+popup UI
+ChatGPT content scripts / DOM bridge
+```
 
 ---
 
-## 3. Архитектурные принципы
+# 3. Главная стратегия миграции
 
-### 3.1. Orchestrator-first
+## 3.1. Никакого big-bang rewrite
 
-Все межагентные взаимодействия проходят через Orchestrator Core.
-
-Запрещённая целевая архитектура:
+Запрещённый путь:
 
 ```text
-Worker A -> Worker B -> Integrator -> Worker A
+Extension
+   ↓
+остановить разработку
+   ↓
+переписать всё под Electron
+   ↓
+надеяться, что поведение осталось тем же
 ```
 
-Правильная:
+Правильный путь:
 
 ```text
-Worker A -> Orchestrator -> Integrator
-Integrator -> Orchestrator -> Worker A
+Existing Extension
+       ↓
+Platform contracts вокруг существующего Core
+       ↓
+Extension adapters используют те же contracts
+       ↓
+Portable persistence + Orchestrator API
+       ↓
+Desktop shell запускает тот же Core
+       ↓
+Extension временно работает как Agent bridge
+       ↓
+Local Git/worktree runtime
+       ↓
+Direct desktop ChatGPT runtime
+       ↓
+Desktop becomes primary product
 ```
 
-### 3.2. Event-driven, а не prompt-chain-driven
+На каждом шаге предыдущий runtime должен оставаться рабочим до появления deterministic parity нового.
 
-Система реагирует не на «смысл текста вообще», а на формализованные события:
+## 3.2. Core не знает о платформе
 
-- `READY`;
-- `TASK_ACCEPTED`;
-- `PROGRESS`;
-- `DONE`;
-- `BLOCKED`;
-- `ERROR`;
-- `REVIEW_APPROVED`;
-- `CHANGES_REQUIRED`;
-- `CONFLICT`;
-- `CONFLICT_RESOLVED`;
-- `NEEDS_USER`;
-- `HEARTBEAT`.
-
-### 3.3. Idempotency everywhere
-
-Повтор одного события не должен приводить к повторному merge, повторной выдаче той же задачи или повторному выполнению необратимого действия.
-
-Каждое событие имеет как минимум:
+После portability phases внутри Core не должно быть прямых зависимостей от:
 
 ```text
+chrome.*
+Electron APIs
+Playwright APIs
+DOM
+SQLite driver
+Node child_process
+filesystem paths конкретной OS
+```
+
+Core работает только через interfaces/contracts.
+
+## 3.3. Extension становится reference adapter
+
+Текущая extension не выбрасывается.
+
+Она выполняет две роли:
+
+1. reference implementation platform contracts;
+2. временный companion bridge между desktop Core и обычными Edge/ChatGPT tabs.
+
+Это позволяет перенести control plane на компьютер раньше, чем будет готов direct browser automation.
+
+## 3.4. Desktop сначала control plane, потом executor runtime
+
+Не нужно одновременно переносить Scheduler и переписывать ChatGPT automation.
+
+Промежуточное состояние:
+
+```text
+Desktop App
+  ├─ Orchestra Core
+  ├─ SQLite state
+  ├─ Dashboard
+  └─ AgentRuntime: Extension Bridge
+                         ↓
+                 Edge extension
+                         ↓
+                    ChatGPT tabs
+```
+
+Позже:
+
+```text
+Desktop App
+  ├─ Orchestra Core
+  ├─ SQLite state
+  ├─ Dashboard
+  ├─ Local Git Runtime
+  └─ AgentRuntime: Playwright/CDP
+                         ↓
+                 managed Chromium
+                         ↓
+                    ChatGPT sessions
+```
+
+---
+
+# 4. Целевая архитектура
+
+```text
+                           ┌──────────────────────────┐
+                           │       Desktop UI         │
+                           │   Dashboard / Controls   │
+                           └────────────┬─────────────┘
+                                        │
+                               Orchestrator API
+                                        │
+                           ┌────────────▼─────────────┐
+                           │      Orchestra Core      │
+                           │                          │
+                           │ Planning / Scheduler     │
+                           │ Review / Integration     │
+                           │ Recovery / Protocol      │
+                           │ State machines           │
+                           └────────────┬─────────────┘
+                                        │
+                              Platform Contracts
+              ┌─────────────────────────┼─────────────────────────┐
+              │                         │                         │
+      ┌───────▼────────┐        ┌───────▼────────┐       ┌────────▼───────┐
+      │  AgentRuntime  │        │   StateStore   │       │  GitWorkspace │
+      └───────┬────────┘        └───────┬────────┘       └────────┬───────┘
+              │                         │                         │
+       extension bridge           chrome.storage              GitHub REST
+              or                       or                        or
+       Playwright/CDP               SQLite                  local Git CLI
+              │                         │                         │
+              └─────────────────────────┴─────────────────────────┘
+```
+
+UI никогда не читает Store напрямую. Она работает через Orchestrator API.
+
+---
+
+# 5. Platform contracts
+
+Контракты вводятся постепенно поверх существующего кода. Сначала допускаются wrappers вокруг текущих классов; не требуется одномоментное перемещение всех файлов.
+
+## 5.1. AgentRuntime
+
+Core должен видеть logical agents, а не Chrome tabs.
+
+Минимальный contract:
+
+```text
+AgentRuntime
+  listAgents()
+  createAgent(role, options)
+  destroyAgent(agentId)
+  getAgentState(agentId)
+  sendPrompt(agentId, prompt)
+  stopGeneration(agentId)
+  bindProtocolContext(agentId, context)
+  clearProtocolContext(agentId)
+  openAgent(agentId)
+  subscribeAgentEvents(listener)
+```
+
+Реализации:
+
+```text
+ExtensionAgentRuntime
+DesktopBridgeAgentRuntime
+PlaywrightAgentRuntime
+FakeAgentRuntime
+```
+
+`agentId` не должен означать `tabId`, `pageId` или browser process ID.
+
+## 5.2. StateStore
+
+```text
+StateStore
+  get(namespace, key)
+  set(namespace, key, value)
+  delete(namespace, key)
+  transaction(fn)
+  snapshot(projectId)
+  migrate(fromVersion, toVersion)
+```
+
+Реализации:
+
+```text
+ChromeStorageStateStore
+SQLiteStateStore
+MemoryStateStore
+```
+
+Core state schema должен быть одинаковым независимо от backend.
+
+## 5.3. TimerRuntime
+
+Вместо прямых `chrome.alarms` / `setInterval`:
+
+```text
+TimerRuntime
+  schedule(id, when/policy)
+  cancel(id)
+  now()
+  subscribe(listener)
+```
+
+Реализации:
+
+```text
+ChromeAlarmRuntime
+NodeTimerRuntime
+FakeDeterministicTimerRuntime
+```
+
+## 5.4. GitWorkspace / GitProvider
+
+Существующий `GitProvider` сохраняется для independent provenance checks.
+
+Для desktop добавляется более сильный local contract:
+
+```text
+GitWorkspace
+  openRepository(path/url)
+  getBaseState()
+  createTaskWorkspace(taskId, runId, startSha)
+  getChangedFiles(workspaceId)
+  getDiff(workspaceId)
+  commit(workspaceId, message)
+  createIntegrationWorkspace(runId)
+  mergeTaskArtifact(...)
+  push(...)
+  cleanup(...)
+```
+
+Desktop-реализация использует локальный Git и worktrees.
+
+## 5.5. CommandRunner
+
+```text
+CommandRunner
+  run(command, args, cwd, policy)
+  cancel(runId)
+```
+
+Обязательные свойства:
+
+- timeout;
+- bounded stdout/stderr;
+- explicit cwd;
+- sanitized environment;
+- cancellation;
+- audit record;
+- repository trust policy.
+
+## 5.6. Orchestrator API
+
+Единственная точка между UI и Core.
+
+Commands:
+
+```text
+createProject
+startPlanning
+startExecution
+pause
+stopNow
+resume
+retryTask
+cancelTask
+changePriority
+reassignAgent
+requestReview
+startIntegration
+```
+
+Queries:
+
+```text
+getProject
+getTaskGraph
+getAgents
+getEvents
+getWarnings
+getRecoveryState
+getMetrics
+```
+
+Subscriptions:
+
+```text
+projectChanged
+taskChanged
+agentChanged
+eventAdded
+warningAdded
+recoveryChanged
+```
+
+Popup, desktop renderer и будущие clients используют один contract.
+
+---
+
+# 6. Persistence strategy
+
+## 6.1. Canonical domain state
+
+Canonical state должен сериализоваться без Chrome/Electron objects.
+
+Запрещено сохранять как source of truth:
+
+```text
+Tab objects
+DOM nodes
+Browser handles
+Electron WebContents
+Playwright Page references
+process handles
+```
+
+Разрешены logical references:
+
+```text
+agentId
 projectId
 taskId
 runId
-eventId
-agentId
-sequence
+reviewId
+integrationRunId
+workspaceId
+branch
+commit SHA
+protocol context
 ```
 
-### 3.4. Recoverability
+## 6.2. Desktop SQLite
 
-В любой момент должно быть возможно:
-
-- закрыть браузер;
-- открыть его позже;
-- восстановить проект;
-- определить статус каждой задачи;
-- проверить Git-состояние;
-- продолжить только безопасные операции.
-
-### 3.5. Conflict prevention > conflict resolution
-
-Лучше не допускать конфликтов декомпозицией и scheduling, чем героически решать их после возникновения.
-
-### 3.6. Проверяемые задачи вместо «один prompt = одна задача»
-
-Единица декомпозиции — не «то, что нейронка выполнит одним запросом», а:
-
-> минимальная независимо проверяемая, ограниченная по scope и потенциально сливаемая единица работы.
-
-Агент внутри такой задачи может сделать несколько шагов.
-
-### 3.7. Human override всегда существует
-
-Пользователь может:
-
-- pause;
-- resume;
-- stop;
-- отменить task;
-- перепривязать worker;
-- изменить приоритет;
-- запретить merge;
-- вручную решить блокер;
-- потребовать review.
-
----
-
-## 4. Целевая компонентная архитектура
-
-### 4.1. Browser Extension
+Desktop target persistence:
 
 ```text
-extension/
+SQLite (WAL mode)
+  projects
+  snapshots
+  events
+  runtime metadata
+  migrations
+```
+
+Большие artifacts не обязательно хранить blob'ами в БД. Для них можно использовать application data directory + content hash/reference.
+
+## 6.3. Portable Project Bundle
+
+До перехода на desktop необходимо уметь экспортировать project state из extension.
+
+Пример логической структуры:
+
+```text
+orchestra-project/
   manifest.json
-  background/
-    orchestrator.js
-    scheduler.js
-    event-bus.js
-    state-store.js
-    tab-registry.js
-    recovery.js
-    protocol.js
-  content/
-    chatgpt-adapter.js
-    generation-detector.js
-    composer-adapter.js
-    response-parser.js
-  popup/
-    popup.html
-    popup.js
-    popup.css
-  dashboard/
-    index.html
-    app.js
-    app.css
+  project.json
+  state.json
+  events.ndjson
+  decisions.json
+  artifacts/
 ```
 
-Текущий `content.js` не выбрасывается. Из него нужно извлечь проверенную DOM-логику в `ChatGPTAdapter`.
+Bundle должен:
 
-### 4.2. Orchestrator Core
+- иметь schemaVersion;
+- быть валидируемым до import;
+- не содержать secrets;
+- позволять extension → desktop import;
+- поддерживать fail-closed migration.
 
-Ответственность:
+## 6.4. Migration rule
 
-- состояние проекта;
-- реестр агентов;
-- реестр вкладок;
-- маршрутизация событий;
-- назначение задач;
-- контроль зависимостей;
-- retries/timeouts;
-- pause/resume;
-- crash recovery;
-- синхронизация с Git/GitHub-артефактами;
-- аудит.
-
-Orchestrator не должен самостоятельно «думать» вместо Lead. Он выполняет детерминированную механику.
-
-### 4.3. ChatGPT Adapter
-
-Content script отвечает только за UI ChatGPT:
-
-- определить начало/конец генерации;
-- прочитать последний assistant response;
-- извлечь protocol envelope;
-- отправить prompt;
-- проверить, что composer свободен;
-- остановить generation при `Stop Now`;
-- сообщать состояние вкладки;
-- не принимать глобальных решений.
-
-### 4.4. Agent Pool
-
-Агент — логическая сущность, а не номер вкладки.
-
-Пример:
-
-```json
-{
-  "agentId": "agent-03",
-  "tabId": 417,
-  "chatUrl": "https://chatgpt.com/c/...",
-  "role": "worker",
-  "status": "running",
-  "taskId": "T-017",
-  "runId": "run-0041",
-  "lastSeenAt": 0
-}
-```
-
-Роли могут меняться:
-
-- Lead;
-- Planner;
-- Critic;
-- Decomposer;
-- Worker;
-- Reviewer;
-- Integrator;
-- Debugger;
-- Test Reviewer;
-- Security Reviewer.
-
-Для MVP несколько функций могут выполняться одним Lead-чатом.
-
-### 4.5. Project State Store
-
-Runtime source of truth хранится в `chrome.storage.local`.
-
-Рекомендуемая модель:
-
-```json
-{
-  "schemaVersion": 1,
-  "projectId": "proj-...",
-  "status": "running",
-  "repository": {
-    "url": "https://github.com/owner/repo",
-    "defaultBranch": "main",
-    "baseSha": "..."
-  },
-  "settings": {
-    "maxWorkers": 4,
-    "autoMerge": false,
-    "maxRetries": 2
-  },
-  "agents": {},
-  "tasks": {},
-  "runs": {},
-  "processedEvents": {},
-  "eventCursor": 0,
-  "createdAt": 0,
-  "updatedAt": 0
-}
-```
-
-### 4.6. Репозиторные артефакты
-
-Не надо коммитить в Git каждое runtime-событие. Это создаст шум и contention.
-
-В репозитории проекта полезно иметь долговечные артефакты:
+Никакой автоматический scheduler dispatch до успешной migration/reconciliation.
 
 ```text
-AGENTS.md
-.orchestra/
-  project.md
-  plan.md
-  task-graph.json
-  decisions.md
-  final-report.md
+Load
+  ↓
+Validate schema
+  ↓
+Backup
+  ↓
+Migrate
+  ↓
+Reconcile artifacts/runtime
+  ↓
+Open dispatch gate
 ```
-
-Опционально:
-
-```text
-.orchestra/archive/
-```
-
-Runtime event log остаётся локальным/в extension storage, а в репозиторий попадают только значимые checkpoints и решения.
 
 ---
 
-## 5. Протокол Orchestra
+# 7. Desktop technology direction
 
-### 5.1. Почему `DONE` недостаточно
+## 7.1. Reference stack
 
-Legacy-флаг полезен, но не отвечает на вопросы:
-
-- какая задача завершена;
-- какой run завершён;
-- какой commit создан;
-- это свежий ответ или старый;
-- требуется review или merge;
-- завершилась работа или только подшаг.
-
-### 5.2. Формат протокола v1
-
-Предпочтительный формат — одна последняя служебная строка:
+Для первой desktop-реализации предпочтительный путь:
 
 ```text
-@@ORCH {"v":1,"event":"DONE","project":"P1","task":"T17","run":"R4","agent":"A2","eventId":"E91","commit":"abc123"}
+Electron + Node.js
 ```
 
-Почему JSON envelope лучше набора свободных флагов:
+Причина — существующий Core написан на JavaScript, а будущий runtime требует browser automation, filesystem, SQLite, Git и subprocess management.
 
-- расширяемость;
-- строгий parse;
-- версия протокола;
-- удобное логирование;
-- меньше неоднозначности.
+Важно: Electron — shell, а не часть Core.
 
-Если DOM/рендеринг создаёт проблемы с JSON, должен существовать fallback compact syntax:
+Если позже появится причина перейти на Tauri/другой shell, Core/Orchestrator API не должны от этого меняться.
+
+## 7.2. ChatGPT runtime
+
+Конечный desktop runtime:
 
 ```text
-@@ORCH|v=1|event=DONE|task=T17|run=R4|eventId=E91|commit=abc123
+Playwright / Chrome DevTools Protocol
++ dedicated persistent Chromium profile
 ```
 
-### 5.3. Правила парсинга
+Не извлекать cookies из обычного пользовательского браузерного профиля.
 
-Парсер:
+Пользователь один раз выполняет login в выделенном Orchestra browser profile.
 
-1. читает только последнюю непустую строку;
-2. требует точный prefix `@@ORCH`;
-3. ограничивает максимальный размер envelope;
-4. валидирует `v`;
-5. валидирует event type;
-6. сверяет `task/run/agent` с ожидаемым assignment;
-7. отклоняет stale events;
-8. проверяет `eventId` на duplicate;
-9. не исполняет неизвестные действия автоматически.
+## 7.3. Local Git
 
-### 5.4. Legacy compatibility
+Предпочтительно использовать установленный системный Git.
 
-На переходном этапе:
+Credentials:
 
-```text
-DONE  -> legacy DONE
-FAIL  -> legacy NEEDS_USER
-ERROR -> legacy ERROR
-```
+- SSH agent;
+- Git Credential Manager;
+- system credential helper.
 
-После появления protocol v1 старые правила остаются как manual/compatibility mode.
+Orchestra не должна хранить GitHub password/token в project state/event log.
 
 ---
 
-## 6. Task model
+# 8. Версионный roadmap после alpha.10
 
-Минимальная задача:
+## Phase 10 — Platform Boundary + Orchestrator API
 
-```json
-{
-  "id": "T-017",
-  "title": "Implement refresh token rotation",
-  "objective": "...",
-  "status": "ready",
-  "priority": 50,
-  "dependencies": ["T-012"],
-  "scope": {
-    "allow": ["src/auth/**", "tests/auth/**"],
-    "deny": ["infra/**"]
-  },
-  "acceptanceCriteria": [
-    "new refresh token invalidates old token",
-    "existing login flow remains compatible",
-    "tests cover reuse of old token"
-  ],
-  "verification": [
-    "npm test -- auth"
-  ],
-  "expectedArtifacts": [
-    "commit"
-  ],
-  "risk": "medium",
-  "estimatedParallelism": "high"
-}
-```
+**Статус:** NEXT.
 
-### 6.1. Task status state machine
-
-```text
-DRAFT
-  |
-  v
-READY <---------------------+
-  |                         |
-  v                         |
-ASSIGNED                     |
-  |                         |
-  v                         |
-RUNNING -----> BLOCKED -----+
-  |              |
-  |              v
-  |          NEEDS_USER
-  |
-  v
-DONE_BY_WORKER
-  |
-  v
-REVIEWING
-  |        \
-  |         \
-  v          v
-APPROVED   CHANGES_REQUIRED
-  |             |
-  |             +----> READY/ASSIGNED
-  v
-INTEGRATING
-  |
-  +----> INTEGRATION_FAILED -> READY/BLOCKED
-  |
-  v
-MERGED
-  |
-  v
-VERIFIED
-```
-
-Terminal states:
-
-- `VERIFIED`;
-- `CANCELLED`;
-- `FAILED_PERMANENTLY`.
-
-### 6.2. Run model
-
-Одна task может выполняться несколько раз.
-
-```text
-T17 / R1 -> failed
-T17 / R2 -> changes required
-T17 / R3 -> approved
-```
-
-Нельзя идентифицировать выполнение только по `taskId`.
-
----
-
-## 7. DAG и Scheduler
-
-### 7.1. Planner output
-
-Planner должен вернуть не список шагов, а граф:
-
-```json
-{
-  "tasks": ["T1", "T2", "T3"],
-  "edges": [
-    ["T1", "T2"],
-    ["T1", "T3"]
-  ]
-}
-```
-
-Scheduler определяет `runnable task`:
-
-```text
-status == READY
-AND all dependencies == VERIFIED/MERGED according to policy
-AND no exclusive resource lock
-AND project.status == RUNNING
-```
-
-### 7.2. Conflict score
-
-Для пары задач оценивается вероятность конфликта.
-
-MVP heuristic:
-
-```text
-score = overlap(fileScopes)
-      + sharedSubsystemPenalty
-      + sameMigrationPenalty
-      + sharedSchemaPenalty
-```
-
-Планировщик должен снижать параллелизм, если две задачи:
-
-- изменяют один и тот же файл;
-- меняют общий публичный API;
-- меняют одну БД-схему;
-- затрагивают общий config;
-- одна фактически зависит от интерфейса другой.
-
-### 7.3. Scheduling policy v1
-
-Приоритет кандидатов:
-
-1. задача разблокирует наибольшее число downstream-задач;
-2. высокий business priority;
-3. низкий conflict score с уже запущенными задачами;
-4. подходящий agent capability;
-5. меньший риск — если система восстанавливается после crash.
-
-### 7.4. Worker slots
-
-`maxWorkers` — конфигурация, а не захардкоженное число вкладок.
-
-Начальное значение:
-
-```text
-Lead: 1
-Worker slots: 4
-```
-
-Integrator/Reviewer могут временно занимать один из worker slots либо отдельный слот по настройке.
-
----
-
-## 8. Planning pipeline
-
-Planning нельзя сводить к одному prompt.
-
-Целевой pipeline:
-
-```text
-Repository discovery
-       |
-       v
-Planner -> Plan v1
-       |
-       v
-Critic -> Critique
-       |
-       v
-Planner -> Plan v2
-       |
-       v
-Decomposer -> Task DAG
-       |
-       v
-DAG Critic / Validator
-       |
-       v
-Approved execution graph
-```
-
-### 8.1. Repository discovery
-
-Перед планом агент должен собрать:
-
-- язык/stack;
-- entrypoints;
-- package/build system;
-- test commands;
-- lint/typecheck;
-- основные модули;
-- persistence/schema;
-- CI;
-- coding conventions;
-- существующие `AGENTS.md`/contributor instructions;
-- возможные sensitive areas;
-- размер и структуру репозитория.
-
-### 8.2. Plan Critic checklist
-
-Critic обязан искать:
-
-- скрытые зависимости;
-- слишком крупные задачи;
-- слишком мелкие бессмысленные задачи;
-- overlap scope;
-- отсутствующие tests;
-- отсутствующие acceptance criteria;
-- migrations без rollback/compatibility;
-- риск breaking API;
-- security impact;
-- невозможность проверить результат;
-- задачи, которые выглядят параллельными, но семантически зависимы.
-
-### 8.3. DAG validator
-
-Детерминированная часть должна проверить:
-
-- нет циклов;
-- все dependency IDs существуют;
-- нет orphaned critical tasks;
-- каждая task имеет acceptance criteria;
-- каждая code task имеет verification strategy либо явную причину её отсутствия;
-- scope не пустой;
-- terminal objective покрыт набором задач.
-
----
-
-## 9. Git strategy
-
-### 9.1. Главный принцип
-
-Workers никогда не должны независимо пушить изменения прямо в `main`.
-
-Ветки:
-
-```text
-orchestra/<projectId>/<taskId>/<runId>
-```
-
-Пример:
-
-```text
-orchestra/P12/T17/R3
-```
-
-### 9.2. Task output
-
-Успешный worker возвращает:
-
-- branch;
-- head commit SHA;
-- краткое summary;
-- changed files;
-- tests performed;
-- известные ограничения.
-
-### 9.3. Интеграция
-
-После review:
-
-```text
-Worker branch
-   |
-   v
-Review
-   |
-   v
-Integration branch / target branch
-   |
-   v
-Merge/rebase/cherry-pick policy
-   |
-   v
-Integration tests
-   |
-   v
-Accepted
-```
-
-### 9.4. Git abstraction
-
-Extension не должна быть архитектурно привязана к одному способу изменения GitHub.
-
-Ввести интерфейс:
-
-```text
-GitProvider
-  getRepositoryState()
-  getBranchState()
-  getCommit()
-  createBranch()
-  compare()
-  merge()
-  getCIStatus()
-```
-
-Первая реализация может опираться на возможности, доступные агенту/подключению GitHub. Позже можно добавить прямую интеграцию с GitHub API или companion service без изменения scheduler/task model.
-
----
-
-## 10. Review и Integrator
-
-### 10.1. Worker не может сам утвердить свою работу
-
-`DONE` от worker означает только:
-
-> «исполнитель считает работу законченной и предоставил артефакты».
-
-Это НЕ означает `VERIFIED`.
-
-### 10.2. Reviewer проверяет
-
-- acceptance criteria;
-- diff соответствует scope;
-- нет лишних изменений;
-- tests достаточны;
-- архитектурные правила соблюдены;
-- нет очевидного regression;
-- документация обновлена, если требуется.
-
-Результат:
-
-```text
-REVIEW_APPROVED
-```
-
-или:
-
-```text
-CHANGES_REQUIRED
-```
-
-с конкретным списком замечаний.
-
-### 10.3. Integrator — не «решатель текстовых Git conflicts»
-
-Integrator отвечает за:
-
-- merge/rebase;
-- текстовые конфликты;
-- API mismatch;
-- semantic conflicts;
-- cross-task regressions;
-- integration tests;
-- согласование изменений между ранее независимыми ветками.
-
-### 10.4. Semantic conflict
-
-Нужно считать конфликтом ситуацию, когда Git merge успешен, но:
-
-- один worker поменял контракт функции;
-- другой использует старый контракт;
-- тесты падают;
-- типы расходятся;
-- schema/config assumptions различаются.
-
-Это отдельный класс `INTEGRATION_FAILED`, а не только `MERGE_CONFLICT`.
-
----
-
-# 11. Версионный roadmap
-
-## Phase 0 — Repository reset / Rename hygiene
-
-**Статус:** завершена в `2.0.0-alpha.1`.
-
-**Цель:** привести репозиторий в состояние, где новое название и новая цель не конфликтуют со старым README.
-
-### Задачи
-
-- [x] переименовать title расширения в `ChatGPT Orchestra`;
-- [x] обновить package/manifest description;
-- [x] исправить старые repository URLs;
-- [x] обновить badges;
-- [x] описать legacy MVP как baseline;
-- [x] добавить ссылку на этот `ROADMAP.md`;
-- [x] решить policy версионирования;
-- [x] добавить `CHANGELOG.md`;
-- [x] добавить минимальную структуру `docs/` и ADR.
-
-### Definition of Done
-
-- в пользовательской документации нигде не утверждается, что проект всё ещё называется `ChatGPT DONE Auto-Continue`;
-- clone/install instructions указывают новый repository;
-- старые функции описаны как foundation, а не конечный продукт.
-
----
-
-## Phase 1 — Adapter extraction and deterministic core
-
-**Статус:** реализуется в `2.0.0-alpha.2`.
-
-**Цель:** отделить DOM automation от логики управления.
-
-### Известная reliability-проблема legacy baseline
-
-Зафиксирован реальный случай, когда ответ завершался флагом `DONE`, но расширение не всегда его обрабатывало. Legacy detector в значительной степени зависел от того, что content script успеет увидеть переход UI через `stop-button`: если busy-состояние было пропущено из-за timing, DOM-изменения или изменения интерфейса ChatGPT, проверка флага могла вообще не запуститься.
-
-Это считается отдельным acceptance requirement Phase 1, а не случайным UI-багом.
-
-Phase 1 должна гарантировать:
-
-- completion detection не зависит от одного selector/signal;
-- явный generation/busy signal остаётся основным сигналом, но имеет fallback;
-- изменение fingerprint нового assistant response запускает settling даже если busy signal был полностью пропущен;
-- side effect разрешён только после quiet/stability window;
-- response, уже существующий при загрузке страницы, является baseline и не считается новым completion;
-- SPA-navigation в другой существующий conversation создаёт новый baseline и не запускает старый `DONE`;
-- одинаковый текст в двух разных assistant turns различается по fingerprint;
-- duplicate completion одного и того же response подавляется;
-- structured logs позволяют понять, какой signal привёл к completion или почему flag не был обработан.
-
-Обязательный regression scenario:
-
-```text
-startup: old response exists -> no action
-new assistant response appears
-busy/stop-button transition is NOT observed
-response becomes stable
-DONE is parsed exactly once
-```
+**Цель:** сделать существующий extension Core переносимым, не меняя пользовательское поведение.
 
 ### Реализация
 
-- [x] разбить `content.js` на модули;
-- [x] `GenerationDetector`;
-- [x] `ComposerAdapter`;
-- [x] `AssistantMessageReader`;
-- [x] `ProtocolParser` boundary;
-- [x] `ChatGPTAdapter` facade;
-- [x] унифицировать сообщения content <-> future background;
-- [x] ввести typed message names/constants;
-- [x] сохранить legacy `DONE/FAIL/ERROR` behavior;
-- [x] добавить structured logs;
-- [x] централизовать selectors;
-- [x] добавить selector fallback strategy;
-- [x] добавить detection для unavailable composer/error page;
-- [x] добавить fallback completion detection по response fingerprint;
-- [x] добавить SPA navigation baseline reset.
+- [ ] составить inventory всех прямых `chrome.*` usages;
+- [ ] разделить domain Core и extension composition root;
+- [ ] ввести `AgentRuntime` contract;
+- [ ] ввести `StateStore` contract;
+- [ ] ввести `TimerRuntime` contract;
+- [ ] формализовать `Orchestrator API` command/query DTO;
+- [ ] обернуть текущий TabRegistry/targeted messaging в `ExtensionAgentRuntime`;
+- [ ] обернуть `chrome.storage.local` в `ChromeStorageStateStore`;
+- [ ] обернуть `chrome.alarms` в `ChromeAlarmRuntime`;
+- [ ] перевести Planning/Scheduler/Review/Integration/Recovery на dependency injection contracts;
+- [ ] service worker оставить composition root, а не domain owner;
+- [ ] добавить `FakeAgentRuntime`, `MemoryStateStore`, deterministic timer для tests;
+- [ ] запретить новым Core modules импортировать browser APIs напрямую.
 
-### Тесты
-
-- [x] unit tests parser;
-- [x] unit tests generation state transitions;
-- [x] fixtures с вариантами response text;
-- [x] duplicate response/completion test;
-- [x] composer occupied test;
-- [x] generation started/stopped test;
-- [x] missed-busy recovery test;
-- [x] stale page/navigation response test.
-
-### DoD
-
-Старый функционал работает через новый Adapter, а orchestration logic больше не находится внутри DOM observer callback. Browser smoke test реального production ChatGPT остаётся обязательным перед тем, как считать prerelease проверенной в реальном UI.
-
----
-
-## Phase 2 — Service Worker Orchestrator + Tab Registry
-
-**Цель:** научить extension централизованно управлять несколькими ChatGPT tabs.
-
-### Реализация
-
-- [ ] добавить Manifest V3 service worker;
-- [ ] запросить минимально необходимые `tabs`/related permissions;
-- [ ] `TabRegistry`;
-- [ ] уникальные `agentId`;
-- [ ] mapping `agentId <-> tabId <-> chatUrl`;
-- [ ] создать N worker tabs;
-- [ ] обнаруживать закрытие вкладки;
-- [ ] обнаруживать navigation внутри вкладки;
-- [ ] reconnect после reload;
-- [ ] heartbeat content -> background;
-- [ ] отправка prompt конкретному agent;
-- [ ] status `IDLE/BUSY/OFFLINE/ERROR`;
-- [ ] защита от случайной регистрации обычной пользовательской ChatGPT-вкладки как worker.
-
-### UX
-
-Popup:
+### Инвариант
 
 ```text
-Project: none/running
-Lead: connected
-Workers: 3/4 connected
-[Start]
-[Pause]
-[Stop]
-[Open Dashboard]
+core/** MUST NOT reference chrome.*
 ```
 
 ### DoD
 
-Extension создаёт минимум 3 worker tabs, присваивает роли, переживает reload одной вкладки и гарантированно отправляет команду выбранному agent, не затрагивая остальные вкладки.
+1. Edge extension ведёт себя так же, как alpha.10.
+2. Existing Phase 1–9 state machines работают через injected contracts.
+3. Core tests запускаются без Chrome globals.
+4. UI вызывает commands через Orchestrator API, а не напрямую через internal stores.
+
+Это самый важный шаг всей desktop migration.
 
 ---
 
-## Phase 3 — Orchestra Protocol v1 + Event Bus
+## Phase 11 — Portable Persistence + Project Export/Import
 
-**Цель:** заменить неструктурированные флаги формальным межагентным протоколом.
+**Цель:** отвязать durable state от `chrome.storage.local` и подготовить migration bridge.
 
 ### Реализация
 
-- [ ] protocol envelope `@@ORCH`;
-- [ ] JSON schema/validator;
-- [ ] `eventId`;
-- [ ] `projectId/taskId/runId/agentId`;
-- [ ] monotonic sequence per run;
-- [ ] `processedEvents` store;
-- [ ] Event Bus;
-- [ ] routing table;
-- [ ] stale event rejection;
-- [ ] duplicate event suppression;
-- [ ] malformed protocol -> safe failure;
-- [ ] unknown event -> audit + no automatic side effect;
-- [ ] legacy fallback mode.
-
-### Failure tests
-
-- одна строка `DONE` приходит дважды;
-- вкладка reload после ответа;
-- старый ответ прочитан после восстановления;
-- worker отправляет `DONE` для чужого taskId;
-- worker отправляет invalid JSON;
-- duplicate event с другим text body;
-- sequence идёт назад.
+- [ ] определить canonical portable state schema;
+- [ ] namespace existing stores через общий StateStore;
+- [ ] `ChromeStorageStateStore` conformance suite;
+- [ ] `MemoryStateStore` conformance suite;
+- [ ] первая `SQLiteStateStore` реализация под Node;
+- [ ] transactional write semantics;
+- [ ] snapshot + append-only event persistence strategy;
+- [ ] schema migration registry;
+- [ ] automatic pre-migration backup;
+- [ ] portable Project Bundle export;
+- [ ] Project Bundle import/validation;
+- [ ] redaction secrets из export;
+- [ ] extension → SQLite migration test.
 
 ### DoD
 
-Любое side effect действие можно однозначно связать с уникальным event; повторная обработка не меняет итоговое состояние.
-
----
-
-## Phase 4 — Project Bootstrap + Lead/Planner/Critic
-
-**Цель:** пользователь задаёт project goal + repository, после чего Orchestra сама подготавливает execution plan.
-
-### Реализация
-
-- [ ] экран `New Project`;
-- [ ] repository URL validation;
-- [ ] project ID;
-- [ ] initial user goal immutable snapshot;
-- [ ] Lead initialization prompt;
-- [ ] Repository Discovery prompt/template;
-- [ ] Planner prompt/template;
-- [ ] Critic prompt/template;
-- [ ] Replan prompt/template;
-- [ ] Decomposer prompt/template;
-- [ ] DAG Critic prompt/template;
-- [ ] сохранение approved plan;
-- [ ] генерация `AGENTS.md` proposal, но не перезапись существующего без review;
-- [ ] импорт существующих repository instructions.
-
-### Planning quality gates
-
-План не допускается к execution, если:
-
-- отсутствует хотя бы одна acceptance criterion для code task;
-- DAG цикличен;
-- dependencies ссылаются на отсутствующие tasks;
-- слишком большой task не прошёл critique;
-- critical migration не имеет отдельной проверки;
-- непонятно, как определить завершение проекта.
-
-### DoD
-
-Для тестового репозитория Orchestra после одного initial request создаёт валидный DAG с dependencies, scope, acceptance criteria и verification commands.
-
----
-
-## Phase 5 — Scheduler + Parallel Workers
-
-**Цель:** реально выполнять независимые задачи параллельно.
-
-### Реализация
-
-- [ ] task state machine;
-- [ ] run state machine;
-- [ ] runnable queue;
-- [ ] worker availability;
-- [ ] maxWorkers setting;
-- [ ] priority;
-- [ ] dependency unlocking;
-- [ ] retries;
-- [ ] timeout/watchdog;
-- [ ] BLOCKED routing;
-- [ ] `NEEDS_USER` escalation;
-- [ ] resource locks;
-- [ ] file-scope overlap heuristic;
-- [ ] scheduler decision log.
-
-### Scheduler invariant
-
-Никогда не назначать две задачи одновременно, если policy считает их mutually exclusive.
-
-### DoD
-
-На synthetic project минимум 3 независимые задачи одновременно выполняются тремя worker-чатами; зависимая четвёртая запускается только после выполнения prerequisites.
-
----
-
-## Phase 6 — Git Task Isolation
-
-**Цель:** каждая рабочая задача оставляет проверяемый Git-артефакт и не портит соседнюю работу.
-
-### Реализация
-
-- [ ] branch naming convention;
-- [ ] base SHA snapshot;
-- [ ] branch metadata в task/run;
-- [ ] worker instruction запрещает direct push в target branch;
-- [ ] commit SHA validation;
-- [ ] changed-files validation against scope;
-- [ ] detect unexpected target-branch movement;
-- [ ] branch freshness check;
-- [ ] cleanup policy для abandoned runs;
-- [ ] task branch provenance в event log.
-
-### Safety
-
-Если worker утверждает `DONE`, но commit/branch нельзя подтвердить:
+Один и тот же persisted project можно:
 
 ```text
-DONE_BY_WORKER -> ARTIFACT_INVALID
+export from extension
+→ validate
+→ import into SQLiteStateStore
+→ load identical logical project/task/review/integration/recovery state
 ```
 
-а не `APPROVED`.
-
-### DoD
-
-Каждая code task имеет отдельную ветку и проверяемый commit. Никакой worker не пишет напрямую в protected target branch.
+Никакие browser IDs не являются обязательной частью переносимого snapshot.
 
 ---
 
-## Phase 7 — Review Loop
+## Phase 12 — Portable Dashboard + Observability API
 
-**Цель:** отделить «worker закончил» от «изменение принято».
-
-### Реализация
-
-- [ ] Reviewer role;
-- [ ] review packet;
-- [ ] acceptance criteria comparison;
-- [ ] diff scope check;
-- [ ] `APPROVED/CHANGES_REQUIRED`;
-- [ ] structured review comments;
-- [ ] rework run creation;
-- [ ] max review iterations;
-- [ ] escalation при цикле review;
-- [ ] optional specialized reviewer selection.
-
-### Review packet
-
-Reviewer получает только необходимый контекст:
-
-```text
-Task definition
-Acceptance criteria
-Relevant architecture rules
-Worker summary
-Diff/commit
-Test output
-Known limitations
-```
-
-Не нужно засорять Reviewer полной историей worker-чата.
-
-### DoD
-
-Задача с намеренно нарушенным acceptance criterion гарантированно возвращается на rework и не может перейти в integration через обычный `DONE`.
-
----
-
-## Phase 8 — Integrator + Semantic Conflicts
-
-**Цель:** безопасно собирать параллельные ветки в единый результат.
-
-### Реализация
-
-- [ ] Integrator role allocation;
-- [ ] merge conflict event;
-- [ ] integration branch;
-- [ ] deterministic merge order;
-- [ ] integration tests;
-- [ ] semantic conflict classification;
-- [ ] identify responsible upstream tasks;
-- [ ] reopen task / create repair task;
-- [ ] integration summary;
-- [ ] final target branch policy.
-
-### Merge ordering
-
-В первую очередь интегрировать:
-
-- фундаментальные API/schema tasks;
-- затем consumers;
-- затем isolated docs/tests where appropriate.
-
-DAG должен помогать определить порядок, а не timestamp окончания worker.
-
-### DoD
-
-Система проходит два сценария:
-
-1. реальный текстовый merge conflict;
-2. clean merge + падающие integration tests из-за semantic incompatibility.
-
-В обоих случаях создаётся корректный remediation path.
-
----
-
-## Phase 9 — Pause / Resume / Crash Recovery
-
-**Цель:** сделать Orchestra реально usable для долгой работы.
-
-### 9.1. Pause semantics
-
-`Pause`:
-
-- не выдавать новые tasks;
-- разрешить текущим ChatGPT generations закончиться;
-- сохранить ответы/events;
-- не начинать новые integrations;
-- перевести project в `PAUSED` после достижения safe point.
-
-### 9.2. Stop Now semantics
-
-`Stop Now`:
-
-- прекратить новые prompts;
-- по возможности остановить активные generations;
-- сохранить snapshot;
-- пометить interrupted runs;
-- не считать interrupted worker завершившим task.
-
-### 9.3. Resume algorithm
-
-```text
-Load persisted project
-    |
-    v
-Validate schema version
-    |
-    v
-Reconnect known tabs
-    |
-    +--> recreate missing replaceable worker tabs
-    |
-    v
-Reconcile active runs
-    |
-    v
-Reconcile Git branch/commit state
-    |
-    v
-Reject stale events
-    |
-    v
-Rebuild runnable queue
-    |
-    v
-Resume scheduler
-```
-
-### Recovery policy
-
-После crash никакое необратимое действие не выполняется только потому, что «вероятно раньше оно не успело выполниться».
-
-Сначала reconciliation, затем действие.
-
-### DoD
-
-Acceptance test:
-
-1. запустить проект с минимум 3 active workers;
-2. принудительно закрыть браузер;
-3. открыть снова;
-4. нажать Resume;
-5. получить корректное продолжение без duplicate task assignment/merge/event side effect.
-
-Это один из главных release gates проекта.
-
----
-
-## Phase 10 — Dashboard / Observability
-
-**Цель:** пользователь понимает происходящее без чтения пяти вкладок.
+**Цель:** построить Dashboard один раз и затем использовать его и в extension, и в desktop.
 
 ### Dashboard v1
 
 Показывает:
 
 ```text
-Project status
-Goal
-Repository / base SHA
-
-DAG
-  T1 VERIFIED
-  T2 RUNNING  -> worker-2
-  T3 BLOCKED  -> waiting T2
-  T4 REVIEWING
-
-Agents
-  Lead      BUSY
-  Worker-1  IDLE
-  Worker-2  RUNNING T2
-  Worker-3  OFFLINE
-  Worker-4  REVIEWING T4
-
+Project status / goal / repository / base
+Recovery lifecycle
+DAG and task states
+Active runs
+Reviews
+Integration state
+Agent health
+Scheduler decisions
 Recent events
-Warnings
-User actions required
+Warnings / NEEDS_USER
+Git artifacts
+Local metrics
+```
+
+### Правило UI
+
+Dashboard не имеет прямого доступа к:
+
+```text
+chrome.storage
+chrome.tabs
+SQLite
+SchedulerStore
+ReviewStore
+IntegrationStore
+```
+
+Только:
+
+```text
+Orchestrator API
 ```
 
 ### Возможности
@@ -1247,732 +656,780 @@ User actions required
 - [ ] task details;
 - [ ] event timeline;
 - [ ] agent health;
-- [ ] filter by severity;
-- [ ] open corresponding chat;
-- [ ] pause/resume;
-- [ ] retry task;
-- [ ] cancel task;
-- [ ] force review;
+- [ ] scheduler explanation;
+- [ ] pause/resume/stop;
+- [ ] retry/cancel task;
 - [ ] change priority;
-- [ ] reassign worker;
-- [ ] inspect reasons scheduler не запускает task.
+- [ ] reassign agent;
+- [ ] open corresponding executor;
+- [ ] inspect review/integration evidence;
+- [ ] filter warnings/errors;
+- [ ] export project/debug bundle.
 
 ### DoD
 
-Пользователю не нужно переключаться по worker tabs, чтобы понять общий статус проекта.
+Один Dashboard frontend может работать:
+
+1. внутри extension host;
+2. в standalone test host с Fake Orchestrator API.
+
+Это будущий renderer desktop app.
 
 ---
 
-## Phase 11 — Context Management
+## Phase 13 — Context Management + Portable Agent Packets
 
-**Цель:** не уничтожить качество агентов бесконечной историей.
+**Цель:** ChatGPT session должна быть заменяемым executor, а не носителем project memory.
 
 ### Реализация
 
-- [ ] Lead state summary;
-- [ ] worker task packet;
-- [ ] context budget policy;
-- [ ] summarize completed tasks;
+- [ ] Lead summary artifact;
+- [ ] task packet schema;
+- [ ] review packet schema;
+- [ ] integration packet schema;
 - [ ] decisions register;
-- [ ] fresh worker replacement;
-- [ ] context refresh after N tasks/tokens/iterations;
-- [ ] не пересылать полный worker transcript другим агентам;
-- [ ] provenance links вместо копирования больших логов.
-
-### Lead summary example
-
-```text
-Project P12
-Base: 9af...
-Verified: T1,T2,T4
-Running: T6(worker-2), T7(worker-3)
-Blocked: T8 waiting T6
-Integration health: green
-Known decision: refresh tokens rotate on every use
-Open risk: migration backward compatibility
-```
+- [ ] context budget policy;
+- [ ] completed-task compaction;
+- [ ] artifact references вместо transcript copying;
+- [ ] fresh Lead replacement;
+- [ ] fresh Worker replacement;
+- [ ] fresh Reviewer/Integrator bootstrap из persisted packets;
+- [ ] prompt version provenance;
+- [ ] bounded repository context selection.
 
 ### DoD
 
-Lead может быть заменён новым чатом на основании persisted summary + project artifacts без потери критичного состояния.
+Полностью новый ChatGPT session может взять незавершённую logical role из persisted state + packets без доступа к полной истории старого чата.
+
+Это обязательный prerequisite для надёжного desktop AgentRuntime.
 
 ---
 
-## Phase 12 — Reliability and Safety Hardening
+## Phase 14 — Contract Tests + CI Foundation
 
-**Цель:** система fail-closed там, где автоматическое продолжение опасно.
+**Цель:** второй runtime нельзя добавлять без автоматических parity tests.
 
-### Ограничения
+### Unit / deterministic tests
 
-Ввести budgets:
+- protocol;
+- reducers/state machines;
+- scheduler;
+- review;
+- integration;
+- recovery;
+- migrations;
+- project export/import;
+- context packets.
+
+### Adapter conformance suites
+
+Один набор tests применяется к:
+
+```text
+AgentRuntime
+StateStore
+TimerRuntime
+GitWorkspace
+Orchestrator API
+```
+
+### Browser fixtures
+
+Mock ChatGPT HTML states:
+
+```text
+idle
+generating
+completed
+composer occupied
+error
+login required
+navigation changed
+```
+
+### CI
+
+- [ ] GitHub Actions;
+- [ ] unit tests;
+- [ ] integration tests;
+- [ ] manifest validation;
+- [ ] migration tests;
+- [ ] extension mock-browser tests;
+- [ ] SQLite tests;
+- [ ] package/version consistency.
+
+### DoD
+
+PR не может считаться green без автоматического Core + contract suite.
+
+Production ChatGPT smoke-test остаётся отдельным manual/release gate.
+
+---
+
+## Phase 15 — Desktop Shell Bootstrap
+
+**Цель:** запустить настоящий Orchestra Core как локальный desktop process, пока executor'ы ещё fake.
+
+### Reference implementation
+
+```text
+apps/desktop/
+  main/       Electron/Node process
+  renderer/   shared Dashboard
+```
+
+### Реализация
+
+- [ ] desktop application bootstrap;
+- [ ] application data directory;
+- [ ] SQLiteStateStore;
+- [ ] NodeTimerRuntime;
+- [ ] local structured logs;
+- [ ] Orchestrator API IPC boundary;
+- [ ] shared Dashboard renderer;
+- [ ] FakeAgentRuntime;
+- [ ] open/import Project Bundle;
+- [ ] crash/restart desktop process recovery;
+- [ ] dev packaging for primary OS;
+- [ ] no Electron/Node objects leaked into Core DTOs.
+
+### DoD
+
+Desktop app может выполнить synthetic end-to-end project через FakeAgentRuntime:
+
+```text
+planning fixture
+→ DAG
+→ parallel fake workers
+→ review
+→ integration
+→ pause app
+→ kill app
+→ reopen
+→ deterministic resume
+```
+
+Extension при этом продолжает работать независимо.
+
+---
+
+## Phase 16 — Desktop Control Plane + Extension Companion Bridge
+
+**Цель:** перенести реальный source of truth из MV3 service worker в desktop, не переписывая ChatGPT DOM automation.
+
+### Архитектура переходного периода
+
+```text
+Desktop
+  Orchestra Core
+  SQLite
+  Dashboard
+      │
+      │ AgentRuntime transport
+      ▼
+Edge Extension (thin companion)
+      │
+      ▼
+ChatGPT tabs/content adapter
+```
+
+### Реализация
+
+- [ ] companion transport contract;
+- [ ] secure pairing desktop ↔ extension;
+- [ ] production transport: Native Messaging или equivalent authenticated local channel;
+- [ ] dev-only loopback transport при необходимости;
+- [ ] extension service worker перестаёт быть canonical project state owner в companion mode;
+- [ ] extension передаёт только agent/browser events;
+- [ ] desktop выдаёт prompts/stop/context commands;
+- [ ] protocol events persist'ятся desktop EventStore;
+- [ ] extension popup в companion mode показывает connection status + `Open Orchestra`;
+- [ ] migration wizard Chrome storage → SQLite;
+- [ ] disconnect/reconnect bridge recovery;
+- [ ] version handshake extension ↔ desktop.
+
+### Security
+
+Local bridge обязан иметь authentication/pairing; нельзя открывать unauthenticated localhost control endpoint.
+
+### DoD
+
+Реальный ChatGPT multi-agent project проходит Phases 4–9, но canonical Core/state уже живут в desktop process. Extension используется только как browser/DOM adapter.
+
+Это главный migration checkpoint: Orchestra уже desktop-приложение по control plane, даже если executor browser bridge ещё extension-based.
+
+---
+
+## Phase 17 — Local Repository Runtime + Git Worktrees
+
+**Цель:** перенести инженерную работу с remote-only Git artifact validation на полноценные локальные isolated workspaces.
+
+### Repository modes
+
+Desktop поддерживает:
+
+```text
+Open existing local repository
+Clone repository from URL
+```
+
+### Task isolation
+
+Каждый mutating run получает local worktree:
+
+```text
+<OrchestraData>/workspaces/<projectId>/<taskId>/<runId>/
+```
+
+и branch:
+
+```text
+orchestra/<projectId>/<taskId>/<runId>
+```
+
+### Реализация
+
+- [ ] local repository registry;
+- [ ] Git CLI adapter;
+- [ ] worktree create/remove;
+- [ ] per-run workspace metadata;
+- [ ] diff/scope validation локально;
+- [ ] local commit validation;
+- [ ] integration worktree;
+- [ ] deterministic `--no-ff` merges;
+- [ ] local verification commands;
+- [ ] optional push only after local validation;
+- [ ] system Git credentials / SSH integration;
+- [ ] abandoned worktree cleanup policy;
+- [ ] workspace recovery after app crash;
+- [ ] changed-files provenance independent from agent report.
+
+### Command execution trust model
+
+Repository получает trust state:
+
+```text
+UNTRUSTED
+TRUSTED
+```
+
+До выполнения repository-defined commands пользователь должен явно разрешить local execution.
+
+CommandRunner должен:
+
+- работать только внутри approved workspace cwd;
+- использовать args, а не unsafe shell interpolation по умолчанию;
+- ограничивать runtime/output;
+- поддерживать cancel;
+- redaction известных secret patterns;
+- писать audit metadata без secret values.
+
+### DoD
+
+Worker task может быть полностью проверена локально:
+
+```text
+worktree
+→ changes
+→ scope check
+→ tests
+→ commit
+→ independent review
+```
+
+без обязательного push каждой промежуточной ветки на GitHub.
+
+---
+
+## Phase 18 — Direct Desktop ChatGPT AgentRuntime
+
+**Цель:** убрать обязательную зависимость desktop Orchestra от browser extension.
+
+### Runtime
+
+Предпочтительно:
+
+```text
+Playwright / CDP
++ dedicated persistent Chromium profile
+```
+
+### Реализация
+
+- [ ] desktop-managed Chromium lifecycle;
+- [ ] dedicated Orchestra browser profile;
+- [ ] explicit login onboarding;
+- [ ] logical agent ↔ browser page mapping;
+- [ ] reuse существующего ChatGPTAdapter logic где возможно;
+- [ ] generation detection;
+- [ ] prompt send;
+- [ ] Stop Generation;
+- [ ] protocol artifact extraction;
+- [ ] heartbeat/health;
+- [ ] chat navigation detection;
+- [ ] fresh page replacement;
+- [ ] browser process crash recovery;
+- [ ] visible/open-chat action из Dashboard;
+- [ ] rate/concurrency policy;
+- [ ] compatibility contract tests против ExtensionAgentRuntime.
+
+### Не делать
+
+- не читать cookies из обычного Edge/Chrome профиля;
+- не хранить ChatGPT credentials в Orchestra state;
+- не связывать `agentId` навечно с конкретной Page;
+- не считать browser process source of truth.
+
+### DoD
+
+Полный reference project выполняется из desktop app без установленного extension.
+
+В этот момент extension становится optional companion/fallback runtime.
+
+---
+
+## Phase 19 — Desktop Parity + Reliability / Security Hardening
+
+**Цель:** доказать, что desktop runtime как минимум не слабее extension baseline.
+
+### Parity matrix
+
+Для ExtensionAgentRuntime и PlaywrightAgentRuntime прогоняются одинаковые сценарии:
+
+1. Planning happy path.
+2. Parallel 3–4 Workers.
+3. Dependency unlock.
+4. Review rework.
+5. Text conflict.
+6. Semantic conflict.
+7. Worker/session death.
+8. Duplicate event.
+9. Pause safe point.
+10. Stop Now.
+11. App/browser restart.
+12. Recovered Git progress.
+13. SQLite migration/recovery.
+14. Local worktree recovery.
+
+### Reliability budgets
 
 - max task retries;
 - max review loops;
-- max integration repair loops;
-- max continuous runtime;
-- max agents;
+- max integration repairs;
 - max protocol errors;
-- max unknown state transitions.
+- max browser restarts;
+- max command runtime;
+- max parallel agents;
+- max event/log retention.
 
-### Circuit breakers
+### Security hardening
 
-Автоматически `PAUSE + NEEDS_USER`, если:
-
-- target branch неожиданно изменился;
-- task scope нарушен существенно;
-- повторяются protocol errors;
-- один task циклически возвращается на rework;
-- Git state не удаётся reconciliation;
-- несколько агентов дают противоречивые project assumptions;
-- нет progress длительное время;
-- repository access потерян.
-
-### Permissions
-
-- минимальные extension permissions;
-- никакого произвольного чтения всех страниц;
-- project scope ограничен явно выбранными ChatGPT tabs;
-- sensitive values не писать в event logs;
-- redact known token/password patterns;
-- export/debug logs по явному действию пользователя.
+- [ ] repository trust boundary;
+- [ ] local command execution audit;
+- [ ] secret redaction;
+- [ ] no secrets in Project Bundle;
+- [ ] signed desktop builds;
+- [ ] secure update strategy;
+- [ ] desktop IPC allowlist;
+- [ ] renderer isolation / CSP;
+- [ ] authenticated companion bridge;
+- [ ] file path validation;
+- [ ] destructive Git actions require policy/user gate;
+- [ ] telemetry remains opt-in.
 
 ### DoD
 
-Набор chaos tests не приводит к автоматическому destructive action в неизвестном состоянии.
+Chaos tests не приводят к destructive action в unknown state, а desktop parity suite проходит release threshold.
 
 ---
 
-## Phase 13 — Test Infrastructure + CI
+## Phase 20 — Desktop-first Alpha Release
 
-**Цель:** DOM-зависимое расширение нельзя безопасно развивать только ручным тестом.
+**Цель:** переключить основной продуктовый путь с extension на desktop, не удаляя fallback преждевременно.
 
-### Unit tests
+### Desktop alpha scope
 
-- protocol parser;
-- reducer/state machine;
-- scheduler;
-- DAG validator;
-- conflict heuristic;
-- idempotency;
-- persistence migrations;
-- recovery planner.
+- один active project;
+- local repo или clone by URL;
+- 1 Lead + до 4 Worker slots;
+- Planning/Critic/DAG;
+- conflict-aware scheduler;
+- local worktrees;
+- independent review;
+- verified integration worktree/branch;
+- Pause/Resume/Stop;
+- process/browser restart recovery;
+- portable Dashboard;
+- Project Bundle import/export;
+- manual final target merge/push by default.
 
-### Integration tests
+### Distribution
 
-С fake ChatGPT adapter:
+Первый release target можно ограничить одной primary OS, но Core/platform contracts обязаны оставаться cross-platform.
 
-- несколько workers;
-- delayed response;
-- duplicate response;
-- malformed response;
-- worker disappearing;
-- review rejection;
-- conflict resolution;
-- pause during generation;
-- crash/restart.
+### Extension policy
 
-### Browser/E2E tests
-
-По возможности Playwright/Chromium fixtures для extension UI и mock HTML ChatGPT page.
-
-Не полагаться в CI на настоящий production ChatGPT DOM для каждого теста — это будет flaky и зависеть от аккаунта/сети.
-
-### Selector contract tests
-
-Хранить HTML fixtures основных состояний:
-
-- idle;
-- generating;
-- completed;
-- error;
-- composer occupied;
-- disabled send;
-- login/access issue.
-
-### CI gates
-
-PR нельзя считать green без:
+На alpha extension остаётся:
 
 ```text
-lint
-unit
-integration
-manifest validation
-protocol schema tests
+Optional Companion Runtime
 ```
 
-### DoD
+а не удаляется.
 
-Core scheduler/recovery можно тестировать вообще без браузера и без ChatGPT.
+Она нужна как:
 
----
-
-## Phase 14 — First Alpha Release
-
-**Цель:** ограниченный, но честно работающий end-to-end продукт.
-
-### Alpha scope
-
-Поддерживается:
-
-- один проект одновременно;
-- 1 Lead;
-- до 4 workers;
-- Planner/Critic pipeline;
-- DAG;
-- parallel task scheduling;
-- protocol v1;
-- separate task branches;
-- review loop;
-- Integrator;
-- Pause/Resume;
-- crash recovery;
-- dashboard;
-- manual final merge approval.
-
-Не обещается:
-
-- полная автономность для любых репозиториев;
-- 100% conflict-free operation;
-- long-running unattended days without intervention;
-- работа со всеми браузерами;
-- все Git hosting providers.
+- fallback при ChatGPT DOM/runtime regression в direct desktop browser;
+- migration bridge для старых projects;
+- diagnostic comparison implementation.
 
 ### Release gate
 
-Перед alpha необходимо успешно пройти минимум следующие сценарии:
+Desktop-first alpha нельзя выпускать без успешных сценариев:
 
-1. **Parallel Happy Path** — 4 независимые задачи, затем integration.
-2. **Dependency Path** — downstream task не стартует раньше prerequisite.
-3. **Review Rework** — reviewer возвращает task, worker исправляет.
-4. **Text Conflict** — Integrator решает/эскалирует Git conflict.
-5. **Semantic Conflict** — merge clean, tests fail, создаётся remediation.
-6. **Worker Death** — закрыть worker tab, task корректно recovery/reassign.
-7. **Duplicate DONE** — событие не вызывает повторный side effect.
-8. **Browser Restart** — проект восстанавливается после полного restart.
-9. **Pause/Resume** — pause достигает safe point и корректно продолжается.
-10. **User Required** — агент запрашивает решение, scheduler не маскирует блокер.
-
----
-
-# 12. Prompt architecture
-
-Prompts должны быть версионируемыми ресурсами проекта, а не строками, раскиданными по JS.
-
-Рекомендуемая структура:
-
-```text
-prompts/
-  common/
-    protocol.md
-    safety.md
-  lead/
-    bootstrap.md
-    final-review.md
-  planner/
-    discovery.md
-    plan.md
-    critique.md
-    decompose.md
-  worker/
-    task.md
-    rework.md
-  reviewer/
-    review.md
-  integrator/
-    integrate.md
-    repair.md
-```
-
-Каждый prompt имеет version/id.
-
-Event log должен знать, с какой prompt version выполнялся run.
-
-Это важно для воспроизводимости: изменение prompt может полностью изменить поведение агентов даже при неизменном JS.
+1. fresh install + ChatGPT login onboarding;
+2. open local repository;
+3. clone repository;
+4. 4-task parallel happy path;
+5. dependency path;
+6. review rework;
+7. text conflict;
+8. semantic conflict;
+9. task/browser death;
+10. app process kill/restart;
+11. OS restart / project resume;
+12. Pause/Resume;
+13. Stop Now + late event protection;
+14. local worktree salvage;
+15. export/import project;
+16. extension-companion fallback;
+17. no duplicate irreversible side effects.
 
 ---
 
-# 13. AGENTS.md contract
+## Phase 21 — Post-alpha Cutover / Provider Expansion
 
-`AGENTS.md` должен содержать долговечные инструкции, доступные любому агенту:
+**Цель:** только после desktop alpha решить, что делать с extension как самостоятельным продуктом.
 
-- архитектура;
-- conventions;
-- build/test commands;
-- repository-specific rules;
-- запрещённые действия;
-- Git policy;
-- definition of done;
-- protocol expectations;
-- границы автономности.
+Возможные решения:
 
-Но runtime assignment не должен жить только там.
+### Option A — Extension remains companion only
 
-Плохо:
+Основной сценарий desktop-first, extension — thin bridge.
 
-```text
-Worker 2 сейчас делает T17.
-```
+### Option B — Keep both runtimes
 
-Хорошо для `AGENTS.md`:
+Extension и desktop являются двумя officially supported AgentRuntime implementations.
 
-```text
-Workers modify only the scope assigned by Orchestra.
-Workers never push directly to main.
-Every code task must provide verification evidence.
-```
+### Option C — Deprecate standalone extension orchestration
 
-Текущее назначение хранится в state store/task graph.
+Extension сохраняет только browser integration, если direct desktop runtime доказал большую надёжность.
+
+Только после этого имеет смысл добавлять:
+
+- другие AI providers;
+- другие browser runtimes;
+- remote workers;
+- optional local models;
+- multi-project concurrency;
+- remote orchestration server.
+
+До desktop parity это не приоритет.
 
 ---
 
-# 14. Состояния Agent
+# 9. Миграционные milestones
 
-Рекомендуемая machine state:
+## Milestone A — Portable Core
 
-```text
-UNBOUND
-CONNECTING
-IDLE
-ASSIGNED
-RUNNING
-WAITING_RESPONSE
-BLOCKED
-REVIEWING
-INTEGRATING
-PAUSED
-ERROR
-OFFLINE
-RETIRED
-```
+Phases 10–11.
 
-Инварианты:
+Результат:
 
-- один agent одновременно имеет максимум один active task/run;
-- один run имеет максимум одного owner-agent;
-- `OFFLINE` не считается task failure немедленно;
-- после reconnect agent должен доказать соответствие текущему `runId`;
-- stale tab не получает новые команды.
+> Core больше не привязан к Chrome APIs, state можно перенести из extension storage в SQLite.
 
----
+## Milestone B — Portable Product Surface
 
-# 15. Event log
+Phases 12–14.
 
-Минимальная запись:
+Результат:
 
-```json
-{
-  "id": "evt-000091",
-  "ts": 0,
-  "projectId": "P12",
-  "actor": "agent-03",
-  "type": "TASK_DONE",
-  "taskId": "T17",
-  "runId": "R3",
-  "payload": {
-    "commit": "abc123"
-  }
-}
-```
+> Dashboard, context packets и tests существуют независимо от browser host.
 
-Event log нужен не только для debug.
+## Milestone C — Desktop Control Plane
 
-Он обеспечивает:
+Phases 15–16.
 
-- recovery;
-- audit;
-- объяснение scheduler decisions;
-- поиск duplicate actions;
-- последующий replay для отладки;
-- метрики качества.
+Результат:
 
-Архитектура должна стремиться к тому, чтобы project state можно было восстановить из snapshot + событий после snapshot.
+> Desktop process является source of truth, extension — только Agent bridge.
+
+## Milestone D — Local Engineering Runtime
+
+Phase 17.
+
+Результат:
+
+> Task isolation/testing/integration происходят в локальных worktrees под контролем desktop app.
+
+## Milestone E — Extensionless Runtime
+
+Phase 18.
+
+Результат:
+
+> Desktop управляет ChatGPT sessions напрямую.
+
+## Milestone F — Desktop Alpha
+
+Phases 19–20.
+
+Результат:
+
+> Desktop становится основным способом использования Orchestra.
 
 ---
 
-# 16. Persistence and migrations
+# 10. Repository layout: постепенная цель
 
-Состояние будет меняться между версиями extension.
+Не нужно одним PR физически переносить весь repository.
 
-С первого дня нужен:
-
-```text
-schemaVersion
-```
-
-и migrations:
+Целевой layout:
 
 ```text
-v1 -> v2
-v2 -> v3
+apps/
+  extension/
+  desktop/
+
+packages/
+  core/
+    planning/
+    scheduler/
+    review/
+    integration/
+    recovery/
+  protocol/
+  prompts/
+  contracts/
+    agent-runtime/
+    state-store/
+    timer-runtime/
+    git-workspace/
+    orchestrator-api/
+  adapters/
+    extension/
+    desktop/
+    fake/
+  ui/
+
+content/
+  chatgpt-adapter/
+
+tests/
+  unit/
+  contracts/
+  integration/
+  browser-fixtures/
+  desktop/
 ```
 
-Нельзя просто менять shape объекта в `chrome.storage.local`, иначе обновление extension однажды сломает paused projects.
-
-Migration должна:
-
-- быть идемпотентной;
-- backup старый snapshot;
-- fail closed;
-- не продолжать scheduler при неуспешной миграции.
+Переезд файлов должен происходить только когда boundary уже покрыт tests. Cosmetic folder move сам по себе не является целью.
 
 ---
 
-# 17. Error taxonomy
+# 11. Обновлённые архитектурные инварианты
 
-Не использовать один универсальный `ERROR`.
+Эти правила должны быть закреплены tests и code review:
 
-Минимальные классы:
-
-```text
-PROTOCOL_ERROR
-CHAT_UI_ERROR
-AGENT_LOGIC_ERROR
-TASK_EXECUTION_ERROR
-ARTIFACT_ERROR
-GIT_ERROR
-MERGE_CONFLICT
-INTEGRATION_ERROR
-REVIEW_ERROR
-TIMEOUT
-AUTH_ERROR
-PERMISSION_ERROR
-RECOVERY_ERROR
-USER_INPUT_REQUIRED
-```
-
-У каждого класса своя policy:
-
-- retry;
-- reassign;
-- send to Integrator;
-- ask Lead;
-- ask user;
-- pause whole project.
+1. Core не импортирует `chrome.*`, Electron, Playwright или DOM.
+2. UI не читает persistence backend напрямую.
+3. Extension и desktop используют один Orchestrator API.
+4. `agentId` не равен platform tab/page identifier.
+5. Browser/process objects никогда не являются durable state.
+6. Duplicate `eventId` не производит второй side effect.
+7. Stale `runId` не может завершить fresh attempt.
+8. Worker `DONE` не означает approval.
+9. Approval не означает integration.
+10. Integration verification не означает final target merge без соответствующей policy.
+11. Pause/Stop/Recovery имеют приоритет над scheduling.
+12. Crash recovery всегда выполняет reconciliation до dispatch.
+13. Failed state migration закрывает dispatch gate.
+14. Lost executor session не удаляет task/run history.
+15. Fresh executor получает fresh platform/session identity.
+16. Recovered Git progress принимается только после independent validation.
+17. Local command runner работает только в trusted repository/workspace policy.
+18. Secrets не записываются в event log/project export.
+19. Desktop renderer не получает unrestricted Node capabilities.
+20. Extension companion transport authenticated.
+21. Target branch destructive actions не выполняются в ambiguous state.
+22. Один project snapshot можно загрузить независимо от runtime, который его создал.
 
 ---
 
-# 18. Retry policy
+# 12. Human-in-the-loop levels
 
-Retry должен быть ограниченным и осмысленным.
+Уровни autonomy остаются platform-neutral.
 
-Плохо:
+## Level 0 — Observe
 
-```text
-ERROR -> "попробуй ещё раз" бесконечно
-```
+Планирование и предложения без execution.
 
-Хорошо:
+## Level 1 — Execute, manual integration/final merge
 
-```text
-attempt 1 -> same agent with error context
-attempt 2 -> revised instruction / fresh context
-attempt 3 -> reassign or escalate
-```
+Workers и review автоматизированы, integration/final actions подтверждаются.
 
-Retry counter хранится в run/task state, а не в памяти чата.
+## Level 2 — Auto integration, manual target promotion
 
-Для deterministic errors повтор без изменения входа вообще не нужен.
+Рекомендуемый desktop alpha default.
+
+## Level 3 — Full allowed automation
+
+Только после hardening; destructive target operations выполняются автоматически только при всех configured gates green.
 
 ---
 
-# 19. Human-in-the-loop gates
+# 13. Local metrics / observability
 
-Настройки autonomy level:
-
-### Level 0 — Observe
-
-Orchestra только строит план и предлагает назначения.
-
-### Level 1 — Execute, manual merge
-
-Workers выполняют задачи автоматически, но merge требует подтверждения.
-
-### Level 2 — Auto integrate, manual final merge
-
-Task branches интегрируются автоматически после review/tests, финальное попадание в target branch подтверждает пользователь.
-
-### Level 3 — Full allowed automation
-
-Автоматический final merge только если все configured gates green.
-
-Для alpha рекомендуется Level 1–2.
-
----
-
-# 20. Метрики, которые стоит собирать локально
-
-Для улучшения scheduler и оценки идеи полезны:
+Полезные локальные метрики:
 
 - project completion rate;
 - tasks completed;
-- average attempts per task;
+- attempts per task;
 - review rejection rate;
-- merge conflict rate;
-- semantic integration failure rate;
+- integration repair rate;
+- text/semantic conflict rate;
 - worker utilization;
-- average blocked time;
-- number of human interventions;
+- blocked time;
+- human interventions;
 - duplicate events prevented;
 - recovery success rate;
-- wall-clock speedup vs sequential estimate;
-- task scope violation rate.
+- browser/runtime restarts;
+- task scope violations;
+- local test pass rate;
+- worktree reuse/salvage rate;
+- wall-clock speedup vs sequential estimate.
 
-По умолчанию эти данные могут оставаться локальными. Любая внешняя telemetry должна быть отдельным opt-in решением.
-
----
-
-# 21. Suggested internal module boundaries
-
-```text
-src/
-  core/
-    project-reducer.js
-    task-reducer.js
-    agent-reducer.js
-    invariants.js
-  orchestrator/
-    orchestrator.js
-    command-router.js
-  scheduler/
-    scheduler.js
-    runnable.js
-    priorities.js
-    conflicts.js
-  protocol/
-    parser.js
-    validator.js
-    events.js
-  persistence/
-    store.js
-    migrations.js
-    snapshots.js
-  tabs/
-    registry.js
-    lifecycle.js
-  adapters/
-    chatgpt/
-      selectors.js
-      generation.js
-      composer.js
-      messages.js
-    git/
-      provider.js
-  prompts/
-  ui/
-```
-
-Главное требование: `scheduler`, reducers и protocol parser должны тестироваться без Chrome DOM.
+External telemetry — только отдельное opt-in решение.
 
 ---
 
-# 22. Архитектурные инварианты
+# 14. Что сознательно не делать во время миграции
 
-Эти правила должны быть закреплены тестами:
+Пока desktop parity не достигнут, не приоритетны:
 
-1. `PAUSED` project не выдаёт новые assignments.
-2. Один agent не выполняет два active runs.
-3. Один run не имеет двух owner agents одновременно.
-4. Duplicate `eventId` не производит второй side effect.
-5. Stale `runId` не может завершить новую попытку той же task.
-6. `DONE_BY_WORKER` не равен `VERIFIED`.
-7. Task не становится runnable до выполнения dependencies.
-8. Worker не может самостоятельно перевести task в `MERGED`.
-9. Unknown protocol event не вызывает destructive action.
-10. Recovery сначала reconciles state, потом продолжает scheduler.
-11. Direct push в protected target branch не является нормальным worker path.
-12. Project state не зависит от существования конкретной ChatGPT tab.
-13. Закрытие tab не удаляет task/run history.
-14. Неуспешная state migration останавливает проект.
-15. User `Stop Now` всегда имеет приоритет над scheduler.
+- собственный LLM backend;
+- remote distributed scheduler;
+- multi-machine agent pool;
+- много проектов одновременно;
+- IDE replacement;
+- support десятков providers;
+- automatic secret management собственного формата;
+- cloud sync project state;
+- unattended auto-merge в production branches;
+- попытка заменить Git собственным VCS layer.
+
+Главный риск — не недостаток features, а одновременная смена слишком многих platform assumptions.
 
 ---
 
-# 23. Что не стоит делать
+# 15. Reference end-to-end scenario после миграции
 
-### Не строить orchestration через копирование текста между чатами
-
-Текст — payload, но routing и state должны быть машинными.
-
-### Не давать Lead полный transcript всех workers
-
-Передавать summaries + artifacts + relevant evidence.
-
-### Не назначать фиксированный «пятый чат конфликтов» навсегда
-
-Использовать dynamic role allocation.
-
-### Не считать Git merge conflict единственным видом конфликта
-
-Semantic conflicts важнее.
-
-### Не начинать с собственного backend
-
-Сначала доказать orchestration model внутри extension.
-
-### Не делать бесконечные retries
-
-Всегда budget + escalation.
-
-### Не связывать проект навечно с текущим DOM ChatGPT
-
-ChatGPT UI должен быть adapter boundary, чтобы позже можно было добавить другие исполнительные adapters.
-
----
-
-# 24. Приоритет реализации
-
-Если разработчиков мало, порядок должен быть таким:
-
-```text
-P0  State model + reducers + protocol
-P0  Service worker + tab registry
-P0  Adapter extraction
-P0  Multi-tab targeted messaging
-P0  Idempotency
-P1  Project bootstrap
-P1  Planner/Critic/Decomposer
-P1  DAG scheduler
-P1  Parallel workers
-P1  Pause/Resume
-P1  Crash recovery
-P1  Git branch isolation
-P1  Review loop
-P1  Integrator
-P2  Dashboard
-P2  Context rotation
-P2  conflict-aware scheduling improvements
-P2  metrics
-P3  additional providers/browsers
-```
-
-Почему recovery так высоко: автономная система, которую нельзя безопасно остановить и продолжить, останется демонстрацией, а не инструментом.
-
----
-
-# 25. Рекомендуемые первые реальные milestones
-
-## Milestone A — Multi-tab foundation
-
-Результат:
-
-> Один controller управляет 1 Lead + 2 Workers и адресно отправляет/получает protocol events.
-
-Не делать ещё Planner и Git automation.
-
-## Milestone B — Deterministic task engine
-
-Результат:
-
-> Заранее вручную заданный DAG из 5 synthetic tasks выполняется правильным scheduler order несколькими fake/real workers.
-
-Это отделяет проблемы orchestration от качества planning.
-
-## Milestone C — Planning automation
-
-Результат:
-
-> Lead pipeline сам строит DAG из user goal + repository context.
-
-## Milestone D — Git artifacts + review
-
-Результат:
-
-> Worker branches, commits, review/rework, integration.
-
-## Milestone E — Recovery
-
-Результат:
-
-> Browser kill/restart не ломает project.
-
-## Milestone F — Alpha UX
-
-Результат:
-
-> Dashboard, safe controls, install docs, release package.
-
----
-
-# 26. Самый важный end-to-end сценарий
-
-Разработку следует постоянно проверять на одном reference scenario.
+Reference project должен постоянно использоваться для parity tests.
 
 Пример:
 
-> «В существующий web-проект добавить OAuth login, backend callback, frontend button, tests и documentation».
-
-Хороший DAG может выглядеть так:
+> Добавить OAuth login в существующий web-проект: backend callback, frontend UI, tests и docs.
 
 ```text
-T1 Discover existing auth architecture
-       |
-       v
-T2 Define OAuth contract/config
-      / \
-     v   v
-T3 Backend provider integration    T4 Frontend login flow
-     |                              |
-     v                              v
-T5 Backend tests                  T6 Frontend tests
-      \                           /
-       \                         /
-        v                       v
-          T7 Integration verification
-                    |
-                    v
-                T8 Documentation
+T1 Repository discovery / auth constraints
+           ↓
+T2 OAuth API/config contract
+        ↙          ↘
+T3 Backend       T4 Frontend
+     ↓               ↓
+T5 Backend tests  T6 Frontend tests
+        ↘          ↙
+        T7 Integration verification
+                  ↓
+              T8 Documentation
 ```
 
-Scheduler должен видеть реальную параллельность `T3/T4`, а затем `T5/T6`.
-
-После выполнения система обязана иметь доказуемую цепочку:
+Desktop доказательство результата:
 
 ```text
 user goal
--> approved plan
--> tasks
--> assignments
--> commits
--> reviews
--> integration
--> tests
--> final report
+→ portable project state
+→ approved DAG
+→ local task worktrees
+→ commits
+→ independent reviews
+→ integration worktree
+→ local verification evidence
+→ persisted final report
 ```
 
-Если такая цепочка не восстанавливается после restart, архитектура ещё не закончена.
+После убийства desktop process и browser process эта цепочка должна восстанавливаться из SQLite + Git + project artifacts.
 
 ---
 
-# 27. Критерий успеха проекта
+# 16. Критерий успешной desktop migration
 
-ChatGPT Orchestra можно считать состоявшимся, когда пользователь действительно может:
+Миграцию можно считать состоявшейся, когда пользователь может:
 
-```text
-1. дать цель;
-2. дать репозиторий;
-3. запустить Orchestra;
-4. увидеть, что несколько независимых задач выполняются параллельно;
-5. закрыть браузер посреди работы;
-6. восстановить проект;
-7. увидеть review и integration;
-8. получить проверяемый Git-результат;
-9. понять, почему система приняла каждое важное решение;
-10. вмешаться только там, где автоматическое продолжение небезопасно.
-```
+1. установить desktop app;
+2. войти в ChatGPT через dedicated Orchestra browser profile;
+3. открыть local repository;
+4. дать цель;
+5. запустить несколько параллельных executor sessions;
+6. наблюдать всё через desktop Dashboard;
+7. не использовать extension в normal path;
+8. получить task worktrees/commits/reviews/integration;
+9. закрыть приложение и браузер;
+10. после перезапуска компьютера восстановить проект;
+11. получить тот же logical state независимо от platform handles;
+12. вручную подтвердить final target promotion;
+13. при необходимости переключиться на Extension Companion без потери project state.
 
-Главная ценность проекта — не количество открытых ChatGPT-вкладок.
-
-Главная ценность:
+Главная ценность Orchestra остаётся прежней:
 
 > **устойчивое параллельное выполнение инженерной работы через независимых AI-исполнителей с централизованным состоянием, контролем зависимостей, проверкой результата и безопасным восстановлением.**
 
+Desktop migration не меняет эту модель — она убирает ограничения браузерного extension runtime вокруг уже работающего Core.
+
 ---
 
-# 28. Ближайшая следующая задача
+# 17. Ближайшая следующая задача
 
-После Phase 1 следующая implementation-задача:
+Следующая implementation-задача после `2.0.0-alpha.10`:
 
-> **Phase 2 — introduce a Manifest V3 service-worker orchestrator with a persistent tab registry and targeted messaging, while keeping ChatGPT DOM details behind the Phase 1 adapter boundary.**
+> **Phase 10 — Platform Boundary + Orchestrator API.**
 
-Сначала нужно доказать управление несколькими адресуемыми вкладками и их lifecycle/reconnect; только после этого переходить к полноценному Orchestra Protocol/Event Bus из Phase 3.
+Нельзя сразу начинать Electron UI или Playwright automation.
+
+Сначала необходимо доказать, что существующие Planning/Scheduler/Review/Integration/Recovery могут работать без знания о `chrome.*`.
+
+Первый Phase 10 PR должен сделать behavior-preserving vertical slice:
+
+```text
+Current chrome.tabs messaging
+        ↓
+ExtensionAgentRuntime
+        ↓
+AgentRuntime contract
+        ↓
+Scheduler / Review / Integration
+```
+
+и аналогично для persistence:
+
+```text
+chrome.storage.local
+        ↓
+ChromeStorageStateStore
+        ↓
+StateStore contract
+        ↓
+Core stores
+```
+
+Только после того как существующая extension проходит прежние regression/smoke gates через эти boundaries, начинается Phase 11.
