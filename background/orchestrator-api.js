@@ -6,22 +6,7 @@
   const IMPORT_SAFE_RECOVERY_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
 
   class OrchestratorApi {
-    constructor({
-      orchestrator,
-      planningEngine = null,
-      schedulerEngine = null,
-      reviewEngine = null,
-      integrationEngine = null,
-      recoveryController = null,
-      eventBus = null,
-      projectBundleService = null,
-      persistenceInfo = null,
-      observabilityService = null,
-      taskControlService = null,
-      contextStore = null,
-      contextPackets = null,
-      repositoryService = null
-    } = {}) {
+    constructor({ orchestrator, planningEngine = null, schedulerEngine = null, reviewEngine = null, integrationEngine = null, recoveryController = null, eventBus = null, projectBundleService = null, persistenceInfo = null, observabilityService = null, taskControlService = null, contextStore = null, contextPackets = null, repositoryService = null } = {}) {
       this.orchestrator = orchestrator;
       this.planningEngine = planningEngine;
       this.schedulerEngine = schedulerEngine;
@@ -39,27 +24,13 @@
     }
 
     envelope(data = {}) { return { apiVersion: API_VERSION, ...data }; }
-
-    dashboard(payload = {}) {
-      return this.observabilityService?.dashboard?.(payload) || null;
-    }
+    dashboard(payload = {}) { return this.observabilityService?.dashboard?.(payload) || null; }
 
     async query(name, payload = {}) {
       const query = String(name || "");
       if (query === "state") {
         const state = this.orchestrator?.getPublicState?.() || {};
-        return this.envelope({
-          ok: true,
-          state: {
-            ...state,
-            project: this.planningEngine?.getPublicState?.() || state.project || null,
-            scheduler: this.schedulerEngine?.getPublicState?.() || state.scheduler || null,
-            review: this.reviewEngine?.getPublicState?.() || null,
-            integration: this.integrationEngine?.getPublicState?.() || null,
-            recovery: this.recoveryController?.getPublicState?.() || null,
-            context: this.contextStore?.summary?.() || null
-          }
-        });
+        return this.envelope({ ok: true, state: { ...state, project: this.planningEngine?.getPublicState?.() || state.project || null, scheduler: this.schedulerEngine?.getPublicState?.() || state.scheduler || null, review: this.reviewEngine?.getPublicState?.() || null, integration: this.integrationEngine?.getPublicState?.() || null, recovery: this.recoveryController?.getPublicState?.() || null, context: this.contextStore?.summary?.() || null } });
       }
       if (query === "dashboard") {
         const dashboard = this.dashboard(payload);
@@ -104,28 +75,27 @@
       }
       if (query === "repositories") {
         if (!this.repositoryService?.listRepositories) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
-        const result = await this.repositoryService.listRepositories(payload);
-        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "repository_query_failed" });
+        return this.envelope(await this.repositoryService.listRepositories(payload));
       }
       if (query === "repository") {
         if (!this.repositoryService?.getRepository) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
-        const result = await this.repositoryService.getRepository(payload.repositoryId);
-        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "repository_query_failed" });
+        return this.envelope(await this.repositoryService.getRepository(payload.repositoryId));
       }
       if (query === "workspaceStatus") {
         if (!this.repositoryService?.workspaceStatus) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
-        const result = await this.repositoryService.workspaceStatus(payload);
-        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+        return this.envelope(await this.repositoryService.workspaceStatus(payload));
       }
       if (query === "workspaceDiff") {
         if (!this.repositoryService?.workspaceDiff) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
-        const result = await this.repositoryService.workspaceDiff(payload);
-        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+        return this.envelope(await this.repositoryService.workspaceDiff(payload));
+      }
+      if (query === "workspaceArtifact") {
+        if (!this.repositoryService?.workspaceArtifact) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
+        return this.envelope(await this.repositoryService.workspaceArtifact(payload));
       }
       if (query === "workspaceScope") {
         if (!this.repositoryService?.workspaceScope) return this.envelope({ ok: false, reason: "repository_service_unavailable" });
-        const result = await this.repositoryService.workspaceScope(payload);
-        return this.envelope(result && typeof result === "object" ? result : { ok: false, reason: "workspace_query_failed" });
+        return this.envelope(await this.repositoryService.workspaceScope(payload));
       }
       return this.envelope({ ok: false, reason: "unknown_api_query", query });
     }
@@ -138,23 +108,10 @@
       else if (command === "registerActiveLead") {
         const beforeLead = this.orchestrator?.getPublicState?.()?.lead || null;
         const projectBefore = this.planningEngine?.getPublicState?.() || null;
-        const expectedContext = projectBefore?.status === "PLANNING" && projectBefore.currentRunId
-          ? {
-              projectId: projectBefore.projectId,
-              taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`,
-              runId: projectBefore.currentRunId
-            }
-          : null;
+        const expectedContext = projectBefore?.status === "PLANNING" && projectBefore.currentRunId ? { projectId: projectBefore.projectId, taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`, runId: projectBefore.currentRunId } : null;
         const bound = beforeLead?.protocolContext || null;
-        const missingExpectedContext = Boolean(expectedContext && (
-          !bound
-          || bound.projectId !== expectedContext.projectId
-          || bound.taskId !== expectedContext.taskId
-          || bound.runId !== expectedContext.runId
-        ));
-        const replacementCandidate = !beforeLead
-          || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || ""))
-          || missingExpectedContext;
+        const missingExpectedContext = Boolean(expectedContext && (!bound || bound.projectId !== expectedContext.projectId || bound.taskId !== expectedContext.taskId || bound.runId !== expectedContext.runId));
+        const replacementCandidate = !beforeLead || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || "")) || missingExpectedContext;
         result = await this.orchestrator?.registerActiveLead?.();
         const project = this.planningEngine?.getPublicState?.();
         if (result?.ok && replacementCandidate && project?.status === "PLANNING") {
@@ -181,9 +138,8 @@
       else if (command === "exportProjectBundle") result = await this.projectBundleService?.exportBundle?.({ projectId: payload.projectId || null });
       else if (command === "importProjectBundle") {
         const recoveryStatus = String(this.recoveryController?.getPublicState?.()?.status || "IDLE");
-        if (!IMPORT_SAFE_RECOVERY_STATES.has(recoveryStatus)) {
-          result = { ok: false, reason: "portable_import_requires_safe_recovery_state", recoveryStatus };
-        } else {
+        if (!IMPORT_SAFE_RECOVERY_STATES.has(recoveryStatus)) result = { ok: false, reason: "portable_import_requires_safe_recovery_state", recoveryStatus };
+        else {
           result = await this.projectBundleService?.importBundle?.(payload.bundle, { replace: payload.replace === true, freezeAfter: true });
           if (result?.ok) result = { ...result, reloadRequired: true };
         }
@@ -194,6 +150,7 @@
       else if (command === "setRepositoryTrust") result = await this.repositoryService?.setRepositoryTrust?.(payload);
       else if (command === "createTaskWorkspace") result = await this.repositoryService?.createTaskWorkspace?.(payload);
       else if (command === "createIntegrationWorkspace") result = await this.repositoryService?.createIntegrationWorkspace?.(payload);
+      else if (command === "materializeTaskArtifact") result = await this.repositoryService?.materializeTaskArtifact?.(payload);
       else if (command === "verifyWorkspace") result = await this.repositoryService?.verifyWorkspace?.(payload);
       else if (command === "commitWorkspace") result = await this.repositoryService?.commitWorkspace?.(payload);
       else if (command === "mergeTaskArtifact") result = await this.repositoryService?.mergeTaskArtifact?.(payload);
@@ -211,31 +168,8 @@
       const type = message?.type;
       if (type === TYPES.ORCHESTRATOR_API_QUERY) return this.query(payload.name, payload.payload || {});
       if (type === TYPES.ORCHESTRATOR_API_EXECUTE) return this.execute(payload.name, payload.payload || {});
-      const queryMap = new Map([
-        [TYPES.ORCHESTRATOR_GET_STATE, "state"],
-        [TYPES.ORCHESTRATOR_GET_EVENTS, "events"],
-        [TYPES.ORCHESTRATOR_GET_PROJECT, "project"],
-        [TYPES.ORCHESTRATOR_GET_SCHEDULER, "scheduler"],
-        [TYPES.ORCHESTRATOR_GET_SCHEDULER_DECISIONS, "schedulerDecisions"],
-        [TYPES.ORCHESTRATOR_GET_RECOVERY, "recovery"],
-        [TYPES.ORCHESTRATOR_GET_PERSISTENCE, "persistence"]
-      ]);
-      const commandMap = new Map([
-        [TYPES.ORCHESTRATOR_START_PROJECT, "startProject"],
-        [TYPES.ORCHESTRATOR_START_EXECUTION, "startExecution"],
-        [TYPES.ORCHESTRATOR_SCHEDULER_TICK, "schedulerTick"],
-        [TYPES.ORCHESTRATOR_PAUSE, "pause"],
-        [TYPES.ORCHESTRATOR_STOP_NOW, "stopNow"],
-        [TYPES.ORCHESTRATOR_RESUME, "resume"],
-        [TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD, "registerActiveLead"],
-        [TYPES.ORCHESTRATOR_CREATE_WORKERS, "createWorkers"],
-        [TYPES.ORCHESTRATOR_BIND_PROTOCOL_CONTEXT, "bindProtocolContext"],
-        [TYPES.ORCHESTRATOR_CLEAR_PROTOCOL_CONTEXT, "clearProtocolContext"],
-        [TYPES.ORCHESTRATOR_SEND_AGENT_PROMPT, "sendAgentPrompt"],
-        [TYPES.ORCHESTRATOR_STOP_AGENT, "stopAgent"],
-        [TYPES.ORCHESTRATOR_EXPORT_PROJECT, "exportProjectBundle"],
-        [TYPES.ORCHESTRATOR_IMPORT_PROJECT, "importProjectBundle"]
-      ]);
+      const queryMap = new Map([[TYPES.ORCHESTRATOR_GET_STATE,"state"],[TYPES.ORCHESTRATOR_GET_EVENTS,"events"],[TYPES.ORCHESTRATOR_GET_PROJECT,"project"],[TYPES.ORCHESTRATOR_GET_SCHEDULER,"scheduler"],[TYPES.ORCHESTRATOR_GET_SCHEDULER_DECISIONS,"schedulerDecisions"],[TYPES.ORCHESTRATOR_GET_RECOVERY,"recovery"],[TYPES.ORCHESTRATOR_GET_PERSISTENCE,"persistence"]]);
+      const commandMap = new Map([[TYPES.ORCHESTRATOR_START_PROJECT,"startProject"],[TYPES.ORCHESTRATOR_START_EXECUTION,"startExecution"],[TYPES.ORCHESTRATOR_SCHEDULER_TICK,"schedulerTick"],[TYPES.ORCHESTRATOR_PAUSE,"pause"],[TYPES.ORCHESTRATOR_STOP_NOW,"stopNow"],[TYPES.ORCHESTRATOR_RESUME,"resume"],[TYPES.ORCHESTRATOR_REGISTER_ACTIVE_LEAD,"registerActiveLead"],[TYPES.ORCHESTRATOR_CREATE_WORKERS,"createWorkers"],[TYPES.ORCHESTRATOR_BIND_PROTOCOL_CONTEXT,"bindProtocolContext"],[TYPES.ORCHESTRATOR_CLEAR_PROTOCOL_CONTEXT,"clearProtocolContext"],[TYPES.ORCHESTRATOR_SEND_AGENT_PROMPT,"sendAgentPrompt"],[TYPES.ORCHESTRATOR_STOP_AGENT,"stopAgent"],[TYPES.ORCHESTRATOR_EXPORT_PROJECT,"exportProjectBundle"],[TYPES.ORCHESTRATOR_IMPORT_PROJECT,"importProjectBundle"]]);
       if (queryMap.has(type)) return this.query(queryMap.get(type), payload);
       if (commandMap.has(type)) return this.execute(commandMap.get(type), payload);
       return this.envelope({ ok: false, reason: "unknown_runtime_message" });
@@ -244,6 +178,5 @@
 
   root.OrchestratorApi = OrchestratorApi;
   root.ORCHESTRATOR_API_VERSION = API_VERSION;
-
   if (typeof module !== "undefined" && module.exports) module.exports = { OrchestratorApi, API_VERSION, IMPORT_SAFE_RECOVERY_STATES };
 })();
