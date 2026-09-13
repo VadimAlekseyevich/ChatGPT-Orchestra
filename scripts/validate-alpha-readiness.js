@@ -22,13 +22,14 @@ for (const script of ["test:alpha", "desktop:pack", "extension:stage-alpha", "co
 }
 
 for (const marker of [
-  "2.0.0-alpha.16",
+  "Phase 16 Checkpoint Smoke Test",
+  "not the final Desktop-first Alpha release from Phase 20",
   "Migrate Project → Desktop",
   "--register-native-host=",
   "--companion",
   "fail-closed",
-  "issue #26",
-  "Do not start Phase 17 or issue #26 implementation until the alpha result is reviewed"
+  "Phase 17 is the next implementation phase",
+  "Issue #26 remains deferred until after the Phase 20 Desktop-first Alpha"
 ]) assert.ok(smoke.includes(marker), `alpha_readiness_smoke_marker_missing:${marker}`);
 
 for (const marker of [
@@ -43,4 +44,4 @@ for (const marker of [
 
 assert.ok(/needs:\s*\[[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_package_must_gate_aggregate");
 
-console.log(`alpha readiness contract ok: ${pkg.version}`);
+console.log(`phase16 checkpoint readiness ok: ${pkg.version}`);
