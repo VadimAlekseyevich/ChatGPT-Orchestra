@@ -21,9 +21,9 @@
 
   function jsonText(value, max = 1800) {
     if (value === null || value === undefined) return "—";
-    let text;
-    try { text = JSON.stringify(value, null, 2); } catch (_) { text = String(value); }
-    return text.length > max ? `${text.slice(0, max)}…` : text;
+    let output;
+    try { output = JSON.stringify(value, null, 2); } catch (_) { output = String(value); }
+    return output.length > max ? `${output.slice(0, max)}…` : output;
   }
 
   function downloadText(filename, text) {
@@ -38,6 +38,12 @@
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     return true;
+  }
+
+  function attributeSelector(name, value) {
+    const raw = String(value ?? "");
+    const escaped = globalThis.CSS?.escape ? globalThis.CSS.escape(raw) : raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `[${name}="${escaped}"]`;
   }
 
   function statusBadge(status) {
@@ -68,8 +74,8 @@
     }
 
     start() {
-      this.rootElement.addEventListener("click", this.onClick);
-      this.rootElement.addEventListener("change", this.onChange);
+      this.rootElement.addEventListener?.("click", this.onClick);
+      this.rootElement.addEventListener?.("change", this.onChange);
       this.refresh();
       this.timer = setInterval(() => this.refresh(), this.pollMs);
       return this;
@@ -78,8 +84,8 @@
     stop() {
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
-      this.rootElement.removeEventListener("click", this.onClick);
-      this.rootElement.removeEventListener("change", this.onChange);
+      this.rootElement.removeEventListener?.("click", this.onClick);
+      this.rootElement.removeEventListener?.("change", this.onChange);
     }
 
     async refresh() {
@@ -119,6 +125,8 @@
       const metrics = d.metrics || {};
       const taskMetrics = metrics.tasks || {};
       const agentMetrics = metrics.agents || {};
+      const runsActive = Number(metrics.runs?.active) || 0;
+      const reviewsActive = Number(metrics.reviews?.active) || 0;
       const warnings = this.filteredWarnings();
       const canPause = ["RUNNING", "IDLE"].includes(String(recovery.status || "IDLE"));
       const canResume = ["PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(String(recovery.status || "IDLE"));
@@ -127,6 +135,7 @@
 
       this.rootElement.innerHTML = `
         <div class="dashboard-shell">
+          ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
           <div class="dashboard-topbar">
             <div>
               <h2>Dashboard</h2>
@@ -137,7 +146,7 @@
 
           <div class="dashboard-metrics">
             ${metricCard("Tasks", `${taskMetrics.finished || 0}/${taskMetrics.total || 0}`, `${Math.round((taskMetrics.progress || 0) * 100)}% complete`)}
-            ${metricCard("Active roles", `${metrics.runs?.active || 0 + metrics.reviews?.active || 0}`, `${metrics.runs?.active || 0} work · ${metrics.reviews?.active || 0} review`)}
+            ${metricCard("Active roles", `${runsActive + reviewsActive}`, `${runsActive} work · ${reviewsActive} review`)}
             ${metricCard("Agents", `${agentMetrics.connected || 0}/${agentMetrics.total || 0}`, `${agentMetrics.busy || 0} busy · ${agentMetrics.offline || 0} offline`)}
             ${metricCard("Recovery", recovery.status || "IDLE", `${(recovery.issues || []).length} issue(s)`)}
           </div>
@@ -290,7 +299,7 @@
       const action = button.dataset.dashboardAction;
       const taskId = button.dataset.taskId;
       if (action === "refresh") return this.refresh();
-      if (action === "pause" || action === "resume" || action === "stopNow" || action === "startIntegration") return this.command(action);
+      if (["pause", "resume", "stopNow", "startIntegration"].includes(action)) return this.command(action);
       if (action === "exportProject") return this.exportBundle("exportProjectBundle");
       if (action === "exportDebug") return this.exportBundle("exportDebugBundle");
       if (action === "openExecutor") return this.command("openExecutor", { agentId: button.dataset.agentId });
@@ -304,11 +313,11 @@
         return this.render();
       }
       if (action === "changePriority") {
-        const input = this.rootElement.querySelector(`[data-priority-task="${CSS.escape(taskId)}"]`);
+        const input = this.rootElement.querySelector?.(attributeSelector("data-priority-task", taskId));
         return this.command("changePriority", { taskId, priority: Number(input?.value) || 0 });
       }
       if (action === "reassignAgent") {
-        const select = this.rootElement.querySelector(`[data-reassign-task="${CSS.escape(taskId)}"]`);
+        const select = this.rootElement.querySelector?.(attributeSelector("data-reassign-task", taskId));
         if (!select?.value) return;
         return this.command("reassignAgent", { taskId, agentId: select.value });
       }
@@ -323,6 +332,6 @@
   }
 
   root.DashboardApp = DashboardApp;
-  root.DashboardUtils = { escapeHtml, formatTime, shortSha, jsonText, downloadText };
-  if (typeof module !== "undefined" && module.exports) module.exports = { DashboardApp, escapeHtml, formatTime, shortSha, jsonText, downloadText };
+  root.DashboardUtils = { escapeHtml, formatTime, shortSha, jsonText, downloadText, attributeSelector };
+  if (typeof module !== "undefined" && module.exports) module.exports = { DashboardApp, escapeHtml, formatTime, shortSha, jsonText, downloadText, attributeSelector };
 })();
