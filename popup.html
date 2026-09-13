@@ -81,6 +81,21 @@
       <p class="hint">Pause блокирует новые prompts и ждёт safe point. Stop Now останавливает активные generations best-effort и помечает run'ы interrupted. Resume сначала reconciles tabs, Git state и protocol contexts, и только потом снова открывает dispatch.</p>
     </section>
 
+    <section class="orchestra-section" aria-labelledby="persistenceTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="persistenceTitle">Portable Project Bundle</h2>
+          <p id="persistenceStatus">Persistence: ready</p>
+        </div>
+      </div>
+      <div class="actions orchestra-actions">
+        <button id="exportProject" type="button">Export Bundle</button>
+        <button id="importProject" class="secondary" type="button">Import Bundle</button>
+      </div>
+      <input id="importProjectFile" type="file" accept="application/json,.json" hidden />
+      <p class="hint">Export не переносит browser session IDs или secrets. Перед Import поставь проект на Pause или Stop Now. После успешного import расширение перезапустится и потребует reconciliation.</p>
+    </section>
+
     <label class="toggle-row">
       <span>Legacy-обработка флагов</span>
       <input id="enabled" type="checkbox" />

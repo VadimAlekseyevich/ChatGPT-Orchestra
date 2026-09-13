@@ -21,6 +21,8 @@
 - [`phase-9-smoke-test.md`](phase-9-smoke-test.md) — browser/service-worker crash, Pause/Resume и Stop Now acceptance checks;
 - [`phase-10-platform-boundary.md`](phase-10-platform-boundary.md) — AgentRuntime, StateStore, TimerRuntime, Orchestrator API и normalized event sender identity;
 - [`phase-10-smoke-test.md`](phase-10-smoke-test.md) — Node/Edge/API acceptance gates для behavior-preserving portability layer;
+- [`phase-11-portable-persistence.md`](phase-11-portable-persistence.md) — canonical portable state, migration registry, transactional persistence, Project Bundle и SQLite adapter;
+- [`phase-11-smoke-test.md`](phase-11-smoke-test.md) — extension export/import, corruption checks и extension → SQLite migration gate;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`

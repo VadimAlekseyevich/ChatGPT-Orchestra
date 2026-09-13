@@ -9,6 +9,10 @@ importScripts(
   "../prompts/integration-prompts.js",
   "../platform/contracts.js",
   "../platform/extension-runtime.js",
+  "../platform/transactional-state-store.js",
+  "../persistence/migration-registry.js",
+  "../persistence/portable-state.js",
+  "../persistence/project-bundle.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
@@ -34,8 +38,9 @@ importScripts(
 );
 
 const root = globalThis.ChatGPTOrchestra;
-const stateStore = new root.ChromeStorageStateStore({ storageArea: chrome.storage.local });
-root.PlatformContracts.assertStateStore(stateStore);
+const chromeStateStore = new root.ChromeStorageStateStore({ storageArea: chrome.storage.local });
+const stateStore = new root.TransactionalStateStore({ store: chromeStateStore });
+root.PlatformContracts.assertTransactionalStateStore(stateStore);
 
 const registry = new root.TabRegistry({ stateStore });
 const agentRuntime = new root.ExtensionAgentRuntime({
@@ -52,6 +57,9 @@ const schedulerStore = new root.SchedulerStore({ storageArea: stateStore });
 const reviewStore = new root.ReviewStore({ storageArea: stateStore });
 const integrationStore = new root.IntegrationStore({ storageArea: stateStore });
 const recoveryStore = new root.RecoveryStore({ storageArea: stateStore });
+const migrationRegistry = new root.MigrationRegistry({ currentVersion: root.PortableState.PORTABLE_SCHEMA_VERSION });
+const portableStateManager = new root.PortableState.PortableStateManager({ stateStore, migrations: migrationRegistry });
+const projectBundleService = new root.ProjectBundle.ProjectBundleService({ portableStateManager, sourceHost: "edge-extension" });
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
 root.PlatformContracts.assertTimerRuntime(timerRuntime);
@@ -125,7 +133,9 @@ const orchestratorApi = new root.OrchestratorApi({
   reviewEngine,
   integrationEngine,
   recoveryController,
-  eventBus
+  eventBus,
+  projectBundleService,
+  persistenceInfo: () => ({ backend: "chrome.storage.local", transactionalWrapper: true })
 });
 
 function initializeRuntime() {
@@ -136,6 +146,7 @@ function initializeRuntime() {
 }
 
 let readyPromise = initializeRuntime();
+let portableReloadPending = false;
 
 function withReady(callback) {
   return Promise.resolve(readyPromise)
@@ -149,10 +160,21 @@ function withReady(callback) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
+    if (portableReloadPending) return { ok: false, reason: "portable_reload_pending" };
     const senderContext = agentRuntime.normalizeSender(sender);
-    const result = senderContext.sessionId
-      ? await orchestrator.handleRuntimeMessage(message, senderContext)
-      : await orchestratorApi.handleLegacyMessage(message, senderContext);
+    const isPortableImport = !senderContext.sessionId && message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT;
+    if (isPortableImport) portableReloadPending = true;
+
+    let result;
+    try {
+      result = senderContext.sessionId
+        ? await orchestrator.handleRuntimeMessage(message, senderContext)
+        : await orchestratorApi.handleLegacyMessage(message, senderContext);
+    } catch (error) {
+      if (isPortableImport) portableReloadPending = false;
+      throw error;
+    }
+    if (isPortableImport && !result?.ok) portableReloadPending = false;
 
     if (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_START_PROJECT && result?.ok) {
       const projectId = projectStore.getActiveProject()?.projectId;
@@ -162,6 +184,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const projectId = projectStore.getActiveProject()?.projectId;
       if (projectId && recoveryStore.summary().projectId !== projectId) await recoveryController.attachProject(projectId, "execution_started");
     }
+
+    if (isPortableImport && result?.ok && result?.reloadRequired) return result;
 
     if (senderContext.agentId) {
       const agent = agentRuntime.getAgent(senderContext.agentId);
@@ -180,6 +204,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (portableReloadPending) return;
   withReady(async () => {
     const sessionId = String(tabId);
     const agent = agentRuntime.getAgentBySessionId(sessionId);
@@ -192,6 +217,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (portableReloadPending) return;
   withReady(async () => {
     const sessionId = String(tabId);
     const session = { id: sessionId, url: tab?.url || changeInfo?.url || "", active: Boolean(tab?.active) };
@@ -205,10 +231,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
-timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => withReady(async () => {
-  await schedulerEngine.tick({ reason: "watchdog_alarm" });
-  await integrationEngine.tick({ reason: "watchdog_alarm" });
-  await recoveryController.tick({ reason: "watchdog_alarm" });
-}).catch((error) => {
-  console.warn("[ChatGPT Orchestra] watchdog_failed", error);
-}));
+timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => {
+  if (portableReloadPending) return;
+  return withReady(async () => {
+    await schedulerEngine.tick({ reason: "watchdog_alarm" });
+    await integrationEngine.tick({ reason: "watchdog_alarm" });
+    await recoveryController.tick({ reason: "watchdog_alarm" });
+  }).catch((error) => {
+    console.warn("[ChatGPT Orchestra] watchdog_failed", error);
+  });
+});
