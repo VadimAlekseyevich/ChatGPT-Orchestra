@@ -6,6 +6,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { NodeCommandRunner, isInside } = require("./node-command-runner.js");
 const { TRUST_STATES } = require("./local-repository-registry.js");
+const { normalizeLocalChangeSet } = require("./local-change-set.js");
 
 const execFileAsync = promisify(execFile);
 const MAX_GIT_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -40,6 +41,22 @@ function readJson(filename, fallback) {
     if (error?.code === "ENOENT") return fallback;
     throw error;
   }
+}
+
+function safeWorkspaceTarget(workspacePath, relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  const target = path.resolve(workspacePath, ...normalized.split("/"));
+  if (!isInside(workspacePath, target) || target === workspacePath) throw new Error("local_change_path_outside_workspace");
+  let current = workspacePath;
+  const segments = normalized.split("/");
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    if (!fs.existsSync(current)) continue;
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) throw new Error("local_change_symlink_not_allowed");
+    if (index < segments.length - 1 && !stat.isDirectory()) throw new Error("local_change_parent_not_directory");
+  }
+  return { normalized, target };
 }
 
 class GitCliWorkspace {
@@ -254,6 +271,63 @@ class GitCliWorkspace {
     return { workspaceId: record.workspaceId, changedFiles, patch };
   }
 
+  async applyChangeSet(workspaceId, changeSet) {
+    const record = this.workspaceRecord(workspaceId);
+    if (record.kind !== "task") throw new Error("local_changes_require_task_workspace");
+    const before = await this.status(workspaceId);
+    if (!before.clean) throw new Error("local_changes_require_clean_workspace");
+    const normalized = normalizeLocalChangeSet(changeSet);
+    if (!normalized.ok) throw new Error(normalized.reason || "local_change_set_invalid");
+
+    for (const entry of normalized.changeSet.files) {
+      const { target } = safeWorkspaceTarget(record.path, entry.path);
+      if (entry.operation === "delete") {
+        if (!fs.existsSync(target)) throw new Error("local_change_delete_target_missing");
+        const stat = fs.lstatSync(target);
+        if (stat.isDirectory()) throw new Error("local_change_delete_directory_not_allowed");
+        fs.unlinkSync(target);
+        continue;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const checked = safeWorkspaceTarget(record.path, entry.path);
+      fs.writeFileSync(checked.target, entry.content, { encoding: "utf8" });
+    }
+
+    const after = await this.status(workspaceId);
+    return {
+      ok: true,
+      workspaceId,
+      changedFiles: after.changedFiles,
+      fileCount: normalized.changeSet.files.length,
+      totalBytes: normalized.totalBytes
+    };
+  }
+
+  async reviewComparison(workspaceId) {
+    const record = this.workspaceRecord(workspaceId);
+    const status = await this.status(workspaceId);
+    if (!status.clean) throw new Error("local_review_requires_clean_workspace");
+    const range = `${record.startSha}..${status.head}`;
+    const { stdout: names } = await this.execGit(["diff", "--name-only", "-z", range, "--"], { cwd: record.path });
+    const changedFiles = names.split("\0").filter(Boolean).map((item) => item.replace(/\\/g, "/")).sort();
+    const files = [];
+    for (const filename of changedFiles) {
+      const { stdout: patchText } = await this.execGit(["diff", "--no-ext-diff", "--unified=3", range, "--", filename], { cwd: record.path });
+      files.push({ filename, status: "modified", additions: 0, deletions: 0, changes: 0, patch: patchText || null });
+    }
+    const { stdout: count } = await this.execGit(["rev-list", "--count", range], { cwd: record.path });
+    return {
+      ok: true,
+      comparison: {
+        status: "ahead",
+        ahead_by: Number(count.trim()) || 0,
+        behind_by: 0,
+        total_commits: Number(count.trim()) || 0,
+        files
+      }
+    };
+  }
+
   async validateScope(workspaceId, allowedPaths = []) {
     const record = this.workspaceRecord(workspaceId);
     const changedFiles = await this.changedFilesAt(record.path);
@@ -324,5 +398,6 @@ module.exports = {
   MAX_GIT_OUTPUT_BYTES,
   safeSegment,
   normalizeRelativePath,
-  inScope
+  inScope,
+  safeWorkspaceTarget
 };
