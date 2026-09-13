@@ -10,6 +10,12 @@ async function handleRuntimeMessage(host, message, sender) {
   return result;
 }
 
+async function handleLegacyMessage(host, message, sender) {
+  const result = await host.orchestratorApi.handleLegacyMessage(message, sender || {});
+  await host.recoveryController.tick({ reason: `companion_ui:${message?.type || "legacy_message"}` });
+  return result;
+}
+
 async function handleSessionRemoved(host, sessionId) {
   const agent = host.agentRuntime.getAgentBySessionId(sessionId);
   await host.orchestrator.handleSessionRemoved(sessionId);
@@ -28,11 +34,18 @@ async function handleSessionUpdated(host, sessionId, changeInfo, session) {
 
 function bindCompanionAgentRuntime(host) {
   if (typeof host?.agentRuntime?.bindHostHandlers !== "function") return null;
-  return host.agentRuntime.bindHostHandlers({
+  const unbindRuntime = host.agentRuntime.bindHostHandlers({
     onRuntimeMessage: (message, sender) => handleRuntimeMessage(host, message, sender),
     onSessionRemoved: (sessionId) => handleSessionRemoved(host, sessionId),
     onSessionUpdated: (sessionId, changeInfo, session) => handleSessionUpdated(host, sessionId, changeInfo, session)
   });
+  const unbindLegacy = host.agentRuntime.rpc?.onRequest?.("orchestrator.legacyMessage", ({ message, sender } = {}) => {
+    return handleLegacyMessage(host, message, host.agentRuntime.normalizeSender(sender));
+  }) || (() => {});
+  return () => {
+    unbindLegacy();
+    unbindRuntime?.();
+  };
 }
 
-module.exports = { bindCompanionAgentRuntime, handleRuntimeMessage, handleSessionRemoved, handleSessionUpdated };
+module.exports = { bindCompanionAgentRuntime, handleRuntimeMessage, handleLegacyMessage, handleSessionRemoved, handleSessionUpdated };
