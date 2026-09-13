@@ -6,8 +6,8 @@
   root.__recoveryStopGuardsInstalled = true;
 
   function stopping() {
-    const status = root.RecoveryRuntime?.controller?.getPublicState?.()?.status;
-    return status === "STOPPING" || status === "STOPPED";
+    const recovery = root.RecoveryRuntime?.controller?.getPublicState?.() || {};
+    return recovery.stopBoundaryActive === true || recovery.status === "STOPPING" || recovery.status === "STOPPED";
   }
 
   function guard(proto, methodName) {
