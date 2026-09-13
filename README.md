@@ -20,6 +20,8 @@ Browser-based multi-agent orchestration for ChatGPT coding workflows.
 
 Ключевой принцип: **чаты — исполнители, а не источник истины**. Project state, task/run/review/integration state, recovery lifecycle, event identity, Git provenance и scheduler decisions принадлежат Orchestrator Core в service worker.
 
+После alpha.10 дальнейший roadmap меняет направление развития: существующий Core постепенно отвязывается от MV3 APIs, затем переносится в отдельное desktop-приложение. Extension остаётся рабочей reference-реализацией и временным companion bridge до достижения desktop parity.
+
 Полная целевая архитектура: [`ROADMAP.md`](ROADMAP.md).
 
 ---
@@ -495,6 +497,8 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 
 ## Roadmap
 
+Завершённый extension foundation:
+
 - Phase 0 — Repository reset / Rename hygiene;
 - Phase 1 — Adapter core — `2.0.0-alpha.2`;
 - Phase 2 — Service Worker + Tab Registry — `2.0.0-alpha.3`;
@@ -504,9 +508,24 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - Phase 6 — Git Task Isolation — `2.0.0-alpha.7`;
 - Phase 7 — Independent Review Loop — `2.0.0-alpha.8`;
 - Phase 8 — Integrator + Semantic Conflicts — `2.0.0-alpha.9`;
-- **Phase 9 — Pause / Resume / Crash Recovery — `2.0.0-alpha.10`;**
-- **Phase 10 — Dashboard / Observability — следующий этап;**
-- Phase 11+ — context, hardening, CI, alpha release.
+- Phase 9 — Pause / Resume / Crash Recovery — `2.0.0-alpha.10`.
+
+Следующая линия — постепенная desktop migration:
+
+- **Phase 10 — Platform Boundary + Orchestrator API — следующий этап;**
+- Phase 11 — Portable Persistence + Project Export/Import;
+- Phase 12 — Portable Dashboard + Observability API;
+- Phase 13 — Context Management + Portable Agent Packets;
+- Phase 14 — Contract Tests + CI Foundation;
+- Phase 15 — Desktop Shell Bootstrap;
+- Phase 16 — Desktop Control Plane + Extension Companion Bridge;
+- Phase 17 — Local Repository Runtime + Git Worktrees;
+- Phase 18 — Direct Desktop ChatGPT AgentRuntime;
+- Phase 19 — Desktop Parity + Reliability / Security Hardening;
+- Phase 20 — Desktop-first Alpha Release;
+- Phase 21 — Post-alpha Cutover / Provider Expansion.
+
+Полная стратегия и migration gates описаны в [`ROADMAP.md`](ROADMAP.md) и [`docs/adr/0009-gradual-desktop-migration.md`](docs/adr/0009-gradual-desktop-migration.md).
 
 ---
 
@@ -518,7 +537,8 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - recovery не пытается восстановить скрытый model context закрытой ChatGPT вкладки: вместо этого reconciles persisted artifacts и создаёт fresh run identity;
 - unauthenticated GitHub REST reconciliation ориентирован на public-readable repositories;
 - review и semantic attribution остаются LLM-based quality gates поверх deterministic structural/provenance checks;
-- Phase 10 Dashboard/Observability ещё не реализован;
+- platform-neutral contracts, SQLite persistence и desktop runtime ещё не реализованы;
+- текущий production runtime остаётся Edge extension до прохождения migration phases;
 - browser E2E against production ChatGPT DOM остаётся ручным smoke-test.
 
 ---
@@ -536,4 +556,5 @@ Extension не хранит GitHub credentials и alpha.10 не использу
 - [`docs/phase-8-smoke-test.md`](docs/phase-8-smoke-test.md)
 - [`docs/phase-9-pause-resume-recovery.md`](docs/phase-9-pause-resume-recovery.md)
 - [`docs/phase-9-smoke-test.md`](docs/phase-9-smoke-test.md)
+- [`docs/adr/0009-gradual-desktop-migration.md`](docs/adr/0009-gradual-desktop-migration.md)
 - [`docs/adr/`](docs/adr/)
