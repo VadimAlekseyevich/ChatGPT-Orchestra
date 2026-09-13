@@ -103,9 +103,24 @@ class DesktopRepositoryService {
     return { ok: true, diff: await adapter.diff(payload.workspaceId) };
   }
 
+  async workspaceArtifact(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    return { ok: true, artifact: await adapter.artifactState(payload.workspaceId) };
+  }
+
   async workspaceScope(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
     return { ok: true, scope: await adapter.validateScope(payload.workspaceId, { allow: payload.allowedPaths || payload.allow || [] }) };
+  }
+
+  async materializeTaskArtifact(payload = {}) {
+    const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
+    const artifact = await adapter.materializeTaskArtifact(payload.workspaceId, {
+      commit: payload.commit,
+      branch: payload.branch,
+      remote: payload.remote
+    });
+    return { ok: artifact.ok === true, artifact };
   }
 
   async verifyWorkspace(payload = {}) {
