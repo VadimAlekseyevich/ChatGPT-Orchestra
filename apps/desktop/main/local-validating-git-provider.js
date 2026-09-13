@@ -22,6 +22,43 @@ class LocalValidatingGitProvider {
   captureBase(...args) { return this.remoteProvider.captureBase(...args); }
   checkBaseFresh(...args) { return this.remoteProvider.checkBaseFresh(...args); }
 
+  async ensureTaskWorkspace({ project, task, run, snapshot = null } = {}) {
+    const repositoryId = project?.repositoryRuntime?.repositoryId || null;
+    if (!repositoryId || run?.git?.required === false) return { ok: true, skipped: true, reason: repositoryId ? "git_artifact_not_required" : "local_repository_not_bound" };
+    if (!project?.projectId || !task?.id || !run?.runId) return { ok: false, reason: "local_run_identity_missing" };
+    const workspaceId = `task:${task.id}:${run.runId}`;
+    try {
+      const created = await this.repositoryService.createTaskWorkspace({
+        projectId: project.projectId,
+        repositoryId,
+        taskId: task.id,
+        runId: run.runId,
+        startSha: run.git?.startSha || run.git?.baseSha || snapshot?.baseSha || "HEAD"
+      });
+      return { ok: true, workspaceId: created?.workspace?.workspaceId || workspaceId, created: true, repositoryId };
+    } catch (error) {
+      if (String(error?.message || "") !== "git_workspace_already_exists") {
+        return { ok: false, reason: "local_workspace_create_failed", error: String(error?.message || error), repositoryId };
+      }
+      const status = await this.repositoryService.workspaceStatus({ projectId: project.projectId, repositoryId, workspaceId });
+      if (!status?.ok) return { ok: false, reason: "local_workspace_recovery_failed", workspaceId, repositoryId };
+      return { ok: true, workspaceId, created: false, recovered: true, repositoryId };
+    }
+  }
+
+  async prepareRun(input = {}) {
+    const prepared = await this.ensureTaskWorkspace(input);
+    if (!prepared.ok) {
+      this.logger?.warn?.("local_task_workspace_prepare_failed", {
+        projectId: input.project?.projectId || null,
+        taskId: input.task?.id || null,
+        runId: input.run?.runId || null,
+        reason: prepared.reason
+      });
+    }
+    return prepared;
+  }
+
   async validateArtifact(input = {}) {
     const remote = await this.remoteProvider.validateArtifact(input);
     if (!remote?.ok) return remote;
@@ -31,44 +68,19 @@ class LocalValidatingGitProvider {
     const run = input.run || null;
     const repositoryId = project?.repositoryRuntime?.repositoryId || null;
     if (!repositoryId) return remote;
-    if (!task?.id || !run?.runId) {
-      return { ok: false, reason: "git_repository_identity_missing", remote, local: { ok: false, reason: "local_run_identity_missing" } };
-    }
+    if (!task?.id || !run?.runId) return { ok: false, reason: "git_repository_identity_missing", remote, local: { ok: false, reason: "local_run_identity_missing" } };
 
     const waived = Boolean(String(task.verificationWaiver || "").trim());
-    const verificationPlan = normalizeLocalVerificationPlan(task.localVerification, {
-      required: requiresLocalVerification(task) && !waived
-    });
+    const verificationPlan = normalizeLocalVerificationPlan(task.localVerification, { required: requiresLocalVerification(task) && !waived });
     if (!verificationPlan.ok) {
-      return {
-        ok: false,
-        reason: "git_provider_local_verification_plan_invalid",
-        remote,
-        local: { ok: false, reason: verificationPlan.reason, verificationPlan }
-      };
+      return { ok: false, reason: "git_provider_local_verification_plan_invalid", remote, local: { ok: false, reason: verificationPlan.reason, verificationPlan } };
     }
 
-    let workspaceId = null;
-    try {
-      const created = await this.repositoryService.createTaskWorkspace({
-        projectId: project.projectId,
-        repositoryId,
-        taskId: task.id,
-        runId: run.runId,
-        startSha: run.git?.startSha || run.git?.baseSha || input.snapshot?.baseSha || "HEAD"
-      });
-      workspaceId = created?.workspace?.workspaceId || null;
-    } catch (error) {
-      if (String(error?.message || "") !== "git_workspace_already_exists") {
-        return {
-          ok: false,
-          reason: "git_repository_or_ref_unavailable",
-          remote,
-          local: { ok: false, reason: "local_workspace_create_failed", error: String(error?.message || error) }
-        };
-      }
-      workspaceId = `task:${task.id}:${run.runId}`;
+    const prepared = await this.ensureTaskWorkspace({ project, task, run, snapshot: input.snapshot });
+    if (!prepared.ok) {
+      return { ok: false, reason: "git_repository_or_ref_unavailable", remote, local: { ok: false, reason: prepared.reason, error: prepared.error || null } };
     }
+    const workspaceId = prepared.workspaceId;
 
     try {
       const materialized = await this.repositoryService.materializeTaskArtifact({
@@ -120,20 +132,9 @@ class LocalValidatingGitProvider {
           throw error;
         }
         const result = checked?.verification || null;
-        verification.push({
-          index,
-          label: command.label || null,
-          command: command.command,
-          argCount: command.args.length,
-          result
-        });
+        verification.push({ index, label: command.label || null, command: command.command, argCount: command.args.length, result });
         if (!checked?.ok || !result?.ok) {
-          return {
-            ok: false,
-            reason: "local_verification_failed",
-            remote,
-            local: { ok: false, reason: "local_verification_failed", workspaceId, artifact: localArtifact, scope: localScope, verification }
-          };
+          return { ok: false, reason: "local_verification_failed", remote, local: { ok: false, reason: "local_verification_failed", workspaceId, artifact: localArtifact, scope: localScope, verification } };
         }
       }
 
@@ -147,23 +148,11 @@ class LocalValidatingGitProvider {
           repositoryId,
           localVerificationPassed: true
         },
-        local: {
-          ok: true,
-          workspaceId,
-          artifact: localArtifact,
-          scope: localScope,
-          verification,
-          verificationWaived: waived && verification.length === 0
-        }
+        local: { ok: true, workspaceId, artifact: localArtifact, scope: localScope, verification, verificationWaived: waived && verification.length === 0 }
       };
     } catch (error) {
       this.logger?.warn?.("local_artifact_validation_failed", { projectId: project.projectId, taskId: task.id, runId: run.runId, repositoryId, error: String(error?.message || error) });
-      return {
-        ok: false,
-        reason: "git_repository_or_ref_unavailable",
-        remote,
-        local: { ok: false, reason: "local_artifact_validation_failed", workspaceId, error: String(error?.message || error) }
-      };
+      return { ok: false, reason: "git_repository_or_ref_unavailable", remote, local: { ok: false, reason: "local_artifact_validation_failed", workspaceId, error: String(error?.message || error) } };
     }
   }
 }
