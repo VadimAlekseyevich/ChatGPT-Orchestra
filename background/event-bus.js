@@ -47,9 +47,37 @@
       }
     }
 
-    async reject(reason, { event = null, sender = null, details = null } = {}) {
+    normalizeSender(sender = {}) {
+      if (sender?.agentId || sender?.sessionId || sender?.kind) {
+        return {
+          kind: String(sender.kind || "agent-session"),
+          sessionId: sender.sessionId === null || sender.sessionId === undefined ? null : String(sender.sessionId),
+          agentId: sender.agentId ? String(sender.agentId) : null,
+          url: String(sender.url || ""),
+          legacyTabId: Number.isInteger(sender.legacyTabId) ? sender.legacyTabId : null
+        };
+      }
+      // Temporary compatibility for Phase 3-9 tests/older callers. Extension runtime
+      // normalizes senders before EventBus in production Phase 10 composition.
       const tabId = sender?.tab?.id;
-      await this.store.reject(reason, { event, tabId, details });
+      const agent = Number.isInteger(tabId) ? this.registry?.getAgentByTabId?.(tabId) : null;
+      return {
+        kind: Number.isInteger(tabId) ? "legacy-extension-tab" : "unknown",
+        sessionId: Number.isInteger(tabId) ? String(tabId) : null,
+        agentId: agent?.agentId || null,
+        url: String(sender?.tab?.url || agent?.chatUrl || ""),
+        legacyTabId: Number.isInteger(tabId) ? tabId : null
+      };
+    }
+
+    async reject(reason, { event = null, sender = null, details = null } = {}) {
+      const context = this.normalizeSender(sender || {});
+      await this.store.reject(reason, {
+        event,
+        tabId: context.legacyTabId,
+        runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
+        details
+      });
       return { ok: false, reason };
     }
 
@@ -73,73 +101,77 @@
         });
       }
       const event = validation.event;
-      const tabId = sender?.tab?.id;
-      if (!Number.isInteger(tabId)) return this.reject("missing_sender_tab", { event, sender });
+      const context = this.normalizeSender(sender || {});
+      if (!context.agentId) return this.reject(context.sessionId ? "unregistered_sender" : "missing_sender_identity", { event, sender: context });
 
-      const agent = this.registry.getAgentByTabId(tabId);
-      if (!agent) return this.reject("unregistered_sender", { event, sender });
+      const agent = this.registry.getAgent(context.agentId);
+      if (!agent) return this.reject("unregistered_sender", { event, sender: context });
       if (event.agentId !== agent.agentId) {
-        return this.reject("agent_mismatch", { event, sender, details: { expectedAgentId: agent.agentId } });
+        return this.reject("agent_mismatch", { event, sender: context, details: { expectedAgentId: agent.agentId } });
       }
 
       const route = Protocol.routeForEvent(event.event);
-      if (!route) return this.reject("unknown_route", { event, sender });
+      if (!route) return this.reject("unknown_route", { event, sender: context });
 
-      const context = this.validateProtocolContext(agent, event);
-      if (!context.ok) {
-        return this.reject(context.reason, {
+      const protocolContext = this.validateProtocolContext(agent, event);
+      if (!protocolContext.ok) {
+        return this.reject(protocolContext.reason, {
           event,
-          sender,
-          details: { field: context.field, expected: context.expected, received: context.received }
+          sender: context,
+          details: { field: protocolContext.field, expected: protocolContext.expected, received: protocolContext.received }
         });
       }
       const privileged = route === "review" || route === "integration" || event.taskId === "integration";
       if (privileged && !agent.protocolContext) {
-        return this.reject(route === "review" ? "review_context_required" : "integration_context_required", { event, sender });
+        return this.reject(route === "review" ? "review_context_required" : "integration_context_required", { event, sender: context });
       }
 
       const existing = this.store.getProcessed(event.eventId);
       if (existing) {
         if (existing.signature && existing.signature === eventSignature(event)) {
-          return {
-            ok: true,
-            duplicate: true,
-            eventId: event.eventId,
-            cursor: existing.cursor,
-            route
-          };
+          return { ok: true, duplicate: true, eventId: event.eventId, cursor: existing.cursor, route };
         }
-        return this.reject("event_id_collision", { event, sender });
+        return this.reject("event_id_collision", { event, sender: context });
       }
 
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
       const lastSequence = this.store.getLastSequence(runKey);
       if (event.sequence <= lastSequence) {
-        return this.reject("stale_sequence", { event, sender, details: { lastSequence } });
+        return this.reject("stale_sequence", { event, sender: context, details: { lastSequence } });
       }
 
-      const accepted = await this.store.accept(event, { route, tabId, source });
-      const record = { cursor: accepted.cursor, route, tabId, source: accepted.source, agent, event };
-      await this.emit(route, record);
-      return {
-        ok: true,
-        accepted: true,
-        duplicate: false,
+      const runtimeSource = { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId };
+      const accepted = await this.store.accept(event, {
+        route,
+        tabId: context.legacyTabId,
+        runtimeSource,
+        source: { ...source, runtime: runtimeSource }
+      });
+      const record = {
         cursor: accepted.cursor,
         route,
-        eventId: event.eventId
+        tabId: context.legacyTabId,
+        runtimeSource,
+        source: accepted.source,
+        agent,
+        event
       };
+      await this.emit(route, record);
+      return { ok: true, accepted: true, duplicate: false, cursor: accepted.cursor, route, eventId: event.eventId };
     }
 
     async handleProtocolError(payload, sender) {
-      const tabId = sender?.tab?.id;
-      if (!Number.isInteger(tabId)) return { ok: false, reason: "missing_sender_tab" };
-      const agent = this.registry.getAgentByTabId(tabId);
+      const context = this.normalizeSender(sender || {});
+      if (!context.agentId) return context.sessionId
+        ? { ok: true, ignored: true, reason: "unregistered_sender" }
+        : { ok: false, reason: "missing_sender_identity" };
+      const agent = this.registry.getAgent(context.agentId);
       if (!agent) return { ok: true, ignored: true, reason: "unregistered_sender" };
 
       const reason = `content_protocol_error:${String(payload?.reason || "unknown")}`;
       await this.store.reject(reason, {
-        tabId,
+        tabId: context.legacyTabId,
+        runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
         details: {
           agentId: agent.agentId,
           lastLine: String(payload?.lastLine || "").slice(0, 512),
@@ -153,8 +185,5 @@
   }
 
   root.EventBus = EventBus;
-
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventBus };
-  }
+  if (typeof module !== "undefined" && module.exports) module.exports = { EventBus };
 })();
