@@ -27,11 +27,11 @@ function seed(projectId = "P1") {
       projectId,
       status: "RUNNING",
       tasks: { T1: { id: "T1", status: "APPROVED" } },
-      runs: { R1: { runId: "R1", taskId: "T1", agentId: "worker-1", status: "DONE" } },
+      runs: { R1: { runId: "R1", taskId: "T1", agentId: "worker-1", status: "DONE", tabId: 77 } },
       decisions: [{ type: "task_assigned", taskId: "T1" }]
     },
-    [STORE_KEYS.reviews]: { schemaVersion: 1, projectId, reviews: { V1: { reviewId: "V1", taskId: "T1", reviewerAgentId: "worker-2" } } },
-    [STORE_KEYS.integration]: { schemaVersion: 1, projectId, status: "READY", runs: {} },
+    [STORE_KEYS.reviews]: { schemaVersion: 1, projectId, reviews: { V1: { reviewId: "V1", taskId: "T1", reviewerAgentId: "worker-2", sessionId: "review-session" } } },
+    [STORE_KEYS.integration]: { schemaVersion: 1, projectId, status: "READY", runs: { I1: { runId: "I1", legacyTabId: 88 } } },
     [STORE_KEYS.recovery]: {
       schemaVersion: 1,
       projectId,
@@ -85,6 +85,7 @@ test("portable capture scopes one project, redacts secrets and strips browser ru
   assert.deepEqual(result.snapshot.namespaces.agents.agents, {});
   const serialized = JSON.stringify(result.snapshot);
   assert.equal(serialized.includes("\"tabId\""), false);
+  assert.equal(serialized.includes("\"legacyTabId\""), false);
   assert.equal(serialized.includes("\"sessionId\""), false);
   assert.equal(serialized.includes("sk-123456789012345678901234567890"), false);
   assert.equal(serialized.includes("unscoped_runtime_diagnostic"), false);
@@ -110,6 +111,30 @@ test("portable import creates backup, restores logical state and forces recovery
   assert.deepEqual(restored[STORE_KEYS.agents].agents, {});
   assert.equal(restored[STORE_KEYS.events].events[0].tabId, undefined);
   assert.equal(restored[BACKUP_KEY].length, 1);
+});
+
+test("portable validation rejects namespace project identity mismatch", async () => {
+  const source = manager(seed());
+  const captured = await source.portable.capture();
+  assert.equal(captured.ok, true);
+  captured.snapshot.namespaces.scheduler.projectId = "OTHER";
+  const checked = source.portable.validate(captured.snapshot);
+  assert.equal(checked.ok, false);
+  assert.equal(checked.reason, "portable_namespace_project_mismatch");
+  assert.equal(checked.namespace, "scheduler");
+});
+
+test("portable import strips injected runtime bindings before persistence", async () => {
+  const source = manager(seed());
+  const captured = await source.portable.capture();
+  captured.snapshot.namespaces.scheduler.runs.R1.tabId = 999;
+  captured.snapshot.namespaces.reviews.reviews.V1.sessionId = "injected";
+  const target = manager({});
+  const imported = await target.portable.import(captured.snapshot);
+  assert.equal(imported.ok, true);
+  const restored = await target.store.get([STORE_KEYS.scheduler, STORE_KEYS.reviews]);
+  assert.equal(restored[STORE_KEYS.scheduler].runs.R1.tabId, undefined);
+  assert.equal(restored[STORE_KEYS.reviews].reviews.V1.sessionId, undefined);
 });
 
 test("portable import refuses to overwrite a different active project unless replace is explicit", async () => {
