@@ -63,12 +63,54 @@
       };
     }
 
+    async withBridgeRpc(callback) {
+      if (typeof callback !== "function") throw new TypeError("companion_bridge_callback_required");
+      if (this.enabled) {
+        await this.ensureConnected();
+        return callback(this.rpc);
+      }
+
+      const transport = this.transportFactory();
+      const rpc = this.rpcFactory(transport);
+      const endpoint = this.endpointFactory(rpc);
+      try {
+        await endpoint.start();
+        return await callback(rpc);
+      } finally {
+        try { await endpoint.stop(); }
+        catch (error) { this.logger.warn?.("companion_transient_endpoint_stop_failed", error?.message || String(error)); }
+      }
+    }
+
+    async getMigrationStatus() {
+      return this.withBridgeRpc((rpc) => rpc.request("migration.status", {}));
+    }
+
+    async stageMigrationBundle(bundle) {
+      if (this.enabled) return { ok: false, reason: "companion_migration_requires_extension_mode" };
+      return this.withBridgeRpc((rpc) => rpc.request("migration.stageBundle", { bundle }));
+    }
+
     async legacyProjectGuard() {
       const stored = await this.storageArea?.get?.(LEGACY_PROJECTS_KEY);
       const state = stored?.[LEGACY_PROJECTS_KEY];
       const activeProjectId = state?.activeProjectId ? String(state.activeProjectId) : null;
       if (!activeProjectId) return { ok: true };
-      return { ok: false, reason: "companion_enable_requires_project_migration", activeProjectId };
+
+      let migration = null;
+      try { migration = await this.getMigrationStatus(); }
+      catch (error) {
+        return {
+          ok: false,
+          reason: "companion_enable_requires_project_migration",
+          activeProjectId,
+          migrationStatusError: error?.message || String(error)
+        };
+      }
+      if (migration?.applied?.projectId === activeProjectId) {
+        return { ok: true, activeProjectId, migrationApplied: true, migration };
+      }
+      return { ok: false, reason: "companion_enable_requires_project_migration", activeProjectId, migration };
     }
 
     async persistEnabled() {
