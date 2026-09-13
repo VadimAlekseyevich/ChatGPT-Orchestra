@@ -6,6 +6,8 @@ const { loadDesktopCore } = require("./core-loader.js");
 const { DesktopRepositoryService } = require("./repository-service.js");
 const { createLocalPlanningEngine } = require("./local-planning-engine.js");
 const { LocalValidatingGitProvider } = require("./local-validating-git-provider.js");
+const { LocalIntegrationCoordinator } = require("./local-integration-coordinator.js");
+const { createLocalIntegrationEngine } = require("./local-integration-engine.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -43,6 +45,7 @@ class DesktopHost {
     this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock });
     this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
     this.gitProvider = new LocalValidatingGitProvider({ remoteProvider: this.remoteGitProvider, repositoryService: this.repositoryService, logger: this.logger });
+    this.localIntegrationCoordinator = new LocalIntegrationCoordinator({ repositoryService: this.repositoryService, clock, logger: this.logger });
     this.autoSeedFakeLead = autoSeedFakeLead;
     this.initialized = false;
     this.closed = false;
@@ -81,6 +84,7 @@ class DesktopHost {
     root.ContextPackets.setDefaultService(this.contextPackets);
 
     const LocalPlanningEngine = createLocalPlanningEngine(root.PlanningEngine);
+    const LocalIntegrationEngine = createLocalIntegrationEngine(root.RecoverableIntegrationEngine);
     this.schedulerEngine = null;
     this.planningEngine = new LocalPlanningEngine({
       projectStore: this.projectStore,
@@ -98,14 +102,15 @@ class DesktopHost {
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
       onSchedulerTick: (options) => this.schedulerEngine?.tick(options)
     });
-    this.integrationEngine = new root.RecoverableIntegrationEngine({
+    this.integrationEngine = new LocalIntegrationEngine({
       store: this.integrationStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
+      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
+      localIntegrationCoordinator: this.localIntegrationCoordinator
     });
     this.schedulerEngine = new root.SchedulerEngine({
       store: this.schedulerStore,
