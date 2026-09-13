@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { ProjectStore } = require("../background/project-store.js");
-const { createLocalPlanningEngine } = require("../apps/desktop/main/local-planning-engine.js");
+const { createLocalPlanningEngine, augmentPlanningPrompt } = require("../apps/desktop/main/local-planning-engine.js");
 
 function storage() {
   const data = {};
@@ -57,4 +57,16 @@ test("desktop local planning engine forwards repositoryId into ProjectStore befo
   assert.equal(result.ok, true);
   assert.equal(result.stage, "DISCOVERY");
   assert.equal(calls[0].repositoryId, "repo-1");
+});
+
+test("desktop Lead receives argv-only local verification instructions during DAG planning", () => {
+  const project = { projectId: "P1", repositoryRuntime: { repositoryId: "repo-1" } };
+  const augmented = augmentPlanningPrompt("You are the Lead executing planning stage DECOMPOSE.", project);
+  assert.match(augmented, /DESKTOP LOCAL VERIFICATION CONTRACT/);
+  assert.match(augmented, /localVerification/);
+  assert.match(augmented, /shell:false/);
+  assert.match(augmented, /Do not include shell, env or environment fields/);
+
+  const legacy = augmentPlanningPrompt("You are the Lead executing planning stage DECOMPOSE.", { projectId: "P1" });
+  assert.equal(legacy.includes("DESKTOP LOCAL VERIFICATION CONTRACT"), false);
 });
