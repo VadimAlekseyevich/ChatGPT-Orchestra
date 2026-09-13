@@ -50,6 +50,16 @@ function sanitizedEnvironment(source = process.env, extra = {}, allowedKeys = DE
   return env;
 }
 
+function redactKnownSecrets(value) {
+  let output = String(value || "");
+  output = output.replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]");
+  output = output.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]");
+  output = output.replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_API_KEY]");
+  output = output.replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]{20,}={0,2}\b/gi, "$1[REDACTED_TOKEN]");
+  output = output.replace(/\b((?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|PASSWORD|SECRET)\s*[=:]\s*)[^\s\"'`]+/gi, "$1[REDACTED_SECRET]");
+  return output;
+}
+
 function appendBounded(chunks, state, chunk, maxBytes) {
   if (state.truncated) return;
   const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -160,8 +170,8 @@ class NodeCommandRunner {
           status: timedOut ? "timeout" : cancelled ? "cancelled" : code === 0 ? "passed" : "failed",
           exitCode: Number.isInteger(code) ? code : null,
           signal: signal || null,
-          stdout: Buffer.concat(stdout).toString("utf8"),
-          stderr: Buffer.concat(stderr).toString("utf8"),
+          stdout: redactKnownSecrets(Buffer.concat(stdout).toString("utf8")),
+          stderr: redactKnownSecrets(Buffer.concat(stderr).toString("utf8")),
           stdoutTruncated: stdoutState.truncated,
           stderrTruncated: stderrState.truncated,
           startedAt,
@@ -185,5 +195,6 @@ module.exports = {
   DEFAULT_ENV_KEYS,
   NodeCommandRunner,
   isInside,
-  sanitizedEnvironment
+  sanitizedEnvironment,
+  redactKnownSecrets
 };
