@@ -251,7 +251,6 @@
       const project = this.projectStore.getActiveProject();
       const promptRun = { ...repair.run, projectId: project.projectId };
       const prompt = root.IntegrationPrompts.buildRepairPrompt({ project, run: promptRun, repairTask: repair.repairTask, agentId: run.agentId });
-      await this.store.markRepairActive(repair.repairTask.repairTaskId);
       const sent = await this.sendPrompt(run.agentId, prompt);
       if (!sent?.ok) {
         await this.registry.clearProtocolContext(run.agentId);
@@ -260,6 +259,7 @@
         await this.projectStore.setExecutionStatus?.(project.projectId, "READY_FOR_INTEGRATION", { phase: 8, reason: "integration_repair_dispatch_failed" });
         return this.tick({ reason: "repair_dispatch_retry_new_run" });
       }
+      await this.store.markRepairActive(repair.repairTask.repairTaskId);
       await this.projectStore.setExecutionStatus?.(project.projectId, "INTEGRATION_REPAIRING", {
         phase: 8,
         integration: { runId: run.runId, branch: run.branch },
