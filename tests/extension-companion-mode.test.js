@@ -10,7 +10,7 @@ class MemoryStorageArea {
   async set(values) { Object.assign(this.data, values || {}); }
 }
 
-function controllerFixture({ initial = {}, failStarts = 0 } = {}) {
+function controllerFixture({ initial = {}, failStarts = 0, migrationStatus = { ok: true, pending: null, applied: null }, stageResult = null } = {}) {
   const storageArea = new MemoryStorageArea(initial);
   const timerRuntime = new DeterministicTimerRuntime();
   const agentRuntime = new FakeAgentRuntime({ agents: [{ agentId: "lead-1", role: "lead", status: "IDLE" }] });
@@ -29,7 +29,14 @@ function controllerFixture({ initial = {}, failStarts = 0 } = {}) {
       transports.push(transport);
       return transport;
     },
-    rpcFactory: (transport) => ({ transport }),
+    rpcFactory: (transport) => ({
+      transport,
+      async request(method) {
+        if (method === "migration.status") return migrationStatus;
+        if (method === "migration.stageBundle") return stageResult || { ok: true, projectId: "project-local", restartRequired: true };
+        throw new Error(`unexpected_rpc:${method}`);
+      }
+    }),
     endpointFactory: (rpc) => ({
       started: false,
       async start() {
@@ -70,7 +77,7 @@ test("companion mode is disabled by default and persists explicit enable/disable
   assert.equal(timerRuntime.list().includes(RECONNECT_TIMER), false);
 });
 
-test("active extension project blocks companion cutover until migration exists", async () => {
+test("active extension project blocks companion cutover until desktop reports applied migration", async () => {
   const { controller, storageArea, transports } = controllerFixture({
     initial: {
       [LEGACY_PROJECTS_KEY]: {
@@ -89,7 +96,46 @@ test("active extension project blocks companion cutover until migration exists",
   assert.equal(status.activeProjectId, "project-local");
   assert.equal(controller.isEnabled(), false);
   assert.equal(storageArea.data[COMPANION_MODE_KEY], undefined);
-  assert.equal(transports.length, 0);
+  assert.equal(transports.length, 1);
+});
+
+test("applied desktop migration receipt permits the active project cutover", async () => {
+  const { controller, storageArea, transports } = controllerFixture({
+    initial: {
+      [LEGACY_PROJECTS_KEY]: {
+        schemaVersion: 1,
+        activeProjectId: "project-local",
+        projects: { "project-local": { projectId: "project-local" } }
+      }
+    },
+    migrationStatus: {
+      ok: true,
+      pending: null,
+      applied: { projectId: "project-local", checksum: "abc", appliedAt: 123 }
+    }
+  });
+  await controller.load();
+  const status = await controller.setEnabled(true);
+
+  assert.equal(status.enabled, true);
+  assert.equal(status.connected, true);
+  assert.equal(storageArea.data[COMPANION_MODE_KEY], true);
+  assert.equal(controller.isEnabled(), true);
+  assert.equal(transports.length, 2);
+});
+
+test("migration bundle can be staged over a transient bridge while extension remains canonical", async () => {
+  const { controller, transports } = controllerFixture({
+    stageResult: { ok: true, projectId: "project-local", checksum: "abc", restartRequired: true }
+  });
+  await controller.load();
+  const result = await controller.stageMigrationBundle("bundle-json");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.restartRequired, true);
+  assert.equal(controller.isEnabled(), false);
+  assert.equal(transports.length, 1);
+  assert.equal(transports[0].connected, false);
 });
 
 test("reconnect timer rebuilds a dropped companion endpoint without changing mode", async () => {
