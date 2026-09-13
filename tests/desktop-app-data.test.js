@@ -24,4 +24,5 @@ test("ensureDesktopPaths creates isolated state, logs, bundles and companion dir
   assert.equal(paths.companionEndpointFile, path.join(paths.companionDirectory, "endpoint.json"));
   assert.equal(paths.companionMigrationPendingFile, path.join(paths.companionDirectory, "migration-pending.json"));
   assert.equal(paths.companionMigrationReceiptFile, path.join(paths.companionDirectory, "migration-applied.json"));
+  assert.equal(paths.companionNativeHostManifestFile, path.join(paths.companionDirectory, "native-host-manifest.json"));
 });
