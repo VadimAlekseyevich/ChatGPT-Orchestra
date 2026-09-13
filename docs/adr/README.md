@@ -42,4 +42,5 @@ Date: YYYY-MM-DD
 - [`0010-platform-contracts-orchestrator-api.md`](0010-platform-contracts-orchestrator-api.md) — AgentRuntime/StateStore/TimerRuntime boundaries, normalized runtime identity and platform-neutral Orchestrator API;
 - [`0011-portable-persistence-project-bundles.md`](0011-portable-persistence-project-bundles.md) — project-scoped portable state, migration registry, Project Bundle, import recovery gate and SQLite persistence;
 - [`0012-portable-dashboard-observability.md`](0012-portable-dashboard-observability.md) — shared Dashboard frontend over a versioned sanitized Observability read model and Orchestrator API v3;
-- [`0013-portable-agent-context-packets.md`](0013-portable-agent-context-packets.md) — persisted compact context, versioned bounded role packets and fresh-session bootstrap without transcript dependency.
+- [`0013-portable-agent-context-packets.md`](0013-portable-agent-context-packets.md) — persisted compact context, versioned bounded role packets and fresh-session bootstrap without transcript dependency;
+- [`0014-contract-conformance-ci.md`](0014-contract-conformance-ci.md) — reusable platform/API conformance suites and automated CI parity gates before adding a second runtime.
