@@ -8,6 +8,7 @@ const { createLocalPlanningEngine } = require("./local-planning-engine.js");
 const { LocalValidatingGitProvider } = require("./local-validating-git-provider.js");
 const { LocalIntegrationCoordinator } = require("./local-integration-coordinator.js");
 const { createLocalIntegrationEngine } = require("./local-integration-engine.js");
+const { createLocalReviewEngine } = require("./local-review-engine.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -85,6 +86,7 @@ class DesktopHost {
 
     const LocalPlanningEngine = createLocalPlanningEngine(root.PlanningEngine);
     const LocalIntegrationEngine = createLocalIntegrationEngine(root.RecoverableIntegrationEngine);
+    const LocalReviewEngine = createLocalReviewEngine(root.ReviewEngine);
     this.schedulerEngine = null;
     this.planningEngine = new LocalPlanningEngine({
       projectStore: this.projectStore,
@@ -92,13 +94,14 @@ class DesktopHost {
       eventBus: this.eventBus,
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
     });
-    this.reviewEngine = new root.ReviewEngine({
+    this.reviewEngine = new LocalReviewEngine({
       store: this.reviewStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
+      repositoryService: this.repositoryService,
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
       onSchedulerTick: (options) => this.schedulerEngine?.tick(options)
     });
@@ -196,9 +199,7 @@ class DesktopHost {
     if (run && taskState && project && this.gitProvider?.prepareRun) {
       const task = taskState.definition || taskState;
       const prepared = await this.gitProvider.prepareRun({ project, task, run, snapshot: this.schedulerStore.getGitSnapshot?.() || null });
-      if (!prepared?.ok) {
-        return { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
-      }
+      if (!prepared?.ok) return { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
       if (!prepared.skipped) {
         await this.schedulerStore.logDecision?.("task_workspace_prepared", {
           taskId: task.id,
