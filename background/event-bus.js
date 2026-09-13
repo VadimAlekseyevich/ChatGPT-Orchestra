@@ -93,8 +93,9 @@
           details: { field: context.field, expected: context.expected, received: context.received }
         });
       }
-      if (route === "review" && !agent.protocolContext) {
-        return this.reject("review_context_required", { event, sender });
+      const privileged = route === "review" || route === "integration" || event.taskId === "integration";
+      if (privileged && !agent.protocolContext) {
+        return this.reject(route === "review" ? "review_context_required" : "integration_context_required", { event, sender });
       }
 
       const existing = this.store.getProcessed(event.eventId);
