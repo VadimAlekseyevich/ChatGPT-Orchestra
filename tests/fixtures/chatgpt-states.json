@@ -1,0 +1,33 @@
+{
+  "idle": {
+    "html": "<main><textarea id=\"prompt-textarea\"></textarea><button data-testid=\"send-button\">Send</button></main>",
+    "availability": "ready"
+  },
+  "generating": {
+    "html": "<main><textarea id=\"prompt-textarea\"></textarea><button data-testid=\"stop-button\">Stop</button></main>",
+    "availability": "generating"
+  },
+  "completed": {
+    "html": "<main><article data-turn=\"assistant\"><div class=\"markdown\">DONE</div></article><textarea id=\"prompt-textarea\"></textarea><button data-testid=\"send-button\">Send</button></main>",
+    "availability": "ready",
+    "assistantText": "DONE"
+  },
+  "composerOccupied": {
+    "html": "<main><textarea id=\"prompt-textarea\">user draft</textarea><button data-testid=\"send-button\">Send</button></main>",
+    "availability": "ready",
+    "occupied": true
+  },
+  "error": {
+    "html": "<main><div role=\"alert\" data-testid=\"conversation-turn-error\">Something went wrong</div></main>",
+    "availability": "error"
+  },
+  "loginRequired": {
+    "html": "<main data-testid=\"login-page\"><a href=\"/auth/login\">Log in</a></main>",
+    "availability": "unavailable"
+  },
+  "navigationChanged": {
+    "html": "<main data-conversation-path=\"/c/new-chat\"><article data-turn=\"assistant\"><div class=\"markdown\">Existing response</div></article><textarea id=\"prompt-textarea\"></textarea></main>",
+    "availability": "ready",
+    "path": "/c/new-chat"
+  }
+}
