@@ -61,10 +61,37 @@
       activeRunId: null,
       lastRunId: null,
       lastArtifact: null,
+      workerReport: null,
+      reviewIterations: 0,
+      activeReviewId: null,
+      lastReview: null,
+      reworkContext: null,
       lastError: null,
       completedAt: null,
+      approvedAt: null,
       updatedAt: 0
     };
+  }
+
+  function normalizeLoadedTask(task) {
+    const normalized = {
+      ...task,
+      workerReport: task?.workerReport ? clone(task.workerReport) : null,
+      reviewIterations: Math.max(0, Number(task?.reviewIterations) || 0),
+      activeReviewId: task?.activeReviewId || null,
+      lastReview: task?.lastReview ? clone(task.lastReview) : null,
+      reworkContext: task?.reworkContext ? clone(task.reworkContext) : null,
+      approvedAt: task?.approvedAt || null
+    };
+    if (normalized.status === "DONE_UNVERIFIED") {
+      if (taskRequiresGit(normalized) && !normalized.lastArtifact) {
+        normalized.status = "NEEDS_USER";
+        normalized.lastError = { reason: "legacy_completion_without_git_provenance", at: 0 };
+      } else {
+        normalized.status = "DONE_BY_WORKER";
+      }
+    }
+    return normalized;
   }
 
   function normalizeRunGit(git) {
@@ -75,6 +102,7 @@
       branch: String(git.branch || ""),
       targetBranch: String(git.targetBranch || ""),
       baseSha: String(git.baseSha || "").toLowerCase(),
+      startSha: String(git.startSha || git.baseSha || "").toLowerCase(),
       cleanupPolicy: String(git.cleanupPolicy || "retain_until_review_or_manual_cleanup"),
       artifactStatus: String(git.artifactStatus || "PENDING"),
       artifact: git.artifact ? clone(git.artifact) : null,
@@ -96,15 +124,19 @@
       const stored = await this.storageArea.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
       if (candidate?.schemaVersion === SCHEMA_VERSION) {
+        const tasks = {};
+        for (const [taskId, task] of Object.entries(candidate.tasks || {})) tasks[taskId] = normalizeLoadedTask(task);
         this.state = {
           ...defaultState(),
           ...candidate,
           settings: normalizeSettings(candidate.settings),
           git: candidate.git && typeof candidate.git === "object" ? clone(candidate.git) : null,
-          tasks: { ...(candidate.tasks || {}) },
+          tasks,
           runs: { ...(candidate.runs || {}) },
           decisionLog: Array.isArray(candidate.decisionLog) ? [...candidate.decisionLog] : []
         };
+        if (this.state.status === "COMPLETED_UNVERIFIED") this.state.status = "RUNNING";
+        if (Object.values(tasks).some((task) => task.status === "NEEDS_USER")) this.state.status = "NEEDS_USER";
       }
       return this.snapshot();
     }
@@ -112,8 +144,8 @@
     snapshot() { return clone(this.state); }
     getTask(taskId) { const task = this.state.tasks[taskId]; return task ? clone(task) : null; }
     getRun(runId) { const run = this.state.runs[runId]; return run ? clone(run) : null; }
-    listTasks() { return Object.values(this.state.tasks).map(clone); }
-    listRuns() { return Object.values(this.state.runs).map(clone); }
+    listTasks() { return Object.values(this.state.tasks).map((task) => clone(task)); }
+    listRuns() { return Object.values(this.state.runs).map((run) => clone(run)); }
     activeRuns() { return this.listRuns().filter((run) => ["ASSIGNED", "RUNNING"].includes(run.status)); }
     getGitSnapshot() { return this.state.git ? clone(this.state.git) : null; }
 
@@ -121,16 +153,14 @@
       const issues = [];
       for (const task of this.listTasks()) {
         if (!taskRequiresGit(task)) continue;
-        if (task.status === "DONE_UNVERIFIED" && !task.lastArtifact) {
+        if (["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING", "APPROVED"].includes(task.status) && !task.lastArtifact) {
           issues.push({ type: "completed_task_without_validated_artifact", taskId: task.id, runId: task.lastRunId || null });
         }
       }
       for (const run of this.activeRuns()) {
         const task = this.getTask(run.taskId);
         if (!taskRequiresGit(task)) continue;
-        if (!run.git?.branch || !run.git?.baseSha) {
-          issues.push({ type: "active_run_without_git_assignment", taskId: run.taskId, runId: run.runId, agentId: run.agentId });
-        }
+        if (!run.git?.branch || !run.git?.baseSha) issues.push({ type: "active_run_without_git_assignment", taskId: run.taskId, runId: run.runId, agentId: run.agentId });
       }
       return issues;
     }
@@ -148,6 +178,7 @@
         taskCount: tasks.length,
         counts,
         activeRuns: this.activeRuns().length,
+        reviewPending: tasks.filter((task) => ["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)).length,
         decisionCursor: this.state.decisionLog.length,
         updatedAt: this.state.updatedAt
       };
@@ -209,9 +240,7 @@
 
     async logDecision(type, details = {}) {
       this.state.decisionLog.push({ at: this.clock(), type: String(type || "decision"), details: clone(details) });
-      if (this.state.decisionLog.length > this.maxDecisionLog) {
-        this.state.decisionLog.splice(0, this.state.decisionLog.length - this.maxDecisionLog);
-      }
+      if (this.state.decisionLog.length > this.maxDecisionLog) this.state.decisionLog.splice(0, this.state.decisionLog.length - this.maxDecisionLog);
       await this.persist();
     }
 
@@ -239,6 +268,7 @@
         attempt: task.attempts,
         locks: [...locks],
         git: normalizeRunGit(git),
+        reworkContext: task.reworkContext ? clone(task.reworkContext) : null,
         assignedAt: now,
         startedAt: null,
         lastEventAt: now,
@@ -288,7 +318,7 @@
       return this.getRun(runId);
     }
 
-    async markDone(runId) {
+    async markDone(runId, workerReport = null) {
       const run = this.state.runs[runId];
       if (!run) return null;
       const task = this.state.tasks[run.taskId];
@@ -300,15 +330,89 @@
       run.lastEventAt = now;
       run.finishedAt = now;
       if (task) {
-        task.status = "DONE_UNVERIFIED";
+        task.status = "DONE_BY_WORKER";
         task.activeRunId = null;
         task.completedAt = now;
+        task.approvedAt = null;
         task.updatedAt = now;
         task.lastError = null;
         task.lastArtifact = run.git?.artifact ? clone(run.git.artifact) : null;
+        task.workerReport = workerReport && typeof workerReport === "object" ? clone(workerReport) : null;
+        task.activeReviewId = null;
       }
       await this.persist();
       return { ok: true, task: task ? this.getTask(task.id) : null, run: this.getRun(runId) };
+    }
+
+    async markReviewPending(taskId, reviewId, workerReport = null) {
+      const task = this.state.tasks[taskId];
+      if (!task) return null;
+      if (!["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)) return null;
+      task.status = "REVIEW_PENDING";
+      task.activeReviewId = reviewId || task.activeReviewId;
+      if (workerReport && typeof workerReport === "object") task.workerReport = clone(workerReport);
+      task.updatedAt = this.clock();
+      await this.persist();
+      return this.getTask(taskId);
+    }
+
+    async markReviewing(taskId, reviewId, reviewerAgentId) {
+      const task = this.state.tasks[taskId];
+      if (!task || !["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)) return null;
+      task.status = "REVIEWING";
+      task.activeReviewId = reviewId;
+      task.lastReview = { ...(task.lastReview || {}), reviewId, reviewerAgentId, status: "REVIEWING", updatedAt: this.clock() };
+      task.updatedAt = this.clock();
+      await this.persist();
+      return this.getTask(taskId);
+    }
+
+    async markReviewApproved(taskId, review) {
+      const task = this.state.tasks[taskId];
+      if (!task || !["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)) return null;
+      const now = this.clock();
+      task.status = "APPROVED";
+      task.activeReviewId = null;
+      task.reviewIterations = Math.max(task.reviewIterations || 0, Number(review?.iteration) || 1);
+      task.lastReview = clone({ ...review, status: "APPROVED", approvedAt: now });
+      task.reworkContext = null;
+      task.approvedAt = now;
+      task.updatedAt = now;
+      await this.persist();
+      return this.getTask(taskId);
+    }
+
+    async markChangesRequired(taskId, review = {}) {
+      const task = this.state.tasks[taskId];
+      if (!task || !["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status)) return null;
+      const now = this.clock();
+      const iteration = Math.max(task.reviewIterations || 0, Number(review.iteration) || 1);
+      const maxIterations = Math.max(1, Number(review.maxReviewIterations) || 3);
+      task.reviewIterations = iteration;
+      task.activeReviewId = null;
+      task.lastReview = clone({ ...review, status: "CHANGES_REQUIRED", completedAt: now });
+      task.approvedAt = null;
+      if (iteration >= maxIterations) {
+        task.status = "NEEDS_USER";
+        task.lastError = { reason: "max_review_iterations_exhausted", at: now };
+        task.reworkContext = null;
+      } else {
+        task.status = "READY";
+        task.completedAt = null;
+        task.reworkContext = {
+          sourceReviewId: review.reviewId || null,
+          sourceWorkerRunId: review.workerRunId || task.lastRunId || null,
+          reviewerAgentId: review.reviewerAgentId || null,
+          requiredChanges: clone(review.result?.requiredChanges || []),
+          issues: clone(review.result?.issues || []),
+          previousArtifact: task.lastArtifact ? clone(task.lastArtifact) : null,
+          previousCommit: task.lastArtifact?.commit || null,
+          createdAt: now
+        };
+      }
+      task.updatedAt = now;
+      await this.persist();
+      return this.getTask(taskId);
     }
 
     async markFailure(runId, reason, { retryable = true, needsUser = false } = {}) {
@@ -332,16 +436,20 @@
     }
 
     dependenciesSatisfied(task) {
-      return (task.dependencies || []).every((dependencyId) => this.state.tasks[dependencyId]?.status === "DONE_UNVERIFIED");
+      return (task.dependencies || []).every((dependencyId) => this.state.tasks[dependencyId]?.status === "APPROVED");
     }
 
     runnableTasks() {
       return this.listTasks().filter((task) => task.status === "READY" && this.dependenciesSatisfied(task));
     }
 
+    reviewableTasks() {
+      return this.listTasks().filter((task) => ["DONE_BY_WORKER", "REVIEW_PENDING", "REVIEWING"].includes(task.status));
+    }
+
     isComplete() {
       const tasks = this.listTasks();
-      return tasks.length > 0 && tasks.every((task) => ["DONE_UNVERIFIED", "CANCELLED"].includes(task.status));
+      return tasks.length > 0 && tasks.every((task) => ["APPROVED", "CANCELLED"].includes(task.status));
     }
   }
 
@@ -351,6 +459,6 @@
   root.normalizeSchedulerSettings = normalizeSettings;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask, normalizeRunGit, taskRequiresGit };
+    module.exports = { SchedulerStore, STORAGE_KEY, SCHEMA_VERSION, DEFAULTS, normalizeSettings, normalizeTask, normalizeLoadedTask, normalizeRunGit, taskRequiresGit };
   }
 })();

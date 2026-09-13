@@ -1,8 +1,8 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.7",
+  "version": "2.0.0-alpha.8",
   "private": true,
-  "description": "Development tests for ChatGPT Orchestra adapter, protocol, planning, scheduler and Git task isolation.",
+  "description": "Development tests for ChatGPT Orchestra adapter, protocol, planning, scheduler, Git isolation and independent review.",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
@@ -10,7 +10,8 @@
     "test:phase3": "node --test tests/orchestra-protocol.test.js tests/event-bus.test.js",
     "test:phase4": "node --test tests/project-store.test.js tests/dag-validator.test.js tests/planning-artifact-parser.test.js tests/planning-event-source.test.js tests/planning-engine.test.js",
     "test:phase5": "node --test tests/conflict-policy.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
-    "test:phase6": "node --test tests/git-provider.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js"
+    "test:phase6": "node --test tests/git-provider.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
+    "test:phase7": "node --test tests/event-bus.test.js tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js"
   },
   "engines": {
     "node": ">=18"

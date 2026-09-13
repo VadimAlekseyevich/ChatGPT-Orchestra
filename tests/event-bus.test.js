@@ -79,6 +79,20 @@ test("bound protocol context rejects stale task/run identity", async () => {
   assert.equal(ok.accepted, true);
 });
 
+test("review events require exact bound context before eventId can be reserved", async () => {
+  const { registry, bus, store, sender } = await setup();
+  const review = event({ event: "REVIEW_APPROVED", runId: "REV1", eventId: "REV1-final", payload: {} });
+  const unbound = await bus.handleEvent(review, sender);
+  assert.equal(unbound.ok, false);
+  assert.equal(unbound.reason, "review_context_required");
+  assert.equal(store.summary().acceptedEvents, 0);
+
+  await registry.setProtocolContext("A1", { projectId: "P1", taskId: "T1", runId: "REV1" });
+  const bound = await bus.handleEvent(review, sender);
+  assert.equal(bound.accepted, true);
+  assert.equal(store.summary().acceptedEvents, 1);
+});
+
 test("persists processed events across store reload", async () => {
   const storage = fakeStorage();
   const registry = new TabRegistry({ storageArea: fakeStorage(), idFactory: () => "A1" });

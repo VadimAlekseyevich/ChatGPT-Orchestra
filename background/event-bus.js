@@ -82,6 +82,9 @@
         return this.reject("agent_mismatch", { event, sender, details: { expectedAgentId: agent.agentId } });
       }
 
+      const route = Protocol.routeForEvent(event.event);
+      if (!route) return this.reject("unknown_route", { event, sender });
+
       const context = this.validateProtocolContext(agent, event);
       if (!context.ok) {
         return this.reject(context.reason, {
@@ -89,6 +92,9 @@
           sender,
           details: { field: context.field, expected: context.expected, received: context.received }
         });
+      }
+      if (route === "review" && !agent.protocolContext) {
+        return this.reject("review_context_required", { event, sender });
       }
 
       const existing = this.store.getProcessed(event.eventId);
@@ -99,7 +105,7 @@
             duplicate: true,
             eventId: event.eventId,
             cursor: existing.cursor,
-            route: Protocol.routeForEvent(event.event)
+            route
           };
         }
         return this.reject("event_id_collision", { event, sender });
@@ -110,9 +116,6 @@
       if (event.sequence <= lastSequence) {
         return this.reject("stale_sequence", { event, sender, details: { lastSequence } });
       }
-
-      const route = Protocol.routeForEvent(event.event);
-      if (!route) return this.reject("unknown_route", { event, sender });
 
       const accepted = await this.store.accept(event, { route, tabId, source });
       const record = { cursor: accepted.cursor, route, tabId, source: accepted.source, agent, event };

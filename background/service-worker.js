@@ -5,6 +5,7 @@ importScripts(
   "../protocol/orchestra-protocol.js",
   "../prompts/planning-prompts.js",
   "../prompts/worker-prompts.js",
+  "../prompts/review-prompts.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
@@ -14,6 +15,8 @@ importScripts(
   "conflict-policy.js",
   "git-provider.js",
   "scheduler-store.js",
+  "review-store.js",
+  "review-engine.js",
   "scheduler-engine.js",
   "orchestrator.js"
 );
@@ -24,21 +27,34 @@ const eventStore = new root.EventStore();
 const eventBus = new root.EventBus({ registry, store: eventStore });
 const projectStore = new root.ProjectStore();
 const schedulerStore = new root.SchedulerStore();
+const reviewStore = new root.ReviewStore();
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 
 let orchestrator = null;
+let schedulerEngine = null;
 const planningEngine = new root.PlanningEngine({
   projectStore,
   registry,
   eventBus,
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
-const schedulerEngine = new root.SchedulerEngine({
+const reviewEngine = new root.ReviewEngine({
+  store: reviewStore,
+  schedulerStore,
+  projectStore,
+  registry,
+  eventBus,
+  gitProvider,
+  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt),
+  onSchedulerTick: (options) => schedulerEngine?.tick(options)
+});
+schedulerEngine = new root.SchedulerEngine({
   store: schedulerStore,
   projectStore,
   registry,
   eventBus,
   gitProvider,
+  reviewEngine,
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
 orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });
