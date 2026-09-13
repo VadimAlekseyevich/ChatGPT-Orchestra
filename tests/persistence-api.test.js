@@ -16,9 +16,9 @@ function apiWith({ recoveryStatus = "PAUSED", importResult = { ok: true, project
   return { api: new OrchestratorApi({ projectBundleService, recoveryController, persistenceInfo: { backend: "test" } }), calls };
 }
 
-test("Orchestrator API v2 exposes persistence metadata and bundle export", async () => {
+test("Orchestrator API v3 preserves persistence metadata and bundle export", async () => {
   const { api, calls } = apiWith();
-  assert.equal(API_VERSION, 2);
+  assert.equal(API_VERSION, 3);
   const info = await api.query("persistence");
   assert.equal(info.ok, true);
   assert.equal(info.persistence.backend, "test");

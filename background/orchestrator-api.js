@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const API_VERSION = 2;
+  const API_VERSION = 3;
   const IMPORT_SAFE_RECOVERY_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
 
   class OrchestratorApi {
@@ -15,7 +15,9 @@
       recoveryController = null,
       eventBus = null,
       projectBundleService = null,
-      persistenceInfo = null
+      persistenceInfo = null,
+      observabilityService = null,
+      taskControlService = null
     } = {}) {
       this.orchestrator = orchestrator;
       this.planningEngine = planningEngine;
@@ -26,9 +28,15 @@
       this.eventBus = eventBus;
       this.projectBundleService = projectBundleService;
       this.persistenceInfo = persistenceInfo;
+      this.observabilityService = observabilityService;
+      this.taskControlService = taskControlService;
     }
 
     envelope(data = {}) { return { apiVersion: API_VERSION, ...data }; }
+
+    dashboard(payload = {}) {
+      return this.observabilityService?.dashboard?.(payload) || null;
+    }
 
     async query(name, payload = {}) {
       const query = String(name || "");
@@ -45,6 +53,32 @@
             recovery: this.recoveryController?.getPublicState?.() || null
           }
         });
+      }
+      if (query === "dashboard") {
+        const dashboard = this.dashboard(payload);
+        if (!dashboard) return this.envelope({ ok: false, reason: "observability_unavailable" });
+        return this.envelope({ ok: true, dashboard });
+      }
+      if (query === "taskGraph") {
+        const dashboard = this.dashboard({ eventLimit: 1, decisionLimit: 1 });
+        return this.envelope({ ok: true, projectId: dashboard?.project?.projectId || null, tasks: dashboard?.tasks || [] });
+      }
+      if (query === "taskDetails") {
+        const task = this.observabilityService?.task?.(payload.taskId) || null;
+        return task ? this.envelope({ ok: true, task }) : this.envelope({ ok: false, reason: "unknown_task", taskId: payload.taskId || null });
+      }
+      if (query === "agents") return this.envelope({ ok: true, agents: this.observabilityService?.agents?.() || [] });
+      if (query === "warnings") return this.envelope({ ok: true, warnings: this.observabilityService?.warnings?.({ minimumSeverity: payload.minimumSeverity || "info" }) || [] });
+      if (query === "metrics") return this.envelope({ ok: true, metrics: this.observabilityService?.metrics?.() || null });
+      if (query === "reviewDetails") {
+        const dashboard = this.dashboard({ eventLimit: 1, decisionLimit: 1 });
+        const items = dashboard?.reviews?.items || [];
+        const review = payload.reviewId ? items.find((item) => item.reviewId === payload.reviewId) || null : null;
+        return payload.reviewId && !review ? this.envelope({ ok: false, reason: "unknown_review", reviewId: payload.reviewId }) : this.envelope({ ok: true, review, reviews: payload.reviewId ? undefined : items });
+      }
+      if (query === "integrationEvidence") {
+        const dashboard = this.dashboard({ eventLimit: 1, decisionLimit: 1 });
+        return this.envelope({ ok: true, integration: dashboard?.integration || null });
       }
       if (query === "events") return this.envelope({ ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) });
       if (query === "project") return this.envelope({ ok: true, project: this.planningEngine?.getPublicState?.() || null });
@@ -69,7 +103,14 @@
       else if (command === "clearProtocolContext") result = await this.orchestrator?.clearProtocolContext?.(payload.agentId);
       else if (command === "sendAgentPrompt") result = await this.orchestrator?.sendPromptToAgent?.(payload.agentId, payload.prompt);
       else if (command === "stopAgent") result = await this.orchestrator?.stopAgent?.(payload.agentId);
+      else if (command === "openExecutor") result = await this.taskControlService?.openExecutor?.(payload.agentId);
       else if (command === "schedulerTick") result = await this.schedulerEngine?.tick?.({ reason: payload.reason || "api_tick" });
+      else if (command === "retryTask") result = await this.taskControlService?.retryTask?.(payload.taskId);
+      else if (command === "cancelTask") result = await this.taskControlService?.cancelTask?.(payload.taskId, { cascade: payload.cascade === true });
+      else if (command === "changePriority") result = await this.taskControlService?.changePriority?.(payload.taskId, payload.priority);
+      else if (command === "reassignAgent") result = await this.taskControlService?.reassignAgent?.(payload.taskId, payload.agentId);
+      else if (command === "requestReview") result = await this.taskControlService?.requestReview?.(payload.taskId);
+      else if (command === "startIntegration") result = await this.taskControlService?.startIntegration?.();
       else if (command === "pause") result = await this.recoveryController?.pause?.();
       else if (command === "stopNow") result = await this.recoveryController?.stopNow?.();
       else if (command === "resume") result = await this.recoveryController?.resume?.();
@@ -85,6 +126,7 @@
           if (result?.ok) result = { ...result, reloadRequired: true };
         }
       }
+      else if (command === "exportDebugBundle") result = this.observabilityService?.debugBundle?.(payload);
       else return this.envelope({ ok: false, reason: "unknown_api_command", command });
       if (result === undefined) return this.envelope({ ok: false, reason: "api_dependency_unavailable", command });
       return this.envelope(result && typeof result === "object" ? result : { ok: true, result });
@@ -95,6 +137,8 @@
       if (senderContext?.sessionId) return this.envelope({ ok: false, reason: "orchestrator_command_forbidden_from_agent_session" });
       const payload = message?.payload || {};
       const type = message?.type;
+      if (type === TYPES.ORCHESTRATOR_API_QUERY) return this.query(payload.name, payload.payload || {});
+      if (type === TYPES.ORCHESTRATOR_API_EXECUTE) return this.execute(payload.name, payload.payload || {});
       const queryMap = new Map([
         [TYPES.ORCHESTRATOR_GET_STATE, "state"],
         [TYPES.ORCHESTRATOR_GET_EVENTS, "events"],

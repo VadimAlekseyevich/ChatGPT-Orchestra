@@ -2,7 +2,7 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const CONTRACT_VERSION = 2;
+  const CONTRACT_VERSION = 3;
 
   const AGENT_RUNTIME_METHODS = Object.freeze([
     "load",
@@ -45,17 +45,33 @@
     "clearProtocolContext",
     "sendAgentPrompt",
     "stopAgent",
+    "openExecutor",
     "schedulerTick",
+    "retryTask",
+    "cancelTask",
+    "changePriority",
+    "reassignAgent",
+    "requestReview",
+    "startIntegration",
     "pause",
     "stopNow",
     "resume",
     "exportProjectBundle",
-    "importProjectBundle"
+    "importProjectBundle",
+    "exportDebugBundle"
   ]);
 
   const API_QUERIES = Object.freeze([
     "state",
+    "dashboard",
+    "taskGraph",
+    "taskDetails",
+    "agents",
     "events",
+    "warnings",
+    "metrics",
+    "reviewDetails",
+    "integrationEvidence",
     "project",
     "scheduler",
     "schedulerDecisions",

@@ -34,14 +34,41 @@ function makeApi() {
     async resume() { calls.push(["resume"]); return { ok: true }; }
   };
   const eventBus = { recent(limit) { return { events: [{ cursor: 1, limit }], rejections: [] }; } };
+  const dashboard = {
+    project: { projectId: "P1", status: "RUNNING" },
+    tasks: [{ taskId: "T1", status: "READY" }],
+    agents: [{ agentId: "A1", status: "IDLE" }],
+    warnings: [{ code: "warn" }],
+    metrics: { tasks: { total: 1 } },
+    reviews: { items: [{ reviewId: "V1", taskId: "T1" }] },
+    integration: { summary: { status: "IDLE" } }
+  };
+  const observabilityService = {
+    dashboard() { return dashboard; },
+    task(taskId) { return taskId === "T1" ? dashboard.tasks[0] : null; },
+    agents() { return dashboard.agents; },
+    warnings() { return dashboard.warnings; },
+    metrics() { return dashboard.metrics; },
+    debugBundle() { return { ok: true, filename: "debug.json", serialized: "{}" }; }
+  };
+  const taskControlService = {
+    async retryTask(taskId) { calls.push(["retryTask", taskId]); return { ok: true }; },
+    async cancelTask(taskId, options) { calls.push(["cancelTask", taskId, options]); return { ok: true }; },
+    async changePriority(taskId, priority) { calls.push(["changePriority", taskId, priority]); return { ok: true }; },
+    async reassignAgent(taskId, agentId) { calls.push(["reassignAgent", taskId, agentId]); return { ok: true }; },
+    async requestReview(taskId) { calls.push(["requestReview", taskId]); return { ok: true }; },
+    async startIntegration() { calls.push(["startIntegration"]); return { ok: true }; },
+    async openExecutor(agentId) { calls.push(["openExecutor", agentId]); return { ok: true }; }
+  };
   return {
     calls,
-    api: new OrchestratorApi({ orchestrator, planningEngine, schedulerEngine, reviewEngine, integrationEngine, recoveryController, eventBus })
+    api: new OrchestratorApi({ orchestrator, planningEngine, schedulerEngine, reviewEngine, integrationEngine, recoveryController, eventBus, observabilityService, taskControlService })
   };
 }
 
-test("Orchestrator API exposes stable aggregated state DTO", async () => {
+test("Orchestrator API v3 exposes stable aggregated state DTO", async () => {
   const { api } = makeApi();
+  assert.equal(API_VERSION, 3);
   const result = await api.query("state");
   assert.equal(result.apiVersion, API_VERSION);
   assert.equal(result.ok, true);
@@ -52,7 +79,36 @@ test("Orchestrator API exposes stable aggregated state DTO", async () => {
   assert.equal(result.state.recovery.bootReady, true);
 });
 
-test("Orchestrator API commands delegate without platform sender objects", async () => {
+test("observability queries are available through one API surface", async () => {
+  const { api } = makeApi();
+  assert.equal((await api.query("dashboard")).dashboard.project.projectId, "P1");
+  assert.equal((await api.query("taskGraph")).tasks.length, 1);
+  assert.equal((await api.query("taskDetails", { taskId: "T1" })).task.taskId, "T1");
+  assert.equal((await api.query("agents")).agents[0].agentId, "A1");
+  assert.equal((await api.query("warnings")).warnings[0].code, "warn");
+  assert.equal((await api.query("metrics")).metrics.tasks.total, 1);
+  assert.equal((await api.query("reviewDetails", { reviewId: "V1" })).review.reviewId, "V1");
+  assert.equal((await api.query("integrationEvidence")).integration.summary.status, "IDLE");
+  assert.equal((await api.query("taskDetails", { taskId: "missing" })).reason, "unknown_task");
+});
+
+test("Dashboard task controls delegate through Core services", async () => {
+  const { api, calls } = makeApi();
+  for (const [name, payload] of [
+    ["retryTask", { taskId: "T1" }],
+    ["cancelTask", { taskId: "T1", cascade: true }],
+    ["changePriority", { taskId: "T1", priority: 7 }],
+    ["reassignAgent", { taskId: "T1", agentId: "A1" }],
+    ["requestReview", { taskId: "T1" }],
+    ["startIntegration", {}],
+    ["openExecutor", { agentId: "A1" }],
+    ["exportDebugBundle", {}]
+  ]) assert.equal((await api.execute(name, payload)).ok, true, name);
+  assert.ok(calls.some((item) => item[0] === "retryTask"));
+  assert.ok(calls.some((item) => item[0] === "openExecutor"));
+});
+
+test("existing commands remain platform-neutral", async () => {
   const { api, calls } = makeApi();
   assert.equal((await api.execute("startProject", { goal: "do work", repositoryUrl: "https://github.com/a/b" })).ok, true);
   assert.equal((await api.execute("createWorkers", { count: 3 })).ok, true);
@@ -62,21 +118,29 @@ test("Orchestrator API commands delegate without platform sender objects", async
   assert.deepEqual(calls[2], ["pause"]);
 });
 
-test("legacy extension messages are only a transport mapping onto Orchestrator API", async () => {
+test("generic extension transport maps query and execute onto API v3", async () => {
+  const { api, calls } = makeApi();
+  const dashboard = await api.handleLegacyMessage({ type: MESSAGE_TYPES.ORCHESTRATOR_API_QUERY, payload: { name: "dashboard", payload: {} } }, { kind: "extension-ui", sessionId: null });
+  assert.equal(dashboard.ok, true);
+  assert.equal(dashboard.dashboard.project.projectId, "P1");
+  const retry = await api.handleLegacyMessage({ type: MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE, payload: { name: "retryTask", payload: { taskId: "T1" } } }, { kind: "extension-ui", sessionId: null });
+  assert.equal(retry.ok, true);
+  assert.deepEqual(calls.at(-1), ["retryTask", "T1"]);
+});
+
+test("legacy extension messages remain compatibility transport", async () => {
   const { api, calls } = makeApi();
   const state = await api.handleLegacyMessage({ type: MESSAGE_TYPES.ORCHESTRATOR_GET_STATE }, { kind: "extension-ui", sessionId: null });
   assert.equal(state.ok, true);
-  assert.equal(state.apiVersion, API_VERSION);
-
   const workers = await api.handleLegacyMessage({ type: MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS, payload: { count: 4 } }, { kind: "extension-ui", sessionId: null });
   assert.equal(workers.ok, true);
   assert.deepEqual(calls.at(-1), ["createWorkers", 4]);
 });
 
-test("agent/browser sessions cannot issue privileged Orchestrator API commands", async () => {
+test("agent/browser sessions cannot issue privileged generic API commands", async () => {
   const { api } = makeApi();
   const result = await api.handleLegacyMessage(
-    { type: MESSAGE_TYPES.ORCHESTRATOR_STOP_NOW },
+    { type: MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE, payload: { name: "cancelTask", payload: { taskId: "T1" } } },
     { kind: "agent-session", sessionId: "42", agentId: "A1" }
   );
   assert.equal(result.ok, false);

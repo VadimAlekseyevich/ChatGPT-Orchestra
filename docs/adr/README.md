@@ -40,4 +40,5 @@ Date: YYYY-MM-DD
 - [`0008-recovery-control-plane.md`](0008-recovery-control-plane.md) — separate persisted lifecycle control plane, safe-point Pause, Stop Now boundary and reconcile-before-resume policy;
 - [`0009-gradual-desktop-migration.md`](0009-gradual-desktop-migration.md) — platform contracts, desktop control-plane migration, extension companion bridge and eventual direct desktop AgentRuntime;
 - [`0010-platform-contracts-orchestrator-api.md`](0010-platform-contracts-orchestrator-api.md) — AgentRuntime/StateStore/TimerRuntime boundaries, normalized runtime identity and platform-neutral Orchestrator API;
-- [`0011-portable-persistence-project-bundles.md`](0011-portable-persistence-project-bundles.md) — project-scoped portable state, migration registry, Project Bundle, import recovery gate and SQLite persistence.
+- [`0011-portable-persistence-project-bundles.md`](0011-portable-persistence-project-bundles.md) — project-scoped portable state, migration registry, Project Bundle, import recovery gate and SQLite persistence;
+- [`0012-portable-dashboard-observability.md`](0012-portable-dashboard-observability.md) — shared Dashboard frontend over a versioned sanitized Observability read model and Orchestrator API v3.
