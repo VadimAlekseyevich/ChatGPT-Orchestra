@@ -3,10 +3,13 @@ const assert = require("node:assert/strict");
 
 const { MemoryStateStore } = require("../platform/fake-runtime.js");
 const { TransactionalStateStore } = require("../platform/transactional-state-store.js");
-const { SQLiteStateStore } = require("../platform/sqlite-state-store.js");
+const { SQLiteStateStore, loadDatabaseSync } = require("../platform/sqlite-state-store.js");
 const { MigrationRegistry } = require("../persistence/migration-registry.js");
 const { PortableStateManager, STORE_KEYS, PORTABLE_SCHEMA_VERSION } = require("../persistence/portable-state.js");
 const { ProjectBundleService } = require("../persistence/project-bundle.js");
+
+let sqliteAvailable = true;
+try { loadDatabaseSync(); } catch (_) { sqliteAvailable = false; }
 
 function projectState(projectId = "P1") {
   return {
@@ -56,7 +59,7 @@ test("Project Bundle contains no required browser session identities", async () 
   assert.equal(exported.serialized.includes("\"sessionId\""), false);
 });
 
-test("extension-shaped state exports and imports into SQLite with identical logical state", async () => {
+test("extension-shaped state exports and imports into SQLite with identical logical state", { skip: !sqliteAvailable }, async () => {
   const sourceStore = new TransactionalStateStore({ store: new MemoryStateStore(projectState()) });
   const exporter = new ProjectBundleService({ portableStateManager: portableFor(sourceStore), sourceHost: "edge-extension" });
   const exported = await exporter.exportBundle({});
