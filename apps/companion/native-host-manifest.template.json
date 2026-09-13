@@ -1,0 +1,9 @@
+{
+  "name": "com.chatgptorchestra.companion",
+  "description": "Authenticated ChatGPT Orchestra extension companion relay",
+  "path": "__ORCHESTRA_NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__ORCHESTRA_EXTENSION_ID__/"
+  ]
+}
