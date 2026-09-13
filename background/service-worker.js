@@ -6,6 +6,7 @@ importScripts(
   "../prompts/planning-prompts.js",
   "../prompts/worker-prompts.js",
   "../prompts/review-prompts.js",
+  "../prompts/integration-prompts.js",
   "tab-registry.js",
   "event-store.js",
   "event-bus.js",
@@ -17,6 +18,9 @@ importScripts(
   "scheduler-store.js",
   "review-store.js",
   "review-engine.js",
+  "integration-policy.js",
+  "integration-store.js",
+  "integration-engine.js",
   "scheduler-engine.js",
   "orchestrator.js"
 );
@@ -28,6 +32,7 @@ const eventBus = new root.EventBus({ registry, store: eventStore });
 const projectStore = new root.ProjectStore();
 const schedulerStore = new root.SchedulerStore();
 const reviewStore = new root.ReviewStore();
+const integrationStore = new root.IntegrationStore();
 const gitProvider = new root.GitProvider.GitHubRestProvider();
 
 let orchestrator = null;
@@ -48,6 +53,15 @@ const reviewEngine = new root.ReviewEngine({
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt),
   onSchedulerTick: (options) => schedulerEngine?.tick(options)
 });
+const integrationEngine = new root.IntegrationEngine({
+  store: integrationStore,
+  schedulerStore,
+  projectStore,
+  registry,
+  eventBus,
+  gitProvider,
+  sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
+});
 schedulerEngine = new root.SchedulerEngine({
   store: schedulerStore,
   projectStore,
@@ -58,20 +72,28 @@ schedulerEngine = new root.SchedulerEngine({
   sendPrompt: (agentId, prompt) => orchestrator.sendPromptToAgent(agentId, prompt)
 });
 orchestrator = new root.ServiceWorkerOrchestrator({ registry, eventBus, planningEngine, schedulerEngine });
-let readyPromise = orchestrator.init();
+let readyPromise = orchestrator.init().then(() => integrationEngine.init());
 
 function withReady(callback) {
   return Promise.resolve(readyPromise)
     .catch((error) => {
       console.error("[ChatGPT Orchestra] service_worker_init_failed", error);
-      readyPromise = orchestrator.init();
+      readyPromise = orchestrator.init().then(() => integrationEngine.init());
       return readyPromise;
     })
     .then(callback);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  withReady(() => orchestrator.handleRuntimeMessage(message, sender))
+  withReady(async () => {
+    const result = await orchestrator.handleRuntimeMessage(message, sender);
+    const tabId = sender?.tab?.id;
+    if (Number.isInteger(tabId)) {
+      const agent = registry.getAgentByTabId(tabId);
+      if (agent) await integrationEngine.handleAgentStateChanged(agent);
+    }
+    return result;
+  })
     .then((result) => sendResponse(result))
     .catch((error) => sendResponse({
       ok: false,
@@ -82,13 +104,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  withReady(() => orchestrator.handleTabRemoved(tabId)).catch((error) => {
+  withReady(async () => {
+    const agent = registry.getAgentByTabId(tabId);
+    await orchestrator.handleTabRemoved(tabId);
+    if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "tab_closed");
+  }).catch((error) => {
     console.warn("[ChatGPT Orchestra] tab_removed_handler_failed", error);
   });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  withReady(() => orchestrator.handleTabUpdated(tabId, changeInfo, tab)).catch((error) => {
+  withReady(async () => {
+    await orchestrator.handleTabUpdated(tabId, changeInfo, tab);
+    const agent = registry.getAgentByTabId(tabId);
+    if (agent) await integrationEngine.handleAgentStateChanged(agent);
+  }).catch((error) => {
     console.warn("[ChatGPT Orchestra] tab_updated_handler_failed", error);
   });
 });
@@ -98,8 +128,11 @@ if (chrome.alarms?.create) chrome.alarms.create(SCHEDULER_WATCHDOG_ALARM, { peri
 if (chrome.alarms?.onAlarm) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm?.name !== SCHEDULER_WATCHDOG_ALARM) return;
-    withReady(() => schedulerEngine.tick({ reason: "watchdog_alarm" })).catch((error) => {
-      console.warn("[ChatGPT Orchestra] scheduler_watchdog_failed", error);
+    withReady(async () => {
+      await schedulerEngine.tick({ reason: "watchdog_alarm" });
+      await integrationEngine.tick({ reason: "watchdog_alarm" });
+    }).catch((error) => {
+      console.warn("[ChatGPT Orchestra] watchdog_failed", error);
     });
   });
 }
