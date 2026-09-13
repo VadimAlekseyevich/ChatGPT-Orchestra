@@ -75,7 +75,15 @@
     const git = scheduler.git;
     const gitText = git?.defaultBranch && git?.baseSha ? ` · git ${git.defaultBranch}@${String(git.baseSha).slice(0, 8)}` : "";
     const reviewText = reviewWaiting ? ` · review ${review.active || 0} active/${review.pending || 0} pending` : "";
-    ui.executionStatus.textContent = `${scheduler.status} · ${approved}/${scheduler.taskCount} approved · ${scheduler.activeRuns} work active${reviewText}${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}`;
+    const integration = project.execution?.details?.integration || null;
+    let integrationText = "";
+    if (integration?.branch) {
+      const commit = integration.commit ? `@${String(integration.commit).slice(0, 8)}` : "";
+      integrationText = ` · integration ${integration.branch}${commit}`;
+    } else if (["READY_FOR_INTEGRATION", "INTEGRATING", "INTEGRATION_REPAIRING"].includes(project.status)) {
+      integrationText = ` · integration ${project.status.toLowerCase()}`;
+    }
+    ui.executionStatus.textContent = `${scheduler.status} · ${approved}/${scheduler.taskCount} approved · ${scheduler.activeRuns} work active${reviewText}${needsUser ? ` · ${needsUser} needs user` : ""}${gitText}${integrationText}`;
     ui.startExecution.disabled = true;
   }
 
