@@ -7,6 +7,7 @@
   const ExtensionCompanionEndpoint = root.ExtensionCompanionEndpoint || (typeof require === "function" ? require("./extension-companion-endpoint.js").ExtensionCompanionEndpoint : null);
 
   const COMPANION_MODE_KEY = "orchestraCompanionModeV1";
+  const COMPANION_MIGRATION_EXPECTED_KEY = "orchestraCompanionMigrationExpectedV1";
   const LEGACY_PROJECTS_KEY = "orchestra.projects.v1";
   const RECONNECT_TIMER = "orchestra-companion-reconnect";
 
@@ -88,7 +89,17 @@
 
     async stageMigrationBundle(bundle) {
       if (this.enabled) return { ok: false, reason: "companion_migration_requires_extension_mode" };
-      return this.withBridgeRpc((rpc) => rpc.request("migration.stageBundle", { bundle }));
+      const result = await this.withBridgeRpc((rpc) => rpc.request("migration.stageBundle", { bundle }));
+      if (result?.ok && result.projectId && result.checksum) {
+        await this.storageArea?.set?.({
+          [COMPANION_MIGRATION_EXPECTED_KEY]: {
+            projectId: String(result.projectId),
+            checksum: String(result.checksum),
+            stagedAt: Date.now()
+          }
+        });
+      }
+      return result;
     }
 
     async legacyProjectGuard() {
@@ -97,6 +108,12 @@
       const activeProjectId = state?.activeProjectId ? String(state.activeProjectId) : null;
       if (!activeProjectId) return { ok: true };
 
+      const expectedStored = await this.storageArea?.get?.(COMPANION_MIGRATION_EXPECTED_KEY);
+      const expected = expectedStored?.[COMPANION_MIGRATION_EXPECTED_KEY] || null;
+      if (!expected || String(expected.projectId || "") !== activeProjectId || !expected.checksum) {
+        return { ok: false, reason: "companion_enable_requires_project_migration", activeProjectId };
+      }
+
       let migration = null;
       try { migration = await this.getMigrationStatus(); }
       catch (error) {
@@ -104,13 +121,23 @@
           ok: false,
           reason: "companion_enable_requires_project_migration",
           activeProjectId,
+          expectedChecksum: expected.checksum,
           migrationStatusError: error?.message || String(error)
         };
       }
-      if (migration?.applied?.projectId === activeProjectId) {
-        return { ok: true, activeProjectId, migrationApplied: true, migration };
+      if (
+        migration?.applied?.projectId === activeProjectId
+        && String(migration?.applied?.checksum || "") === String(expected.checksum)
+      ) {
+        return { ok: true, activeProjectId, migrationApplied: true, migration, expectedChecksum: expected.checksum };
       }
-      return { ok: false, reason: "companion_enable_requires_project_migration", activeProjectId, migration };
+      return {
+        ok: false,
+        reason: "companion_enable_requires_project_migration",
+        activeProjectId,
+        expectedChecksum: expected.checksum,
+        migration
+      };
     }
 
     async persistEnabled() {
@@ -227,6 +254,12 @@
   root.COMPANION_MODE_KEY = COMPANION_MODE_KEY;
   root.COMPANION_RECONNECT_TIMER = RECONNECT_TIMER;
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { ExtensionCompanionModeController, COMPANION_MODE_KEY, LEGACY_PROJECTS_KEY, RECONNECT_TIMER };
+    module.exports = {
+      ExtensionCompanionModeController,
+      COMPANION_MODE_KEY,
+      COMPANION_MIGRATION_EXPECTED_KEY,
+      LEGACY_PROJECTS_KEY,
+      RECONNECT_TIMER
+    };
   }
 })();
