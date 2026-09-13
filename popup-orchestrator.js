@@ -8,6 +8,7 @@
     projectStatus: document.querySelector("#projectStatus"),
     executionStatus: document.querySelector("#executionStatus"),
     recoveryStatus: document.querySelector("#recoveryStatus"),
+    persistenceStatus: document.querySelector("#persistenceStatus"),
     repositoryUrl: document.querySelector("#repositoryUrl"),
     projectGoal: document.querySelector("#projectGoal"),
     startProject: document.querySelector("#startProject"),
@@ -15,6 +16,9 @@
     pauseProject: document.querySelector("#pauseProject"),
     resumeProject: document.querySelector("#resumeProject"),
     stopNow: document.querySelector("#stopNow"),
+    exportProject: document.querySelector("#exportProject"),
+    importProject: document.querySelector("#importProject"),
+    importProjectFile: document.querySelector("#importProjectFile"),
     leadStatus: document.querySelector("#leadStatus"),
     workersStatus: document.querySelector("#workersStatus"),
     agentsList: document.querySelector("#agentsList"),
@@ -105,6 +109,7 @@
     ui.resumeProject.disabled = !hasProject || !["PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(status);
     ui.stopNow.disabled = !hasProject || ["STOPPED", "STOPPING", "INTEGRATION_VERIFIED"].includes(status) || project?.workStatus === "INTEGRATION_VERIFIED" || project?.status === "INTEGRATION_VERIFIED";
     ui.startProject.disabled = ["PAUSING", "PAUSED", "STOPPING", "STOPPED", "RECOVERING", "RECOVERY_REQUIRED"].includes(status);
+    ui.exportProject.disabled = !hasProject;
   }
 
   function renderState(state) {
@@ -114,7 +119,7 @@
     renderScheduler(state.project, state.scheduler, state.recovery);
     renderRecovery(state.project, state.recovery);
     ui.leadStatus.textContent = statusText(state.lead);
-    const connected = (state.workers || []).filter((worker) => !["OFFLINE", "ERROR"].includes(worker.status)).length;
+    const connected = (state.workers || []).filter((worker) => worker.status !== "OFFLINE").length;
     ui.workersStatus.textContent = `${connected}/${(state.workers || []).length}`;
     ui.agentsList.replaceChildren();
     const agents = [state.lead, ...(state.workers || [])].filter(Boolean);
@@ -129,9 +134,16 @@
   }
 
   async function refresh() {
-    const response = await send(TYPES.ORCHESTRATOR_GET_STATE);
+    const [response, persistence] = await Promise.all([
+      send(TYPES.ORCHESTRATOR_GET_STATE),
+      send(TYPES.ORCHESTRATOR_GET_PERSISTENCE)
+    ]);
     if (response.ok) renderState(response.state);
     else ui.runtimeStatus.textContent = `Runtime error: ${response.reason || "unknown"}`;
+    if (persistence.ok && ui.persistenceStatus) {
+      const info = persistence.persistence || {};
+      ui.persistenceStatus.textContent = `Persistence: schema ${info.portableSchemaVersion || "?"} · ${info.backend || "unknown"}`;
+    }
   }
 
   async function registerLead() {
@@ -186,6 +198,56 @@
     await refresh();
   }
 
+  function downloadText(filename, text) {
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename || "chatgpt-orchestra-project.bundle.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function exportProject() {
+    ui.exportProject.disabled = true;
+    ui.persistenceStatus.textContent = "Persistence: exporting…";
+    const response = await send(TYPES.ORCHESTRATOR_EXPORT_PROJECT);
+    ui.exportProject.disabled = false;
+    if (!response.ok) {
+      ui.persistenceStatus.textContent = `Export error: ${response.reason || "unknown"}`;
+      return;
+    }
+    downloadText(response.filename, response.serialized);
+    ui.persistenceStatus.textContent = `Exported: ${response.filename} · ${response.bytes || 0} bytes`;
+  }
+
+  async function importProjectFile(file) {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      ui.persistenceStatus.textContent = "Import error: bundle is larger than 8 MiB";
+      return;
+    }
+    ui.importProject.disabled = true;
+    ui.persistenceStatus.textContent = "Persistence: validating/importing…";
+    let text;
+    try { text = await file.text(); }
+    catch (_) {
+      ui.importProject.disabled = false;
+      ui.persistenceStatus.textContent = "Import error: unable to read file";
+      return;
+    }
+    const response = await send(TYPES.ORCHESTRATOR_IMPORT_PROJECT, { bundle: text, replace: false });
+    ui.importProject.disabled = false;
+    if (!response.ok) {
+      ui.persistenceStatus.textContent = `Import error: ${response.reason || "unknown"}`;
+      return;
+    }
+    ui.persistenceStatus.textContent = `Imported ${response.projectId}. Reloading for reconciliation…`;
+    if (response.reloadRequired) setTimeout(() => chrome.runtime.reload(), 300);
+  }
+
   ui.refreshPool?.addEventListener("click", refresh);
   ui.registerLead?.addEventListener("click", registerLead);
   ui.createWorkers?.addEventListener("click", createWorkers);
@@ -194,6 +256,13 @@
   ui.pauseProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_PAUSE, "Pause"));
   ui.resumeProject?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_RESUME, "Resume"));
   ui.stopNow?.addEventListener("click", () => lifecycleCommand(TYPES.ORCHESTRATOR_STOP_NOW, "Stop Now"));
+  ui.exportProject?.addEventListener("click", exportProject);
+  ui.importProject?.addEventListener("click", () => ui.importProjectFile?.click());
+  ui.importProjectFile?.addEventListener("change", async () => {
+    const file = ui.importProjectFile.files?.[0] || null;
+    ui.importProjectFile.value = "";
+    await importProjectFile(file);
+  });
 
   refresh();
   setInterval(refresh, 3000);
