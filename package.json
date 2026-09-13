@@ -14,7 +14,7 @@
     "test:phase7": "node --test tests/event-bus.test.js tests/review-store.test.js tests/review-policy.test.js tests/review-engine.test.js tests/scheduler-store.test.js tests/scheduler-engine.test.js",
     "test:phase8": "node --test tests/integration-event-boundary.test.js tests/integration-policy.test.js tests/integration-provenance.test.js tests/integration-store.test.js tests/integration-engine.test.js tests/integration-recovery.test.js tests/project-store.test.js tests/project-integration-state.test.js",
     "test:phase9": "node --test tests/recovery-store.test.js tests/recovery-controller.test.js tests/recovery-reconciliation.test.js tests/recovery-stop-guards.test.js tests/integration-recovery.test.js tests/event-bus.test.js",
-    "test:phase10": "node --test tests/platform-contracts.test.js tests/platform-boundary.test.js tests/orchestrator-api.test.js tests/orchestrator.test.js tests/event-bus.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js tests/recovery-controller.test.js"
+    "test:phase10": "node --test tests/platform-contracts.test.js tests/platform-boundary.test.js tests/orchestrator-api.test.js tests/orchestrator-portable.test.js tests/orchestrator.test.js tests/event-bus.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js tests/recovery-controller.test.js"
   },
   "engines": {
     "node": ">=18"
