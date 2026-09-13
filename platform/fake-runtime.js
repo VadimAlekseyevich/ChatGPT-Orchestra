@@ -84,7 +84,7 @@
     }
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
-      return Boolean(agent && agent.sessionId && this.sessions.has(String(agent.sessionId)) && !["OFFLINE", "ERROR"].includes(agent.status));
+      return Boolean(agent && agent.sessionId && this.sessions.has(String(agent.sessionId)) && agent.status !== "OFFLINE");
     }
     runtimeBinding(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
