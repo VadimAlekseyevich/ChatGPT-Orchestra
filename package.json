@@ -1,10 +1,13 @@
 {
   "name": "chatgpt-orchestra",
-  "version": "2.0.0-alpha.14",
+  "version": "2.0.0-alpha.15",
   "private": true,
-  "description": "Development tests for ChatGPT Orchestra portable context packets, observability and platform contracts.",
+  "description": "Development tests for ChatGPT Orchestra portable orchestration contracts and CI foundation.",
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "test:contracts": "node --test tests/contract-conformance.test.js tests/platform-contracts.test.js tests/orchestrator-api.test.js",
+    "test:browser-fixtures": "node --test tests/browser-fixtures.test.js tests/composer-adapter.test.js tests/generation-detector.test.js tests/assistant-message-reader.test.js",
+    "test:release": "node scripts/validate-release.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
     "test:phase2": "node --test tests/tab-registry.test.js tests/orchestrator.test.js",
     "test:phase3": "node --test tests/orchestra-protocol.test.js tests/event-bus.test.js",
@@ -17,7 +20,8 @@
     "test:phase10": "node --test tests/platform-contracts.test.js tests/platform-boundary.test.js tests/orchestrator-api.test.js tests/orchestrator-portable.test.js tests/orchestrator.test.js tests/event-bus.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js tests/recovery-controller.test.js",
     "test:phase11": "node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/portable-state.test.js tests/project-bundle.test.js tests/persistence-api.test.js tests/platform-contracts.test.js tests/orchestrator-api.test.js tests/recovery-controller.test.js",
     "test:phase12": "node --test tests/observability-service.test.js tests/task-control-service.test.js tests/dashboard-app.test.js tests/orchestrator-api.test.js tests/platform-contracts.test.js tests/platform-boundary.test.js tests/persistence-api.test.js",
-    "test:phase13": "node --test tests/context-store.test.js tests/context-packets.test.js tests/context-prompt-gates.test.js tests/context-replacement.test.js tests/context-lead-registration.test.js tests/orchestrator-api.test.js tests/portable-state.test.js tests/persistence-api.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js"
+    "test:phase13": "node --test tests/context-store.test.js tests/context-packets.test.js tests/context-prompt-gates.test.js tests/context-replacement.test.js tests/context-lead-registration.test.js tests/orchestrator-api.test.js tests/portable-state.test.js tests/persistence-api.test.js tests/planning-engine.test.js tests/scheduler-engine.test.js tests/review-engine.test.js tests/integration-engine.test.js",
+    "test:phase14": "npm run test:release && npm run test:contracts && npm run test:browser-fixtures && node --test tests/state-store-conformance.test.js tests/migration-registry.test.js tests/project-bundle.test.js tests/context-packets.test.js tests/recovery-controller.test.js tests/integration-engine.test.js"
   },
   "engines": {
     "node": ">=18"
