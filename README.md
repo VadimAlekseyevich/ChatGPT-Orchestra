@@ -5,7 +5,7 @@
 Multi-agent orchestration for ChatGPT coding workflows, migrating gradually from an Edge extension to a desktop application.
 
 [![Platform](https://img.shields.io/badge/platform-Microsoft%20Edge-0A7EA4?style=for-the-badge)](#requirements-and-permissions)
-[![Version](https://img.shields.io/badge/version-2.0.0--alpha.14-orange?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0--alpha.15-orange?style=for-the-badge)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/VadimAlekseyevich/ChatGPT-Orchestra?style=for-the-badge&label=license)](LICENSE)
 
 [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Documentation](docs/README.md)
@@ -20,7 +20,7 @@ ChatGPT Orchestra coordinates multiple ChatGPT sessions as Lead, Workers, Review
 
 Core rule: **chats are executors, not the source of truth**. Planning, DAG state, task/run identities, Git provenance, review, integration, recovery, observability and portable role context belong to the Orchestrator Core.
 
-Current prerelease: **`2.0.0-alpha.14`**.
+Current prerelease: **`2.0.0-alpha.15`**.
 
 Completed foundation:
 
@@ -35,6 +35,7 @@ Phase 10    platform boundary + Orchestrator API
 Phase 11    portable persistence + Project Bundle + SQLiteStateStore
 Phase 12    portable Dashboard + Observability API
 Phase 13    bounded portable agent context packets + fresh-session replacement
+Phase 14    contract conformance + automated CI release gates
 ```
 
 ---
@@ -64,7 +65,7 @@ text / semantic conflict remediation
 INTEGRATION_VERIFIED
 ```
 
-`INTEGRATION_VERIFIED` means the integration branch was independently verified. Alpha.14 still does **not** automatically write the target branch.
+`INTEGRATION_VERIFIED` means the integration branch was independently verified. Alpha.15 still does **not** automatically write the target branch.
 
 ---
 
@@ -100,10 +101,11 @@ Primary contracts:
 - `AgentRuntime` — logical executor/session lifecycle;
 - `StateStore` — portable persistence backend;
 - `TimerRuntime` — recurring scheduling/watchdogs;
+- `GitWorkspace` — repository/workspace lifecycle contract for the future local Git runtime;
 - `OrchestratorApi` — platform-neutral command/query surface;
 - `ContextPacketService` — bounded persisted role bootstrap independent from one chat transcript.
 
-See [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md) and [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md).
+See [`docs/phase-10-platform-boundary.md`](docs/phase-10-platform-boundary.md), [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md) and [`docs/phase-14-contract-tests-ci.md`](docs/phase-14-contract-tests-ci.md).
 
 ---
 
@@ -125,7 +127,7 @@ See [`docs/phase-11-portable-persistence.md`](docs/phase-11-portable-persistence
 
 ## Portable Dashboard / Observability API
 
-Phase 12 adds a shared Dashboard frontend that talks only to Orchestrator API. Alpha.14 exposes API v4 while preserving the Phase 12 dashboard contracts.
+Phase 12 adds a shared Dashboard frontend that talks only to Orchestrator API. Alpha.15 exposes API v4 while preserving the Phase 12 dashboard contracts.
 
 The Dashboard can display:
 
@@ -174,6 +176,27 @@ See [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packe
 
 ---
 
+## Automated contract and CI gate
+
+Phase 14 makes Core + adapter parity an automated release gate before the desktop runtime exists.
+
+Every pull request and push to `main` runs GitHub Actions for:
+
+- full Core tests on Node 18 and Node 22;
+- reusable contract suites on Node 18 and Node 22;
+- SQLite/persistence tests on Node 22;
+- deterministic extension/browser fixtures on Node 18;
+- manifest/package/version/permission validation;
+- an aggregate `test:phase14` job that depends on all prerequisite jobs.
+
+Reusable conformance suites now cover `AgentRuntime`, `StateStore`, transactional state, `TimerRuntime`, `GitWorkspace` and Orchestrator API. `FakeGitWorkspace` is the reference test implementation for the local Git/worktree contract that Phase 17 will implement for real.
+
+The first CI rollout found and fixed a real GenerationDetector hydration regression before merge, demonstrating that CI is now an active release gate rather than documentation only.
+
+See [`docs/phase-14-contract-tests-ci.md`](docs/phase-14-contract-tests-ci.md) and [`docs/adr/0014-contract-conformance-ci.md`](docs/adr/0014-contract-conformance-ci.md).
+
+---
+
 ## Safety invariants
 
 - dispatch stays closed until recovery reconciliation completes;
@@ -190,7 +213,8 @@ See [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packe
 - privileged Orchestrator API commands are rejected from agent/browser sessions;
 - Dashboard task controls fail closed for active/unsafe states;
 - cancelling every task terminates the project as `CANCELLED`, not integration-ready;
-- target branch writes remain outside alpha.14.
+- Core + contract CI must be green before a release PR is considered ready;
+- target branch writes remain outside alpha.15.
 
 ---
 
@@ -200,12 +224,12 @@ See [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packe
 git clone https://github.com/VadimAlekseyevich/ChatGPT-Orchestra.git
 cd ChatGPT-Orchestra
 npm test
-npm run test:phase13
+npm run test:phase14
 ```
 
 Then load the repository as an unpacked Edge extension, open ChatGPT, explicitly register a Lead, create/plan a project, create Workers and start execution. The popup includes the portable Dashboard alongside bootstrap/legacy controls.
 
-For Phase 13 acceptance steps see [`docs/phase-13-smoke-test.md`](docs/phase-13-smoke-test.md).
+Production ChatGPT DOM behavior still has a manual smoke gate; deterministic fixture coverage is automated in CI.
 
 ---
 
@@ -214,7 +238,7 @@ For Phase 13 acceptance steps see [`docs/phase-13-smoke-test.md`](docs/phase-13-
 - Microsoft Edge / Manifest V3 for the current production host;
 - ChatGPT access;
 - Node.js 18+ for development tests;
-- Node with `node:sqlite` for SQLite-specific adapter tests.
+- Node 22 for the CI SQLite path.
 
 Manifest permissions remain:
 
@@ -224,7 +248,7 @@ Manifest permissions remain:
 - ChatGPT hosts — content adapter;
 - `https://api.github.com/*` — read-only Git provenance/recovery validation.
 
-Phase 13 adds no new extension permission.
+Phase 14 adds no new extension permission.
 
 ---
 
@@ -236,8 +260,8 @@ The migration remains incremental rather than a desktop rewrite:
 - Phase 11 — Portable Persistence + Project Export/Import — `alpha.12`;
 - Phase 12 — Portable Dashboard + Observability API — `alpha.13`;
 - Phase 13 — Context Management + Portable Agent Packets — `alpha.14`;
-- **Phase 14 — Contract Tests + CI Foundation — next;**
-- Phase 15 — Desktop Shell Bootstrap;
+- Phase 14 — Contract Tests + CI Foundation — `alpha.15`;
+- **Phase 15 — Desktop Shell Bootstrap — next;**
 - Phase 16 — Desktop Control Plane + Extension Companion Bridge;
 - Phase 17 — Local Repository Runtime + Git Worktrees;
 - Phase 18 — Direct Desktop ChatGPT AgentRuntime;
@@ -256,5 +280,5 @@ Full plan: [`ROADMAP.md`](ROADMAP.md).
 - [`docs/phase-11-portable-persistence.md`](docs/phase-11-portable-persistence.md)
 - [`docs/phase-12-dashboard-observability.md`](docs/phase-12-dashboard-observability.md)
 - [`docs/phase-13-context-agent-packets.md`](docs/phase-13-context-agent-packets.md)
-- [`docs/phase-13-smoke-test.md`](docs/phase-13-smoke-test.md)
-- [`docs/adr/0013-portable-agent-context-packets.md`](docs/adr/0013-portable-agent-context-packets.md)
+- [`docs/phase-14-contract-tests-ci.md`](docs/phase-14-contract-tests-ci.md)
+- [`docs/adr/0014-contract-conformance-ci.md`](docs/adr/0014-contract-conformance-ci.md)
