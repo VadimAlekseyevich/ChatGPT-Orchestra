@@ -45,12 +45,7 @@ test("local worker artifact executes worktree -> changes -> scope -> tests -> co
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-local-worker-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repository = fixtureRepository(root);
-  const workspace = new GitCliWorkspace({
-    projectId: "P1",
-    repositoryId: "repo-1",
-    workspaceRoot: path.join(root, "workspaces"),
-    trustResolver: async () => TRUST_STATES.TRUSTED
-  });
+  const workspace = new GitCliWorkspace({ projectId: "P1", repositoryId: "repo-1", workspaceRoot: path.join(root, "workspaces"), trustResolver: async () => TRUST_STATES.TRUSTED });
   await workspace.loadRepository({ mode: "local", path: repository });
   const base = await workspace.snapshotBase();
   const task = await workspace.createTaskWorkspace("T1", "R1", base.sha);
@@ -68,18 +63,14 @@ test("local worker artifact executes worktree -> changes -> scope -> tests -> co
 
   const scope = await workspace.validateScope(task.workspaceId, ["src"]);
   assert.equal(scope.ok, true);
-  const verification = await workspace.runVerification(task.workspaceId, {
-    command: process.execPath,
-    args: ["-e", "if(require('./src/value.js')!==2 || require('./src/new.js')!=='new') process.exit(7)"],
-    timeoutMs: 5000
-  });
+  const verification = await workspace.runVerification(task.workspaceId, { command: process.execPath, args: ["-e", "if(require('./src/value.js')!==2 || require('./src/new.js')!=='new') process.exit(7)"], timeoutMs: 5000 });
   assert.equal(verification.ok, true);
 
   const committed = await workspace.commit(task.workspaceId, "local task artifact");
   assert.equal(committed.ok, true);
   assert.notEqual(committed.head, base.sha);
   assert.equal((await workspace.status(task.workspaceId)).clean, true);
-  assert.equal(git(["branch", "--list", task.branch], repository), `* ${task.branch}`.replace("* ", "").trim() === task.branch ? task.branch : task.branch);
+  assert.ok(git(["branch", "--list", task.branch], repository).includes(task.branch));
 
   const review = await workspace.reviewComparison(task.workspaceId);
   assert.equal(review.ok, true);
@@ -139,14 +130,12 @@ test("desktop local ReviewEngine reads host-generated worktree comparison for lo
     async reviewDiff() { remoteReviewCalled = true; return { ok: false, reason: "remote_should_not_run" }; }
   }
   const LocalReviewEngine = createLocalReviewEngine(BaseReviewEngine);
-  const engine = new LocalReviewEngine({
-    repositoryService: {
-      async workspaceReviewComparison(input) {
-        assert.deepEqual(input, { projectId: "P1", repositoryId: "repo-1", workspaceId: "task:T1:R1" });
-        return { ok: true, comparison: { status: "ahead", ahead_by: 1, behind_by: 0, total_commits: 1, files: [{ filename: "src/value.js", patch: "@@ -1 +1 @@\n-old\n+new\n" }] } };
-      }
+  const engine = new LocalReviewEngine({ repositoryService: {
+    async workspaceReviewComparison(input) {
+      assert.deepEqual(input, { projectId: "P1", repositoryId: "repo-1", workspaceId: "task:T1:R1" });
+      return { ok: true, comparison: { status: "ahead", ahead_by: 1, behind_by: 0, total_commits: 1, files: [{ filename: "src/value.js", patch: "@@ -1 +1 @@\n-old\n+new\n" }] } };
     }
-  });
+  } });
   const result = await engine.reviewDiff({ projectId: "P1" }, { localOnly: true, repositoryId: "repo-1", workspaceId: "task:T1:R1", commit: "b".repeat(40), baseSha: "a".repeat(40) });
   assert.equal(result.ok, true);
   assert.equal(remoteReviewCalled, false);
