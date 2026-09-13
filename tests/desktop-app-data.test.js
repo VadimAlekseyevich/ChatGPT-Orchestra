@@ -22,4 +22,6 @@ test("ensureDesktopPaths creates isolated state, logs, bundles and companion dir
   assert.equal(paths.logFile, path.join(paths.logsDirectory, "orchestra.jsonl"));
   assert.equal(paths.companionSecretFile, path.join(paths.companionDirectory, "pairing-secret"));
   assert.equal(paths.companionEndpointFile, path.join(paths.companionDirectory, "endpoint.json"));
+  assert.equal(paths.companionMigrationPendingFile, path.join(paths.companionDirectory, "migration-pending.json"));
+  assert.equal(paths.companionMigrationReceiptFile, path.join(paths.companionDirectory, "migration-applied.json"));
 });
