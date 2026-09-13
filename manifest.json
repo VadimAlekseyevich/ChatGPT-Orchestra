@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.10",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 10 adds safe Pause, Stop Now, deterministic Resume and crash recovery.",
+  "version_name": "2.0.0-alpha.11",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 11 adds platform contracts, extension adapters and a portable Orchestrator API.",
   "permissions": ["storage", "tabs", "alarms"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
