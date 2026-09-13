@@ -203,6 +203,7 @@ const orchestratorApi = new root.OrchestratorApi({
 });
 
 const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
+const MIGRATION_SAFE_RECOVERY_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
 let localRuntimeInitialized = false;
 let localRuntimeActive = false;
 let watchdogCancel = null;
@@ -262,12 +263,41 @@ function withReady(callback) {
     .then(callback);
 }
 
+async function stageActiveProjectMigration() {
+  if (companionController.isEnabled()) return { ok: false, reason: "companion_migration_requires_extension_mode" };
+  if (!localRuntimeActive) await initializeLocalRuntime();
+  const projectId = projectStore.getActiveProject()?.projectId || null;
+  if (!projectId) return { ok: false, reason: "companion_migration_project_missing" };
+
+  const recovery = recoveryStore.summary?.() || {};
+  const recoveryStatus = String(recovery.status || "IDLE");
+  if (!MIGRATION_SAFE_RECOVERY_STATES.has(recoveryStatus)) {
+    return { ok: false, reason: "companion_migration_requires_safe_point", recoveryStatus };
+  }
+
+  const exported = await projectBundleService.exportBundle({ projectId });
+  if (!exported?.ok) return exported || { ok: false, reason: "project_bundle_export_failed" };
+  const staged = await companionController.stageMigrationBundle(exported.serialized);
+  return staged?.ok
+    ? { ...staged, bundleBytes: exported.bytes || 0, filename: exported.filename || null }
+    : staged;
+}
+
 async function handleCompanionControl(message) {
   const TYPES = root.MESSAGE_TYPES;
   if (message?.type === TYPES.COMPANION_GET_STATUS) {
     if (companionController.isEnabled()) await companionController.ensureConnected({ throwOnFailure: false });
     return { ok: true, companion: companionController.getStatus(), localRuntimeActive };
   }
+  if (message?.type === TYPES.COMPANION_GET_MIGRATION_STATUS) {
+    try {
+      const migration = await companionController.getMigrationStatus();
+      return { ok: true, migration };
+    } catch (error) {
+      return { ok: false, reason: "companion_migration_status_unavailable", message: error?.message || String(error) };
+    }
+  }
+  if (message?.type === TYPES.COMPANION_MIGRATE_PROJECT) return stageActiveProjectMigration();
   if (message?.type === TYPES.COMPANION_ENABLE) {
     const companion = await companionController.setEnabled(true);
     if (!companion.enabled) {
