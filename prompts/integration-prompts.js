@@ -2,51 +2,42 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const PROMPT_VERSION = 1;
+  const PROMPT_VERSION = 2;
 
   function json(value) { return JSON.stringify(value ?? null, null, 2); }
 
   function eventBase(run, agentId) {
-    return {
-      v: 1,
-      projectId: run.projectId,
-      taskId: "integration",
-      runId: run.runId,
-      agentId
-    };
+    return { v: 1, projectId: run.projectId, taskId: "integration", runId: run.runId, agentId };
   }
 
-  function buildIntegratorPrompt({ project, run, agentId }) {
+  function buildIntegratorPrompt({ project, run, agentId, packet = null }) {
     const base = eventBase(run, agentId);
+    const contextService = root.ContextPackets?.getDefaultService?.();
+    const contextPacket = packet || contextService?.buildIntegrationPacket?.({ project, run, agentId }) || {
+      packetVersion: 0,
+      packetType: "integration",
+      project: { projectId: project.projectId, repository: project.repository, immutableGoal: project.initialGoal },
+      integration: run,
+      provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
+    };
     return [
       "You are the ChatGPT Orchestra Integrator for one reviewed project.",
       `Integrator prompt contract version: ${PROMPT_VERSION}.`,
+      "This turn is self-contained. Do not rely on a previous Integrator chat or Worker transcripts.",
+      "The PORTABLE INTEGRATION PACKET below is the authoritative bounded project/merge context assembled from persisted state and artifact references.",
       "Your job is composition only: integrate approved task branches, detect conflicts, run integration verification, and report structured evidence.",
       "Do not modify or push the target branch. Do not squash, rebase or cherry-pick task commits. Use merge commits so approved task commits remain ancestors of the integration head.",
       "",
-      `PROJECT ID: ${project.projectId}`,
-      `REPOSITORY: ${project.repository?.url || "unknown"}`,
-      `TARGET BRANCH: ${run.targetBranch}`,
-      `IMMUTABLE BASE SHA: ${run.baseSha}`,
-      `INTEGRATION BRANCH: ${run.branch}`,
-      "",
-      "APPROVED TASK ORDER:",
-      json(run.taskOrder),
-      "",
-      "MUTATING TASK ARTIFACTS TO MERGE IN EXACT ORDER:",
-      json(run.artifacts),
-      "",
-      "INTEGRATION VERIFICATION COMMANDS:",
-      json(run.verificationCommands),
+      `PORTABLE INTEGRATION PACKET:\n${json(contextPacket)}`,
       "",
       "GIT CONTRACT:",
       `1. Fetch ${run.targetBranch} and verify it is still exactly ${run.baseSha}. If it moved, stop with NEEDS_USER.`,
       `2. Create/reset only ${run.branch} from exact base ${run.baseSha}.`,
-      "3. For each artifact above, fetch its branch and verify its remote head equals the supplied commit SHA.",
-      "4. Merge artifact branches in the exact supplied order with `git merge --no-ff --no-edit <branch>`.",
+      "3. For each artifact in contextPacket.integration.artifacts, fetch its branch and verify its remote head equals the supplied commit SHA.",
+      "4. Merge artifact branches in contextPacket.integration.taskOrder with `git merge --no-ff --no-edit <branch>`.",
       "5. Never replace a merge with squash/rebase/cherry-pick.",
       "6. Push only the integration branch.",
-      "7. After all merges, run every integration verification command exactly as supplied.",
+      "7. After all merges, run every contextPacket.integration.verificationCommands entry exactly as supplied.",
       "",
       "TEXT CONFLICT CONTRACT:",
       "- On a textual merge conflict, inspect `git diff --name-only --diff-filter=U`, record the files, then `git merge --abort` so the integration branch remains at the last clean merge.",
@@ -71,26 +62,24 @@
     ].join("\n");
   }
 
-  function buildRepairPrompt({ project, run, repairTask, agentId }) {
+  function buildRepairPrompt({ project, run, repairTask, agentId, packet = null }) {
     const base = eventBase(run, agentId);
-    const conflict = repairTask.conflict || {};
-    const remainingArtifacts = run.artifacts.filter((artifact) => !new Set(conflict.mergedTaskIds || []).has(artifact.taskId));
+    const contextService = root.ContextPackets?.getDefaultService?.();
+    const contextPacket = packet || contextService?.buildIntegrationPacket?.({ project, run, repairTask, agentId }) || {
+      packetVersion: 0,
+      packetType: "repair",
+      project: { projectId: project.projectId, repository: project.repository, immutableGoal: project.initialGoal },
+      integration: run,
+      repair: repairTask,
+      provenance: { promptContractVersion: PROMPT_VERSION, generatedFromPersistedState: true, transcriptCopied: false }
+    };
     return [
-      "Continue as ChatGPT Orchestra Integrator. A bounded integration repair task has been created from your previous CONFLICT event.",
+      "Continue as ChatGPT Orchestra Integrator for a bounded repair turn.",
       `Integrator prompt contract version: ${PROMPT_VERSION}.`,
-      `REPAIR TASK ID: ${repairTask.repairTaskId}`,
-      `REPAIR ATTEMPT: ${repairTask.attempt}`,
-      `INTEGRATION BRANCH: ${run.branch}`,
-      `BASE SHA: ${run.baseSha}`,
+      "This repair turn is self-contained. The previous Integrator transcript is not required and must not be treated as source of truth.",
+      "Use the PORTABLE REPAIR PACKET below; it contains persisted conflict evidence, responsible task summaries and artifact references.",
       "",
-      "CONFLICT:",
-      json(conflict),
-      "",
-      "RESPONSIBLE UPSTREAM TASKS:",
-      json(repairTask.responsibleTaskIds),
-      "",
-      "ARTIFACTS STILL TO INTEGRATE:",
-      json(remainingArtifacts),
+      `PORTABLE REPAIR PACKET:\n${json(contextPacket)}`,
       "",
       "REPAIR RULES:",
       "- Work only on the integration branch. Never write the target branch.",
