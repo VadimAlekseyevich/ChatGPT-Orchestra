@@ -10,6 +10,10 @@ class LocalValidatingGitProvider {
   }
 
   branchName(...args) { return this.remoteProvider.branchName(...args); }
+  request(...args) { return this.remoteProvider.request(...args); }
+  getRepository(...args) { return this.remoteProvider.getRepository(...args); }
+  getBranchHead(...args) { return this.remoteProvider.getBranchHead(...args); }
+  compare(...args) { return this.remoteProvider.compare(...args); }
   captureBase(...args) { return this.remoteProvider.captureBase(...args); }
   checkBaseFresh(...args) { return this.remoteProvider.checkBaseFresh(...args); }
 
