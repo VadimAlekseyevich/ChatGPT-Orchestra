@@ -1,69 +1,86 @@
 "use strict";
 
-const path = require("node:path");
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
-const { createDesktopHost } = require("./desktop-host.js");
-const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
-const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
+const CompanionNativeHost = require("../../companion/native-host.js");
 
-let host = null;
-let unregisterIpc = null;
-let mainWindow = null;
-
-function companionRequested() {
-  return process.argv.includes("--companion") || process.env.ORCHESTRA_COMPANION === "1";
+function companionRequested(argv = process.argv, env = process.env) {
+  return argv.includes("--companion") || env.ORCHESTRA_COMPANION === "1";
 }
 
-async function createMainWindow() {
-  const dataDirectory = app.getPath("userData");
-  host = companionRequested()
-    ? await createNativeCompanionDesktopHost({ dataDirectory })
-    : await createDesktopHost({ dataDirectory });
-  unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
-
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 640,
-    title: companionRequested() ? "ChatGPT Orchestra · Companion" : "ChatGPT Orchestra",
-    webPreferences: {
-      preload: path.join(__dirname, "..", "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
-    return { action: "deny" };
-  });
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://")) event.preventDefault();
-  });
-  await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
-  mainWindow.on("closed", () => { mainWindow = null; });
+function nativeMessagingRequested(argv = process.argv.slice(1)) {
+  return CompanionNativeHost.isNativeMessagingLaunch(argv);
 }
 
-app.whenReady().then(createMainWindow).catch((error) => {
-  console.error("[ChatGPT Orchestra] desktop_boot_failed", error);
-  app.exit(1);
-});
+async function runNativeMessagingHost() {
+  return CompanionNativeHost.main();
+}
 
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createMainWindow().catch((error) => console.error("[ChatGPT Orchestra] desktop_window_failed", error));
-});
+if (nativeMessagingRequested()) {
+  runNativeMessagingHost().catch((error) => {
+    process.stderr.write(`${error?.stack || error?.message || error}\n`);
+    process.exitCode = 1;
+  });
+} else {
+  const path = require("node:path");
+  const { app, BrowserWindow, ipcMain, shell } = require("electron");
+  const { createDesktopHost } = require("./desktop-host.js");
+  const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
+  const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+  let host = null;
+  let unregisterIpc = null;
+  let mainWindow = null;
 
-app.on("before-quit", () => {
-  unregisterIpc?.();
-  unregisterIpc = null;
-  host?.close?.().catch((error) => console.warn("[ChatGPT Orchestra] desktop_close_failed", error));
-  host = null;
-});
+  async function createMainWindow() {
+    const dataDirectory = app.getPath("userData");
+    host = companionRequested()
+      ? await createNativeCompanionDesktopHost({ dataDirectory })
+      : await createDesktopHost({ dataDirectory });
+    unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
 
-module.exports = { companionRequested };
+    mainWindow = new BrowserWindow({
+      width: 1280,
+      height: 860,
+      minWidth: 900,
+      minHeight: 640,
+      title: companionRequested() ? "ChatGPT Orchestra · Companion" : "ChatGPT Orchestra",
+      webPreferences: {
+        preload: path.join(__dirname, "..", "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    });
+
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+      return { action: "deny" };
+    });
+    mainWindow.webContents.on("will-navigate", (event, url) => {
+      if (!url.startsWith("file://")) event.preventDefault();
+    });
+    await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    mainWindow.on("closed", () => { mainWindow = null; });
+  }
+
+  app.whenReady().then(createMainWindow).catch((error) => {
+    console.error("[ChatGPT Orchestra] desktop_boot_failed", error);
+    app.exit(1);
+  });
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createMainWindow().catch((error) => console.error("[ChatGPT Orchestra] desktop_window_failed", error));
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("before-quit", () => {
+    unregisterIpc?.();
+    unregisterIpc = null;
+    host?.close?.().catch((error) => console.warn("[ChatGPT Orchestra] desktop_close_failed", error));
+    host = null;
+  });
+}
+
+module.exports = { companionRequested, nativeMessagingRequested, runNativeMessagingHost };
