@@ -10,7 +10,7 @@
   <main class="panel">
     <header>
       <h1>ChatGPT Orchestra</h1>
-      <p>Project planning · scheduler · Git isolation · independent review · verified integration</p>
+      <p>Project planning · scheduler · Git isolation · review · integration · recovery</p>
     </header>
 
     <section class="orchestra-section" aria-labelledby="projectTitle">
@@ -69,10 +69,16 @@
         <div>
           <h2 id="executionTitle">Execution + Review + Integration</h2>
           <p id="executionStatus">Execution: not started</p>
+          <p id="recoveryStatus">Recovery: idle</p>
         </div>
       </div>
       <button id="startExecution" type="button">Start Execution</button>
-      <p class="hint">Alpha.9 после `APPROVED` автоматически собирает task branches в отдельную integration branch через deterministic `--no-ff` merge order. Text/semantic conflicts создают bounded repair tasks. Финал — `INTEGRATION_VERIFIED`; target branch расширение напрямую не изменяет.</p>
+      <div class="actions orchestra-actions">
+        <button id="pauseProject" class="secondary" type="button">Pause</button>
+        <button id="resumeProject" type="button">Resume</button>
+        <button id="stopNow" class="secondary" type="button">Stop Now</button>
+      </div>
+      <p class="hint">Pause блокирует новые prompts и ждёт safe point. Stop Now останавливает активные generations best-effort и помечает run'ы interrupted. Resume сначала reconciles tabs, Git state и protocol contexts, и только потом снова открывает dispatch.</p>
     </section>
 
     <label class="toggle-row">
