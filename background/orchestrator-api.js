@@ -41,6 +41,7 @@
       if (query === "workspaceArtifact") { if (!this.repositoryService?.workspaceArtifact) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceArtifact(payload)); }
       if (query === "workspaceScope") { if (!this.repositoryService?.workspaceScope) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceScope(payload)); }
       if (query === "workspaceRecovery") { if (!this.repositoryService?.workspaceRecoveryReport) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(await this.repositoryService.workspaceRecoveryReport(payload)); }
+      if (query === "verificationRuns") { if (!this.repositoryService?.listActiveVerificationRuns) return this.envelope({ ok: false, reason: "repository_service_unavailable" }); return this.envelope(this.repositoryService.listActiveVerificationRuns(payload)); }
       return this.envelope({ ok: false, reason: "unknown_api_query", query });
     }
 
@@ -92,6 +93,7 @@
       else if (command === "createIntegrationWorkspace") result = await this.repositoryService?.createIntegrationWorkspace?.(payload);
       else if (command === "materializeTaskArtifact") result = await this.repositoryService?.materializeTaskArtifact?.(payload);
       else if (command === "verifyWorkspace") result = await this.repositoryService?.verifyWorkspace?.(payload);
+      else if (command === "cancelVerification") result = await this.repositoryService?.cancelVerification?.(payload);
       else if (command === "commitWorkspace") result = await this.repositoryService?.commitWorkspace?.(payload);
       else if (command === "mergeTaskArtifact") result = await this.repositoryService?.mergeTaskArtifact?.(payload);
       else if (command === "pushWorkspace") result = await this.repositoryService?.pushWorkspace?.(payload);
