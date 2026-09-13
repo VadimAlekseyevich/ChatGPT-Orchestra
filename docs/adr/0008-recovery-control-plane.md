@@ -12,6 +12,8 @@ A naive Pause implementation that writes `PAUSED` into every store would destroy
 
 Browser tabs are especially ambiguous: after a full browser restart, an old logical Worker identity may no longer correspond to the ChatGPT conversation that executed a persisted run.
 
+Stop Now has an additional crash window: the service worker can restart after `STOPPING` was persisted but before every active run was terminalized. A guard that depends only on the current lifecycle status is insufficient because boot recovery may already have moved the control plane to `RECOVERY_REQUIRED` while late protocol events from the stopped generation are still arriving.
+
 ## Decision
 
 Introduce a separate persisted `RecoveryStore` and `RecoveryController` above existing engines.
@@ -47,7 +49,11 @@ Pause is a safe-point operation. It closes new dispatch immediately, lets alread
 
 ### Stop Now
 
-Stop Now is an interruption boundary. Active generations receive best-effort stop commands. Active work identities are then terminalized as interrupted/requeued/abandoned as appropriate. Late state-changing events received while `STOPPING/STOPPED` remain auditable but are not applied to execution state.
+Stop Now is an interruption boundary. Active generations receive best-effort stop commands. Active work identities are then terminalized as interrupted/requeued/abandoned as appropriate.
+
+The boundary is persisted independently as `stopBoundaryActive`. It is set before stop commands are issued, remains active across `STOPPING`, `STOPPED`, `RECOVERING` and `RECOVERY_REQUIRED`, and is cleared only by a successful reconciled transition back to `RUNNING`.
+
+Late state-changing events received while that boundary is active remain auditable in the Event Bus but are not applied to execution state. This remains true even if a crash occurs midway through Stop Now and the recovered lifecycle status is no longer literally `STOPPING`.
 
 ### Resume and crash recovery
 
@@ -60,7 +66,7 @@ Resume is reconcile-first, act-second:
 5. reconcile review identities;
 6. reconcile integration identity;
 7. rebuild exact protocol contexts;
-8. only then reopen dispatch and rebuild the runnable queue.
+8. only then reopen dispatch, clear any persisted Stop Now boundary, and rebuild the runnable queue.
 
 Unknown or unsafe state yields `RECOVERY_REQUIRED` instead of optimistic continuation.
 
@@ -76,7 +82,7 @@ Missing Worker registry records are removed from the live pool before replacemen
 - MV3 service-worker restart with live tabs can recover automatically.
 - Full browser loss fails closed until explicit reconciliation.
 - Git progress can be reused only after independent scope/base validation.
-- Stop Now cannot accidentally accept a late Worker `DONE` as completion.
+- Stop Now cannot accidentally accept a late Worker `DONE` as completion, including across a crash during `STOPPING`.
 - Old task/review/integration run identities are not replayed into fresh tabs.
 
 ### Costs
@@ -85,6 +91,7 @@ Missing Worker registry records are removed from the live pool before replacemen
 - Some Phase 9 behavior is conservative: ambiguous integration work is abandoned and rebuilt rather than guessed.
 - Planning Lead cannot be recreated automatically because Lead assignment remains explicitly user-controlled.
 - Recovery may require Git provider availability before work can safely continue.
+- Stop boundary state must be migrated conservatively and treated as fail-closed until reconciliation succeeds.
 
 ## Alternatives considered
 
@@ -95,6 +102,10 @@ Rejected because lifecycle intent and work state would be conflated, making exac
 ### Resume immediately and reconcile asynchronously
 
 Rejected because new prompts could race ahead of reconciliation and create duplicate or irreversible side effects.
+
+### Guard Stop Now only by `STOPPING/STOPPED` status
+
+Rejected because crash recovery can change the lifecycle status before late events stop arriving. A separately persisted boundary is required to preserve the interruption contract across restart.
 
 ### Reuse old Worker `agentId` for newly created tabs
 
