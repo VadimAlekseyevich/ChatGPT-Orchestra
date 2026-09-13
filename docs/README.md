@@ -27,6 +27,7 @@
 - [`phase-12-smoke-test.md`](phase-12-smoke-test.md) — extension + standalone Fake transport acceptance checks для Dashboard/observability;
 - [`phase-13-context-agent-packets.md`](phase-13-context-agent-packets.md) — ContextStore, bounded role packets, context budgets, decision register и fresh-session role bootstrap;
 - [`phase-13-smoke-test.md`](phase-13-smoke-test.md) — fresh Lead/Worker/Reviewer/Integrator replacement и portable context acceptance checks;
+- [`phase-14-contract-tests-ci.md`](phase-14-contract-tests-ci.md) — reusable adapter conformance, mock browser fixtures, deterministic release validation и GitHub Actions CI foundation;
 - [`adr/`](adr/) — Architecture Decision Records.
 
 ## Что хранить в `docs/`
