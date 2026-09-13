@@ -137,6 +137,8 @@ Repair       32k
 
 The service first removes runtime/transcript-only fields, bounds repository/module lists and completed-task history, then truncates long descriptive strings when necessary. Packet metadata records the effective size and whether compaction occurred.
 
+Prompt builders additionally verify the **actual serialized packet size** instead of trusting only packet metadata. For v1 packets they also search work-critical sections for structural `_truncatedItems` / `_truncatedFields` markers. If required planning/task/review/integration data is structurally incomplete, the prompt fails closed and permits only `NEEDS_USER` with `reason=context_packet_incomplete`; the executor must not infer or execute omitted work.
+
 These are packet budgets, not model token-limit claims. They exist to stop orchestration prompts from growing with project lifetime.
 
 ## Transcript and runtime exclusion
@@ -184,7 +186,9 @@ Planning is the one role where a lost chat can interrupt an in-progress stage be
 4. builds a fresh Lead packet from persisted state;
 5. sends a replacement prompt without calling `beginStage()` or inventing a new planning run.
 
-`OrchestratorApi v4` invokes this automatically when an absent/offline Lead is registered while planning is active. Re-registering an already live Lead does not trigger a replacement prompt.
+`OrchestratorApi v4` invokes this automatically only when an absent/offline Lead is registered while planning is active. Re-registering an already live Lead does not trigger a replacement prompt.
+
+There is intentionally no generic public `resumeLead` command: manually replaying an in-flight planning run while the old executor is still live could duplicate the same logical work.
 
 ## Worker / Reviewer / Integrator replacement
 
@@ -208,13 +212,7 @@ contextPacket
 
 `contextPacket` is an admin/control-plane query and remains behind the same rule that forbids privileged Orchestrator API access from agent/browser sessions.
 
-New command:
-
-```text
-resumeLead
-```
-
-This provides an explicit recovery action in addition to automatic fresh-Lead resume during registration.
+Fresh-Lead continuation is reached through the existing `registerActiveLead` control path only when the prior logical Lead is absent/offline and the project is still `PLANNING`.
 
 ## Portable persistence
 
@@ -241,4 +239,4 @@ Those remain later roadmap phases.
 
 ## Definition of Done
 
-Phase 13 is complete when a new executor session can receive a bounded role packet reconstructed from persisted Orchestra state, with prompt/version provenance and no dependency on the full old ChatGPT history. Lead replacement must preserve the same planning run identity; Worker/Reviewer/Integrator replacements must continue to obey their existing retry/requeue/recovery state machines.
+Phase 13 is complete when a new executor session can receive a bounded role packet reconstructed from persisted Orchestra state, with prompt/version provenance and no dependency on the full old ChatGPT history. Lead replacement must preserve the same planning run identity; Worker/Reviewer/Integrator replacements must continue to obey their existing retry/requeue/recovery state machines. Work-critical packet truncation or real serialized oversize must fail closed instead of allowing partial execution.
