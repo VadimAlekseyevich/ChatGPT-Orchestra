@@ -9,13 +9,6 @@
     return JSON.parse(JSON.stringify(value));
   }
 
-  function keysOf(selector, base) {
-    if (typeof selector === "string") return [selector];
-    if (Array.isArray(selector)) return selector.map(String);
-    if (selector && typeof selector === "object") return Object.keys(selector);
-    return Object.keys(base || {});
-  }
-
   class TransactionalStateStore {
     constructor({ store } = {}) {
       if (!store?.get || !store?.set) throw new TypeError("transactional_state_store_backend_invalid");
@@ -23,14 +16,24 @@
       this.chain = Promise.resolve();
     }
 
-    async get(selector = null) { return this.store.get(selector); }
-    async set(values) { return this.store.set(values || {}); }
-    async remove(keys) { return this.store.remove?.(keys); }
-    async clear() { return this.store.clear?.(); }
+    enqueue(operation) {
+      const next = this.chain.catch(() => {}).then(operation);
+      this.chain = next.then(() => undefined, () => undefined);
+      return next;
+    }
+
+    async get(selector = null) {
+      await this.chain.catch(() => {});
+      return this.store.get(selector);
+    }
+
+    async set(values) { return this.enqueue(() => this.store.set(values || {})); }
+    async remove(keys) { return this.enqueue(() => this.store.remove?.(keys)); }
+    async clear() { return this.enqueue(() => this.store.clear?.()); }
 
     async transaction(callback) {
       if (typeof callback !== "function") throw new TypeError("transaction_callback_required");
-      const run = async () => {
+      return this.enqueue(async () => {
         const base = await this.store.get(null);
         const staged = new Map();
         const removed = new Set();
@@ -74,10 +77,7 @@
         if (removed.size) await this.store.remove?.([...removed]);
         if (staged.size) await this.store.set(Object.fromEntries(staged));
         return result;
-      };
-      const operation = this.chain.catch(() => {}).then(run);
-      this.chain = operation.then(() => undefined, () => undefined);
-      return operation;
+      });
     }
   }
 
