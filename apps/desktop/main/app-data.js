@@ -24,6 +24,7 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     companionDirectory: path.join(root, "companion"),
     repositoriesDirectory: path.join(root, "repositories"),
     workspacesDirectory: path.join(root, "workspaces"),
+    browserProfileDirectory: path.join(root, "browser-profile"),
     stateDatabase: path.join(root, "state", "orchestra.sqlite"),
     logFile: path.join(root, "logs", "orchestra.jsonl"),
     companionSecretFile: path.join(root, "companion", "pairing-secret"),
@@ -39,7 +40,8 @@ function ensureDesktopPaths({ dataDirectory = null, ...options } = {}) {
     paths.bundlesDirectory,
     paths.companionDirectory,
     paths.repositoriesDirectory,
-    paths.workspacesDirectory
+    paths.workspacesDirectory,
+    paths.browserProfileDirectory
   ]) fs.mkdirSync(directory, { recursive: true });
   return paths;
 }
