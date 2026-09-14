@@ -219,6 +219,35 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     return { ...registered, managedBrowser: (await this.managedBrowserStatus()).managedBrowser };
   }
 
+  async cancelActiveLocalVerifications(reason = "stop_now") {
+    let runs = [];
+    try {
+      const listed = await this.repositoryService?.listActiveVerificationRuns?.({});
+      runs = Array.isArray(listed?.runs) ? listed.runs : [];
+    } catch (error) {
+      this.logger?.warn?.("desktop_verification_cancel_scan_failed", { reason, message: String(error?.message || error) });
+      return { ok: false, requested: 0, cancelled: 0, failed: 1, runs: [] };
+    }
+
+    const results = [];
+    for (const run of runs) {
+      try {
+        const result = await this.repositoryService.cancelVerification({
+          runId: run.runId,
+          projectId: run.projectId,
+          repositoryId: run.repositoryId
+        });
+        results.push({ runId: run.runId, ok: result?.ok === true, reason: result?.reason || null });
+      } catch (error) {
+        results.push({ runId: run.runId, ok: false, reason: String(error?.message || "verification_cancel_failed") });
+      }
+    }
+    const cancelled = results.filter((item) => item.ok).length;
+    const failed = results.length - cancelled;
+    this.logger?.info?.("desktop_verification_cancel_all", { reason, requested: runs.length, cancelled, failed });
+    return { ok: failed === 0, requested: runs.length, cancelled, failed, runs: results };
+  }
+
   async query(name, payload = {}) {
     const query = String(name || "");
     if (query === "managedBrowserStatus") {
@@ -245,6 +274,11 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     if (command === "exportManagedBrowserValidation") {
       if (!this.initialized) throw new Error("desktop_host_not_initialized");
       return this.exportManagedBrowserValidation();
+    }
+    if (command === "stopNow") {
+      const localVerificationCancellation = await this.cancelActiveLocalVerifications("stop_now");
+      const result = await super.execute(command, payload);
+      return { ...result, localVerificationCancellation };
     }
     return super.execute(command, payload);
   }
