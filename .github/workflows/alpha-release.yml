@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       a01_evidence:
-        description: "A01 fresh-install/login evidence reference"
+        description: "A01 GitHub issue-comment permalink with fresh-install/login PASS evidence"
         required: true
         type: string
       a11_evidence:
-        description: "A11 real OS restart/resume evidence reference"
+        description: "A11 GitHub issue-comment permalink with real OS restart/resume PASS evidence"
         required: true
         type: string
 
@@ -33,18 +33,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
-      - name: Require real manual evidence references
+      - name: Require auditable manual evidence references
         shell: pwsh
-        run: |
-          foreach ($entry in @(
-            @{ id = "A01"; value = $env:A01_EVIDENCE },
-            @{ id = "A11"; value = $env:A11_EVIDENCE }
-          )) {
-            $value = [string]$entry.value
-            if ([string]::IsNullOrWhiteSpace($value) -or $value.Trim().Length -lt 8 -or $value -match '^(todo|pending|placeholder|none|n/a)$') {
-              throw "alpha_manual_evidence_invalid:$($entry.id)"
-            }
-          }
+        run: node scripts/validate-alpha-evidence-reference.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Require Windows signing credentials
         shell: pwsh
         run: |
@@ -65,7 +56,7 @@ jobs:
         shell: pwsh
         run: |
           $evidence = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             version = "2.0.0-alpha.20"
             a01 = [string]$env:A01_EVIDENCE
             a11 = [string]$env:A11_EVIDENCE
