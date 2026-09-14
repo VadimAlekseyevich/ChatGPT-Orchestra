@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: alpha-release-validation
@@ -26,6 +27,8 @@ jobs:
     env:
       A01_EVIDENCE: ${{ inputs.a01_evidence }}
       A11_EVIDENCE: ${{ inputs.a11_evidence }}
+      GITHUB_TOKEN: ${{ github.token }}
+      ALPHA_EVIDENCE_VALIDATION_OUTPUT: .alpha-release/manual-evidence-validation.json
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
@@ -33,9 +36,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
+      - name: Require main branch release validation
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne "refs/heads/main") { throw "alpha_release_validation_must_run_from_main" }
       - name: Require auditable manual evidence references
         shell: pwsh
         run: node scripts/validate-alpha-evidence-reference.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
+      - name: Validate manual evidence comment contents
+        shell: pwsh
+        run: node scripts/validate-alpha-evidence-comments.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Require Windows signing credentials
         shell: pwsh
         run: |
@@ -52,19 +62,20 @@ jobs:
       - name: Require valid Authenticode signatures
         shell: pwsh
         run: ./scripts/verify-windows-alpha.ps1 -RequireSignature
-      - name: Record manual release evidence references
+      - name: Record validated manual release evidence
         shell: pwsh
         run: |
+          $validated = Get-Content -Path "$env:ALPHA_EVIDENCE_VALIDATION_OUTPUT" -Raw | ConvertFrom-Json
           $evidence = [ordered]@{
-            schemaVersion = 2
+            schemaVersion = 3
             version = "2.0.0-alpha.20"
             a01 = [string]$env:A01_EVIDENCE
             a11 = [string]$env:A11_EVIDENCE
-            validatedAtUtc = [DateTime]::UtcNow.ToString("o")
+            validation = $validated
             workflowRun = [string]$env:GITHUB_RUN_ID
             commit = [string]$env:GITHUB_SHA
           }
-          $evidence | ConvertTo-Json -Depth 4 | Set-Content -Path "dist/desktop/alpha-manual-evidence.json" -Encoding utf8
+          $evidence | ConvertTo-Json -Depth 8 | Set-Content -Path "dist/desktop/alpha-manual-evidence.json" -Encoding utf8
       - name: Upload signed alpha release candidate
         uses: actions/upload-artifact@v4
         with:
