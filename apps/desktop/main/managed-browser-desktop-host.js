@@ -3,6 +3,9 @@
 const { DesktopHost } = require("./desktop-host.js");
 const { ensureDesktopPaths } = require("./app-data.js");
 const { ManagedBrowserAgentRuntime } = require("./managed-browser-agent-runtime.js");
+const { CompletionAwareManagedBrowserRuntime } = require("./completion-aware-managed-browser-runtime.js");
+const { ManagedBrowserCompletionMonitor } = require("./managed-browser-completion-monitor.js");
+const { ManagedBrowserProtocolAdapter } = require("./managed-browser-protocol-adapter.js");
 const { ElectronManagedBrowserDriver, DEFAULT_CHATGPT_URL } = require("./electron-managed-browser-driver.js");
 const { ElectronPreloadChatGPTPageAdapter } = require("./electron-preload-chatgpt-page-adapter.js");
 const { bindManagedBrowserAgentRuntime } = require("./managed-browser-host-binding.js");
@@ -28,6 +31,9 @@ async function createManagedBrowserDesktopHost({
   agentRuntime = null,
   driver = null,
   pageAdapter = null,
+  protocolAdapter = null,
+  completionMonitor = null,
+  completionOptions = null,
   ipcMain = null,
   openLoginWindow = true,
   ...options
@@ -41,19 +47,39 @@ async function createManagedBrowserDesktopHost({
     pageAdapter: managedPageAdapter,
     logger: logger || console
   }));
-  const runtime = agentRuntime || new ManagedBrowserAgentRuntime({
-    driver: managedDriver,
-    profileDirectory: resolvedPaths.browserProfileDirectory,
-    clock,
-    logger: logger || console,
-    maxAgents: 5
-  });
+
+  let managedProtocolAdapter = protocolAdapter || null;
+  let managedCompletionMonitor = completionMonitor || null;
+  let runtime = agentRuntime || null;
+  if (!runtime) {
+    managedProtocolAdapter = managedProtocolAdapter || new ManagedBrowserProtocolAdapter({ logger: logger || console });
+    managedCompletionMonitor = managedCompletionMonitor || new ManagedBrowserCompletionMonitor({
+      driver: managedDriver,
+      protocolAdapter: managedProtocolAdapter,
+      logger: logger || console,
+      ...(completionOptions || {})
+    });
+    runtime = new CompletionAwareManagedBrowserRuntime({
+      driver: managedDriver,
+      completionMonitor: managedCompletionMonitor,
+      profileDirectory: resolvedPaths.browserProfileDirectory,
+      clock,
+      logger: logger || console,
+      maxAgents: 5
+    });
+  } else if (!(runtime instanceof ManagedBrowserAgentRuntime) && typeof runtime?.bindHostHandlers !== "function") {
+    throw new TypeError("managed_browser_agent_runtime_required");
+  }
+
   const host = new ManagedBrowserDesktopHost({
     ...options,
     paths: resolvedPaths,
     agentRuntime: runtime,
     logger
   });
+  host.managedBrowserPageAdapter = managedPageAdapter;
+  host.managedBrowserProtocolAdapter = managedProtocolAdapter;
+  host.managedBrowserCompletionMonitor = managedCompletionMonitor;
   await host.init();
 
   let onboardingSession = null;
