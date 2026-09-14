@@ -16,6 +16,12 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     if (typeof options.agentRuntime?.bindHostHandlers !== "function") throw new TypeError("managed_browser_agent_runtime_required");
     super({ ...options, autoSeedFakeLead: false });
     this.managedBrowserRecoveryRegistry = new ManagedBrowserRecoveryRegistry(this.agentRuntime);
+    // Legacy Core engines still use integer tabId as a liveness hint. Route only their
+    // registry view through a compatibility adapter; the actual AgentRuntime continues
+    // to expose opaque sessionId bindings and remains the source of truth.
+    this.schedulerEngine.registry = this.managedBrowserRecoveryRegistry;
+    this.reviewEngine.registry = this.managedBrowserRecoveryRegistry;
+    this.integrationEngine.registry = this.managedBrowserRecoveryRegistry;
     this.recoveryController.registry = this.managedBrowserRecoveryRegistry;
     this.managedBrowserUnbind = bindManagedBrowserAgentRuntime(this);
     this.managedBrowserOnboardingSession = null;
