@@ -12,6 +12,11 @@
     const projectOnboarding = new root.DesktopProjectOnboarding({ rootElement: projectRoot, transport, pollMs: 3000 });
     projectOnboarding.start();
   }
+  const bundleRoot = document.querySelector("#desktopProjectBundleImport");
+  if (bundleRoot && root.DesktopProjectBundleImport) {
+    const bundleImport = new root.DesktopProjectBundleImport({ rootElement: bundleRoot, transport, pollMs: 3000 });
+    bundleImport.start();
+  }
   const app = new root.DashboardApp({ rootElement: document.querySelector("#orchestraDashboard"), transport, pollMs: 3000 });
   app.start();
 })();
