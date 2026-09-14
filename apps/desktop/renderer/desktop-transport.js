@@ -19,6 +19,10 @@
       if (!this.bridge?.selectRepositoryDirectory) return Promise.resolve({ ok: false, reason: "desktop_directory_picker_unavailable" });
       return this.bridge.selectRepositoryDirectory();
     }
+    restartApplication() {
+      if (!this.bridge?.restartApplication) return Promise.resolve({ ok: false, reason: "desktop_restart_unavailable" });
+      return this.bridge.restartApplication();
+    }
   }
 
   root.DesktopDashboardTransport = DesktopDashboardTransport;
