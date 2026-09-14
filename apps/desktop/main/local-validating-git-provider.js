@@ -5,6 +5,7 @@ const {
   normalizeLocalVerificationPlan
 } = require("../../../platform/local-verification.js");
 const { normalizeLocalChangeSet } = require("../../../platform/local-change-set.js");
+const { evaluateScope } = require("../../../platform/workspace-scope-policy.js");
 
 class LocalValidatingGitProvider {
   constructor({ remoteProvider, repositoryService, logger = console } = {}) {
@@ -25,7 +26,11 @@ class LocalValidatingGitProvider {
 
   async reviewComparison(project, artifact) {
     if (artifact?.localOnly === true && artifact?.repositoryId && artifact?.workspaceId) {
-      return this.repositoryService.workspaceReviewComparison({ projectId: project?.projectId, repositoryId: artifact.repositoryId, workspaceId: artifact.workspaceId });
+      return this.repositoryService.workspaceReviewComparison({
+        projectId: project?.projectId,
+        repositoryId: artifact.repositoryId,
+        workspaceId: artifact.workspaceId
+      });
     }
     return this.remoteProvider.compare(project, artifact?.baseSha, artifact?.commit);
   }
@@ -36,7 +41,13 @@ class LocalValidatingGitProvider {
     if (!project?.projectId || !task?.id || !run?.runId) return { ok: false, reason: "local_run_identity_missing" };
     const workspaceId = `task:${task.id}:${run.runId}`;
     try {
-      const created = await this.repositoryService.createTaskWorkspace({ projectId: project.projectId, repositoryId, taskId: task.id, runId: run.runId, startSha: run.git?.startSha || run.git?.baseSha || snapshot?.baseSha || "HEAD" });
+      const created = await this.repositoryService.createTaskWorkspace({
+        projectId: project.projectId,
+        repositoryId,
+        taskId: task.id,
+        runId: run.runId,
+        startSha: run.git?.startSha || run.git?.baseSha || snapshot?.baseSha || "HEAD"
+      });
       return { ok: true, workspaceId: created?.workspace?.workspaceId || workspaceId, created: true, repositoryId };
     } catch (error) {
       if (String(error?.message || "") !== "git_workspace_already_exists") return { ok: false, reason: "local_workspace_create_failed", error: String(error?.message || error), repositoryId };
@@ -80,13 +91,21 @@ class LocalValidatingGitProvider {
     return { ok: true, verification, verificationWaived: waived && verification.length === 0 };
   }
 
-  workerChangeArtifact(input = {}) {
-    return input.source?.workerArtifact || input.payload?.localChanges || null;
-  }
-
   async validateLocalChangeArtifact(input, { project, task, run, repositoryId } = {}) {
-    const normalized = normalizeLocalChangeSet(this.workerChangeArtifact(input));
+    const changeSet = input.source?.workerArtifact || input.payload?.localChanges || null;
+    const normalized = normalizeLocalChangeSet(changeSet);
     if (!normalized.ok) return { ok: false, reason: normalized.reason, local: { ok: false, reason: normalized.reason } };
+
+    let declaredScope;
+    try {
+      declaredScope = evaluateScope(normalized.changeSet.files.map((item) => item.path), task?.scope || {});
+    } catch (error) {
+      return { ok: false, reason: "local_scope_invalid", local: { ok: false, reason: String(error?.message || "local_scope_invalid") } };
+    }
+    if (!declaredScope.ok) {
+      return { ok: false, reason: "local_scope_violation", local: { ok: false, reason: "local_scope_violation", scope: declaredScope } };
+    }
+
     const freshness = this.remoteProvider?.checkBaseFresh && input.snapshot
       ? await this.remoteProvider.checkBaseFresh(project, input.snapshot)
       : { ok: true, currentTargetSha: input.snapshot?.baseSha || null };
@@ -127,7 +146,7 @@ class LocalValidatingGitProvider {
           localVerificationPassed: true,
           changeSetFormat: normalized.changeSet.format
         },
-        local: { ok: true, workspaceId, scope: scope.scope, verification: verified.verification, verificationWaived: verified.verificationWaived, changeSet: applied.summary || null }
+        local: { ok: true, workspaceId, scope: scope.scope, declaredScope, verification: verified.verification, verificationWaived: verified.verificationWaived, changeSet: applied.summary || null }
       };
     } catch (error) {
       this.logger?.warn?.("local_change_artifact_validation_failed", { projectId: project.projectId, taskId: task.id, runId: run.runId, repositoryId, error: String(error?.message || error) });
@@ -140,7 +159,8 @@ class LocalValidatingGitProvider {
     const task = input.task || null;
     const run = input.run || null;
     const repositoryId = project?.repositoryRuntime?.repositoryId || null;
-    if (repositoryId && this.workerChangeArtifact(input)) return this.validateLocalChangeArtifact(input, { project, task, run, repositoryId });
+    const localChangeSet = input.source?.workerArtifact || input.payload?.localChanges || null;
+    if (repositoryId && localChangeSet) return this.validateLocalChangeArtifact(input, { project, task, run, repositoryId });
 
     const remote = await this.remoteProvider.validateArtifact(input);
     if (!remote?.ok) return remote;
