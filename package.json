@@ -41,8 +41,8 @@
   "build": {
     "appId": "com.chatgptorchestra.desktop",
     "productName": "ChatGPT Orchestra",
-    "directories": {"output": "dist/desktop"},
-    "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"]
+    "directories": {"output":"dist/desktop"},
+    "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","content/worker-artifact-parser.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"]
   },
   "engines": {"node": ">=18"}
 }
