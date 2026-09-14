@@ -10,17 +10,26 @@
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   }
 
+  function normalizeGitHubUrl(value) {
+    const raw = String(value || "").trim();
+    const match = raw.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/?$/i);
+    if (!match) return null;
+    const owner = match[1];
+    const repository = String(match[2] || "").replace(/\.git$/i, "");
+    if (!owner || !repository) return null;
+    return `https://github.com/${owner}/${repository}`;
+  }
+
   function createRepositoryId() {
     const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     return `repo-${String(random).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 100)}`;
   }
 
   function repositoryPreparationKey(state) {
-    return JSON.stringify({
-      mode: state.mode,
-      repositoryPath: String(state.repositoryPath || "").trim(),
-      repositoryUrl: String(state.repositoryUrl || "").trim()
-    });
+    if (state.mode === MODE_LOCAL) {
+      return JSON.stringify({ mode: MODE_LOCAL, repositoryPath: String(state.repositoryPath || "").trim() });
+    }
+    return JSON.stringify({ mode: MODE_CLONE, repositoryUrl: String(state.repositoryUrl || "").trim() });
   }
 
   class DesktopProjectOnboarding {
@@ -116,10 +125,10 @@
             <div class="dashboard-task-controls"><button class="secondary" data-project-action="browse" ${this.busy ? "disabled" : ""}>Browse…</button></div>
             <p class="dashboard-muted">The filesystem path stays in the desktop repository registry; portable project state stores only a logical repository id.</p>
           ` : ""}
-          <label><strong>${local ? "Canonical GitHub repository URL" : "GitHub repository URL"}</strong><br>
+          <label><strong>${local ? "GitHub repository URL (auto-detected from origin when possible)" : "GitHub repository URL"}</strong><br>
             <input type="url" data-project-field="repositoryUrl" value="${escapeHtml(this.form.repositoryUrl)}" placeholder="https://github.com/owner/repository" ${this.busy ? "disabled" : ""}>
           </label>
-          ${local ? `<p class="dashboard-muted">For the alpha, the Lead still uses the canonical GitHub URL during repository discovery while code/test work happens in the selected local worktree.</p>` : ""}
+          ${local ? `<p class="dashboard-muted">You can leave this blank. Orchestra reads only Git remote <code>origin</code> and accepts a GitHub HTTPS/SSH origin. Enter the canonical URL manually only when the repository has no usable GitHub origin.</p>` : ""}
           <label><strong>Goal</strong><br>
             <textarea rows="5" data-project-field="goal" placeholder="Describe the finished result, constraints and important acceptance criteria…" ${this.busy ? "disabled" : ""}>${escapeHtml(this.form.goal)}</textarea>
           </label>
@@ -171,8 +180,9 @@
       const repositoryUrl = String(this.form.repositoryUrl || "").trim();
       const repositoryPath = String(this.form.repositoryPath || "").trim();
       if (goal.length < 10) return { ok: false, reason: "Goal must be at least 10 characters." };
-      if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?\/?$/i.test(repositoryUrl)) return { ok: false, reason: "Use a GitHub repository URL like https://github.com/owner/repository." };
       if (this.form.mode === MODE_LOCAL && !repositoryPath) return { ok: false, reason: "Choose a local Git repository first." };
+      if (repositoryUrl && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: "Use a GitHub repository URL like https://github.com/owner/repository." };
+      if (this.form.mode === MODE_CLONE && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: "Use a GitHub repository URL like https://github.com/owner/repository." };
       return { ok: true, goal, repositoryUrl, repositoryPath };
     }
 
@@ -184,8 +194,10 @@
         ? await this.transport.execute("openLocalRepository", { repositoryId, path: validated.repositoryPath })
         : await this.transport.execute("cloneRepository", { repositoryId, url: validated.repositoryUrl });
       if (!response?.ok) return response || { ok: false, reason: "repository_prepare_failed" };
-      this.preparedRepository = { key, repositoryId };
-      return { ok: true, repositoryId };
+      const repositoryUrl = normalizeGitHubUrl(response.repositoryUrl) || normalizeGitHubUrl(validated.repositoryUrl) || null;
+      if (this.form.mode === MODE_LOCAL && repositoryUrl && !this.form.repositoryUrl) this.form.repositoryUrl = repositoryUrl;
+      this.preparedRepository = { key, repositoryId, repositoryUrl };
+      return { ok: true, repositoryId, repositoryUrl };
     }
 
     async startProject() {
@@ -197,13 +209,17 @@
       try {
         const prepared = await this.prepareRepository(validated);
         if (!prepared?.ok) return this.setError(prepared?.reason || "repository_prepare_failed");
+        const repositoryUrl = normalizeGitHubUrl(validated.repositoryUrl) || normalizeGitHubUrl(prepared.repositoryUrl) || null;
+        if (!repositoryUrl) {
+          return this.setError("No GitHub origin was detected. Enter the repository GitHub URL and press Start Project again.");
+        }
         if (this.form.trust) {
           const trusted = await this.transport.execute("setRepositoryTrust", { repositoryId: prepared.repositoryId, trust: "TRUSTED" });
           if (!trusted?.ok) return this.setError(trusted?.reason || "repository_trust_failed");
         }
         const started = await this.transport.execute("startProject", {
           goal: validated.goal,
-          repositoryUrl: validated.repositoryUrl.replace(/\.git\/?$/i, ""),
+          repositoryUrl,
           repositoryId: prepared.repositoryId
         });
         if (!started?.ok) return this.setError(started?.reason || "project_start_failed");
@@ -239,7 +255,7 @@
       const field = event.target?.dataset?.projectField;
       if (!field || !Object.prototype.hasOwnProperty.call(this.form, field)) return;
       this.form[field] = event.target.value || "";
-      if (field === "repositoryPath" || field === "repositoryUrl") this.preparedRepository = null;
+      if (field === "repositoryPath" || (field === "repositoryUrl" && this.form.mode === MODE_CLONE)) this.preparedRepository = null;
     }
 
     handleChange(event) {
@@ -275,6 +291,7 @@
     DesktopProjectOnboarding,
     MODE_LOCAL,
     MODE_CLONE,
+    normalizeGitHubUrl,
     createRepositoryId,
     repositoryPreparationKey
   };
