@@ -9,6 +9,7 @@ const {
   DesktopProjectOnboarding,
   MODE_LOCAL,
   MODE_CLONE,
+  TERMINAL_PROJECT_STATUSES,
   repositoryPreparationKey
 } = require("../apps/desktop/renderer/desktop-project-onboarding.js");
 
@@ -20,6 +21,10 @@ function fakeRoot() {
   };
 }
 
+function readyLead() {
+  return [{ agentId: "L1", role: "lead", connected: true, status: "IDLE", label: "Lead" }];
+}
+
 function changeEvent(dataset, value, extra = {}) {
   return { target: { dataset: { ...dataset }, value, ...extra, hasAttribute(name) {
     if (name === "data-project-trust") return Object.prototype.hasOwnProperty.call(dataset, "projectTrust");
@@ -28,13 +33,39 @@ function changeEvent(dataset, value, extra = {}) {
   } } };
 }
 
+test("desktop project onboarding waits for a connected IDLE Lead before showing project controls", async () => {
+  let agents = [];
+  const transport = {
+    async query() { return { ok: true, dashboard: { project: null, agents } }; },
+    async execute() { throw new Error("execute_must_not_run_without_lead"); }
+  };
+  const root = fakeRoot();
+  const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+
+  await app.refresh();
+  assert.match(root.innerHTML, /WAITING FOR LEAD/);
+  assert.match(root.innerHTML, /Connect the Lead before starting a project/);
+  assert.doesNotMatch(root.innerHTML, /Start Project/);
+
+  app.form.repositoryPath = "C:\\Projects\\Widget";
+  app.form.goal = "Implement the requested feature with tests.";
+  const rejected = await app.startProject();
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.reason, /Lead/);
+
+  agents = readyLead();
+  await app.refresh();
+  assert.match(root.innerHTML, /Start your first project/);
+  assert.match(root.innerHTML, /Start Project/);
+});
+
 test("desktop first-project onboarding opens a local repository, auto-detects GitHub origin, trusts it and starts planning", async () => {
   let project = null;
   const calls = [];
   const transport = {
     async query(name) {
       assert.equal(name, "dashboard");
-      return { ok: true, dashboard: { project } };
+      return { ok: true, dashboard: { project, agents: readyLead() } };
     },
     async selectRepositoryDirectory() {
       return { ok: true, cancelled: false, path: "C:\\Projects\\Widget" };
@@ -79,7 +110,7 @@ test("local repository without detectable GitHub origin can reuse preparation af
   let project = null;
   const calls = [];
   const transport = {
-    async query() { return { ok: true, dashboard: { project } }; },
+    async query() { return { ok: true, dashboard: { project, agents: readyLead() } }; },
     async execute(name, payload) {
       calls.push({ name, payload: structuredClone(payload) });
       if (name === "openLocalRepository") return { ok: true, repository: { repositoryId: payload.repositoryId }, repositoryUrl: null };
@@ -92,6 +123,7 @@ test("local repository without detectable GitHub origin can reuse preparation af
   };
   const root = fakeRoot();
   const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+  app.agents = readyLead();
   app.form.mode = MODE_LOCAL;
   app.form.repositoryPath = "C:\\Projects\\NoOrigin";
   app.form.goal = "Plan and implement the requested local repository change.";
@@ -125,7 +157,7 @@ test("desktop first-project onboarding clones a GitHub repository before startin
   let project = null;
   const calls = [];
   const transport = {
-    async query() { return { ok: true, dashboard: { project } }; },
+    async query() { return { ok: true, dashboard: { project, agents: readyLead() } }; },
     async execute(name, payload) {
       calls.push({ name, payload: structuredClone(payload) });
       if (name === "cloneRepository") return { ok: true, repository: { repositoryId: payload.repositoryId, sourceUrl: payload.url }, repositoryUrl: "https://github.com/acme/widget" };
@@ -138,6 +170,7 @@ test("desktop first-project onboarding clones a GitHub repository before startin
   };
 
   const app = new DesktopProjectOnboarding({ rootElement: fakeRoot(), transport });
+  app.agents = readyLead();
   app.form.mode = MODE_CLONE;
   app.form.repositoryUrl = "https://github.com/acme/widget.git";
   app.form.goal = "Build the requested feature with tests and integration evidence.";
@@ -154,7 +187,7 @@ test("READY project exposes Start Execution and forwards selected Worker concurr
   const calls = [];
   let project = { projectId: "P3", status: "READY", stage: "READY" };
   const transport = {
-    async query() { return { ok: true, dashboard: { project } }; },
+    async query() { return { ok: true, dashboard: { project, agents: readyLead() } }; },
     async execute(name, payload) {
       calls.push({ name, payload: structuredClone(payload) });
       if (name === "startExecution") {
@@ -176,6 +209,31 @@ test("READY project exposes Start Execution and forwards selected Worker concurr
   assert.equal(result.ok, true);
   assert.deepEqual(calls[0], { name: "startExecution", payload: { maxWorkers: 2 } });
   assert.equal(root.innerHTML, "");
+});
+
+test("terminal project exposes Start another project and resets repository form without deleting history", async () => {
+  for (const status of TERMINAL_PROJECT_STATUSES) {
+    const project = { projectId: `P-${status}`, status, stage: status };
+    const transport = {
+      async query() { return { ok: true, dashboard: { project, agents: readyLead() } }; },
+      async execute() { return { ok: false, reason: "unexpected_command" }; }
+    };
+    const root = fakeRoot();
+    const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+    await app.refresh();
+    assert.match(root.innerHTML, /Start another project/);
+    app.form.goal = "old goal that must be reset";
+    app.preparedRepository = { repositoryId: "old-repo", key: "old" };
+
+    const reset = app.resetForNewProject();
+    assert.equal(reset.ok, true);
+    assert.equal(app.project.projectId, `P-${status}`);
+    assert.equal(app.newProjectRequested, true);
+    assert.equal(app.form.goal, "");
+    assert.equal(app.preparedRepository, null);
+    assert.match(root.innerHTML, /Start another project/);
+    assert.match(root.innerHTML, /Start Project/);
+  }
 });
 
 test("desktop shell wires the project onboarding script and a narrow native directory picker bridge", () => {
