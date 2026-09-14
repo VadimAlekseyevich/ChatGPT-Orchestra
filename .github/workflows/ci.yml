@@ -151,7 +151,7 @@ jobs:
         run: npm run desktop:dist:win
       - name: Stage fallback extension
         run: npm run extension:stage-alpha
-      - name: Verify alpha artifact layout
+      - name: Verify alpha artifact layout and signatures
         shell: pwsh
         run: |
           $desktop = "dist/desktop/win-unpacked/ChatGPT Orchestra.exe"
@@ -162,6 +162,11 @@ jobs:
           if (!$installer) { throw "missing_alpha_windows_installer" }
           $manifest = Get-Content $extension -Raw | ConvertFrom-Json
           if ($manifest.version_name -ne "2.0.0-alpha.20") { throw "alpha_extension_version_mismatch" }
+          foreach ($signedFile in @((Resolve-Path $desktop).Path, $installer.FullName)) {
+            $signature = Get-AuthenticodeSignature $signedFile
+            Write-Host "Authenticode $signedFile => $($signature.Status); signer=$($signature.SignerCertificate.Subject)"
+            if ($signature.Status -ne "Valid" -or !$signature.SignerCertificate) { throw "alpha_windows_signature_invalid:$signedFile:$($signature.Status)" }
+          }
           Write-Host "alpha installer: $($installer.FullName)"
       - name: Upload Windows alpha candidate
         uses: actions/upload-artifact@v4
