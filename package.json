@@ -36,7 +36,7 @@
     "desktop:companion": "electron . --companion",
     "desktop:managed-browser": "electron . --managed-browser",
     "desktop:pack": "electron-builder --dir",
-    "desktop:dist:win": "electron-builder --win nsis",
+    "desktop:dist:win": "electron-builder --win nsis --publish never",
     "extension:stage-alpha": "node scripts/stage-alpha-extension.js",
     "companion:register-host": "node scripts/register-native-host.js register",
     "companion:unregister-host": "node scripts/register-native-host.js unregister"
