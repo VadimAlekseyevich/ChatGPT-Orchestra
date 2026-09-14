@@ -11,6 +11,7 @@ const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
+const windowsBuildWrapper = read("scripts/build-windows-alpha.js");
 const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
 const validationDoc = read("docs/alpha-20-validation.md");
 
@@ -32,6 +33,7 @@ test("every alpha scenario has executable automated evidence in the Phase 20 gat
     }
   }
   assert.ok(phase20.includes("tests/phase20-alpha-scenarios.test.js"));
+  assert.ok(phase20.includes("tests/alpha-build-identity.test.js"));
 });
 
 test("alpha version, manifest and candidate artifact naming are consistent", () => {
@@ -41,25 +43,35 @@ test("alpha version, manifest and candidate artifact naming are consistent", () 
   assert.ok(ci.includes(`name: ${ALPHA_ARTIFACT_NAME}`));
   assert.ok(ci.includes("npm run test:phase20"));
   assert.ok(ci.includes("./scripts/verify-windows-alpha.ps1"));
+  assert.ok(ci.includes("alpha-build-evidence.json"));
   assert.ok(ci.includes("alpha-signature-evidence.json"));
 });
 
-test("Windows packaging never implicitly publishes from CI", () => {
+test("Windows packaging embeds exact build identity and never implicitly publishes from CI", () => {
   const windowsBuild = String(pkg.scripts?.["desktop:dist:win"] || "");
-  assert.match(windowsBuild, /electron-builder\s+--win\s+nsis/);
-  assert.match(windowsBuild, /--publish\s+never/);
+  assert.equal(windowsBuild, "node scripts/build-windows-alpha.js");
+  assert.match(windowsBuildWrapper, /electron-builder/);
+  assert.match(windowsBuildWrapper, /"--win",\s*"nsis",\s*"--publish",\s*"never"/);
+  assert.match(windowsBuildWrapper, /alpha-build-evidence\.json/);
+  assert.match(windowsBuildWrapper, /ORCHESTRA_BUILD_COMMIT/);
+  assert.match(ci, /ORCHESTRA_BUILD_COMMIT:\s*\$\{\{ github\.sha \}\}/);
   assert.doesNotMatch(ci, /GH_TOKEN/);
 });
 
-test("final alpha validation requires manual A01/A11 evidence and valid Authenticode", () => {
+test("final alpha validation binds manual evidence, build artifact and signatures to one commit", () => {
   assert.ok(releaseWorkflow.includes("workflow_dispatch:"));
   assert.ok(releaseWorkflow.includes("a01_evidence:"));
   assert.ok(releaseWorkflow.includes("a11_evidence:"));
+  assert.ok(releaseWorkflow.includes("ALPHA_EXPECTED_COMMIT: ${{ github.sha }}"));
+  assert.ok(releaseWorkflow.includes("ORCHESTRA_BUILD_COMMIT: ${{ github.sha }}"));
   assert.ok(releaseWorkflow.includes("WINDOWS_CSC_LINK"));
   assert.ok(releaseWorkflow.includes("WINDOWS_CSC_KEY_PASSWORD"));
   assert.ok(releaseWorkflow.includes("verify-windows-alpha.ps1 -RequireSignature"));
+  assert.ok(releaseWorkflow.includes("alpha-build-evidence.json"));
   assert.ok(releaseWorkflow.includes("chatgpt-orchestra-alpha20-signed-windows"));
   assert.doesNotMatch(releaseWorkflow, /PUBLISH_FOR_PULL_REQUEST/);
+  assert.match(windowsVerifier, /ORCHESTRA_BUILD_COMMIT/);
+  assert.match(windowsVerifier, /alpha_build_evidence_commit_mismatch/);
   assert.match(windowsVerifier, /RequireSignature/);
   assert.match(windowsVerifier, /status -ne "Valid"/);
   assert.match(windowsVerifier, /SignerCertificate/);
@@ -71,6 +83,7 @@ test("operator validation document covers every roadmap scenario and preserves m
     assert.ok(validationDoc.includes(scenario.title), `alpha_validation_doc_missing_title:${scenario.id}`);
   }
   assert.ok(validationDoc.includes("A01 and A11 require real manual evidence"));
+  assert.ok(validationDoc.includes("Build commit"));
   assert.ok(validationDoc.includes("WINDOWS_CSC_LINK"));
   assert.ok(validationDoc.includes("Authenticode=Valid"));
 });
