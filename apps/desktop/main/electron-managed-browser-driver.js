@@ -3,6 +3,7 @@
 const path = require("node:path");
 
 const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
+const DEFAULT_AGENT_PRELOAD = path.join(__dirname, "..", "agent-preload.js");
 const ALLOWED_ORIGINS = Object.freeze(new Set([
   "https://chatgpt.com",
   "https://auth.openai.com"
@@ -24,12 +25,14 @@ class ElectronManagedBrowserDriver {
     electronApi = null,
     pageAdapter = null,
     logger = console,
-    windowOptions = null
+    windowOptions = null,
+    preloadPath = DEFAULT_AGENT_PRELOAD
   } = {}) {
     this.electronApi = electronApi;
     this.pageAdapter = pageAdapter;
     this.logger = logger;
     this.windowOptions = windowOptions || {};
+    this.preloadPath = path.resolve(String(preloadPath || DEFAULT_AGENT_PRELOAD));
     this.browserSession = null;
     this.profileDirectory = null;
     this.sessions = new Map();
@@ -57,6 +60,7 @@ class ElectronManagedBrowserDriver {
     }
     this.profileDirectory = normalized;
     this.browserSession = electron.session.fromPath(normalized, { cache: true });
+    this.pageAdapter?.start?.();
     this.started = true;
     this.closing = false;
     return { ok: true };
@@ -100,6 +104,12 @@ class ElectronManagedBrowserDriver {
       if (entry) entry.url = String(url || "");
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
+    window.webContents?.on?.("will-navigate", (event, url) => {
+      try { assertManagedNavigationUrl(url); } catch (error) {
+        event?.preventDefault?.();
+        this.emit({ type: "navigation-blocked", sessionId: id, url: String(url || ""), reason: asError(error) });
+      }
+    });
     window.webContents?.on?.("did-navigate", onNavigation);
     window.webContents?.on?.("did-navigate-in-page", onNavigation);
     window.webContents?.on?.("render-process-gone", (_event, details = {}) => {
@@ -127,14 +137,15 @@ class ElectronManagedBrowserDriver {
       title: "ChatGPT Orchestra · Agent",
       ...this.windowOptions,
       webPreferences: {
+        ...(this.windowOptions.webPreferences || {}),
         session: this.browserSession,
+        preload: this.preloadPath,
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
-        devTools: false,
-        ...(this.windowOptions.webPreferences || {})
+        devTools: false
       }
     });
     this.sessions.set(id, { window, url: targetUrl });
@@ -203,12 +214,15 @@ class ElectronManagedBrowserDriver {
     const entry = this.entry(id);
     if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
     if (typeof this.pageAdapter?.ping === "function") return this.pageAdapter.ping(entry.window.webContents);
-    try {
-      const page = await entry.window.webContents.executeJavaScript("({ readyState: document.readyState, url: location.href })");
-      return { ok: true, availability: "unavailable", generating: false, readyState: String(page?.readyState || ""), url: String(page?.url || entry.url || "") };
-    } catch (error) {
-      return { ok: false, reason: "page_unreachable", message: asError(error) };
-    }
+    return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || "") };
+  }
+
+  async readAssistantSnapshot(sessionId) {
+    this.ensureStarted();
+    const entry = this.entry(sessionId);
+    if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
+    if (typeof this.pageAdapter?.readAssistantSnapshot !== "function") return { ok: false, reason: "chatgpt_page_adapter_unavailable" };
+    return this.pageAdapter.readAssistantSnapshot(entry.window.webContents);
   }
 
   async sendPrompt(sessionId, prompt) {
@@ -235,6 +249,7 @@ class ElectronManagedBrowserDriver {
       try { entry.window.close?.(); } catch (_) { try { entry.window.destroy?.(); } catch (_) {} }
     }
     this.listeners.clear();
+    try { this.pageAdapter?.close?.(); } catch (_) {}
     this.browserSession = null;
     this.profileDirectory = null;
     this.started = false;
@@ -245,6 +260,7 @@ class ElectronManagedBrowserDriver {
 module.exports = {
   ElectronManagedBrowserDriver,
   DEFAULT_CHATGPT_URL,
+  DEFAULT_AGENT_PRELOAD,
   ALLOWED_ORIGINS,
   assertManagedNavigationUrl
 };
