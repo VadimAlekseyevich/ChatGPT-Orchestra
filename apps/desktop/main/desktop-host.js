@@ -16,6 +16,7 @@ const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
 
 const WATCHDOG_NAME = "orchestra-desktop-watchdog";
+const REPOSITORY_BOUNDARY_COMMANDS = new Set(["resume", "startExecution", "startIntegration"]);
 
 function jsonClone(value) {
   if (value === undefined) return null;
@@ -237,6 +238,21 @@ class DesktopHost {
     return { ready };
   }
 
+  async localRepositoryBindingState() {
+    const project = this.projectStore.getActiveProject?.() || null;
+    const repositoryId = project?.repositoryRuntime?.repositoryId || null;
+    if (!repositoryId) return { ok: true, required: false, projectId: project?.projectId || null };
+    const linked = await this.repositoryService.getRepository(repositoryId);
+    if (linked?.ok) return { ok: true, required: true, projectId: project.projectId, repositoryId, repository: linked.repository };
+    return {
+      ok: false,
+      reason: "repository_rebind_required",
+      projectId: project.projectId,
+      repositoryId,
+      repositoryUrl: project.repository?.url || null
+    };
+  }
+
   async init() {
     if (this.closed) throw new Error("desktop_host_closed");
     if (this.initialized) return this.query("state");
@@ -247,6 +263,8 @@ class DesktopHost {
     await this.orchestrator.init();
     await this.integrationEngine.init();
     await this.recoveryController.afterRuntimeInit();
+    const binding = await this.localRepositoryBindingState();
+    if (!binding.ok) this.logger.warn?.("desktop_repository_rebind_required", { projectId: binding.projectId, repositoryId: binding.repositoryId });
     this.watchdogCancel = this.timerRuntime.scheduleRecurring(WATCHDOG_NAME, { periodMinutes: 1 }, async () => {
       await this.schedulerEngine.tick({ reason: "desktop_watchdog" });
       await this.integrationEngine.tick({ reason: "desktop_watchdog" });
@@ -265,6 +283,10 @@ class DesktopHost {
   async execute(name, payload = {}) {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
     const command = String(name || "");
+    if (REPOSITORY_BOUNDARY_COMMANDS.has(command)) {
+      const binding = await this.localRepositoryBindingState();
+      if (!binding.ok) return jsonClone({ apiVersion: this.root.ORCHESTRATOR_API_VERSION, ...binding });
+    }
     const result = await this.orchestratorApi.execute(command, payload);
     if (result?.ok && command === "startProject") {
       const projectId = this.projectStore.getActiveProject()?.projectId;
@@ -295,4 +317,4 @@ async function createDesktopHost(options = {}) {
   return host;
 }
 
-module.exports = { DesktopHost, createDesktopHost, WATCHDOG_NAME };
+module.exports = { DesktopHost, createDesktopHost, WATCHDOG_NAME, REPOSITORY_BOUNDARY_COMMANDS };
