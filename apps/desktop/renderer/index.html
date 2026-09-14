@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" />
+  <title>ChatGPT Orchestra Desktop</title>
+  <link rel="stylesheet" href="../../../popup.css" />
+</head>
+<body class="dashboard-standalone-body">
+  <main class="panel dashboard-standalone-panel">
+    <header>
+      <h1>ChatGPT Orchestra · Desktop</h1>
+      <p>Portable Dashboard over the local Orchestrator API IPC boundary.</p>
+    </header>
+    <div id="orchestraDashboard"></div>
+  </main>
+  <script src="../../../dashboard/dashboard-app.js"></script>
+  <script src="desktop-transport.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
