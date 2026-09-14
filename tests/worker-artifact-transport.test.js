@@ -61,10 +61,13 @@ test("Worker artifact block is parsed separately while the final Orchestra event
   assert.equal(finalLine.includes("module.exports"), false);
 });
 
-test("bounded Worker artifact fits the authenticated companion frame budget", () => {
+test("maximum valid Worker change-set fits the authenticated companion frame budget", () => {
   const artifact = {
     format: "file-set-v1",
-    files: [{ path: "src/generated.txt", operation: "write", content: "x".repeat(96 * 1024) }]
+    files: [
+      { path: "src/a.txt", operation: "write", content: "a".repeat(48 * 1024) },
+      { path: "src/b.txt", operation: "write", content: "b".repeat(48 * 1024) }
+    ]
   };
   const signature = WorkerArtifactParser.artifactSignature(artifact);
   const message = {
