@@ -107,7 +107,7 @@ test("task packet is bounded, strips transcript/runtime state and carries depend
       || (Array.isArray(packet.repositoryContext?.modules) && packet.repositoryContext.modules.length <= 18),
     "repository context must be bounded or explicitly omitted for budget"
   );
-  assert.equal(packet.provenance.promptContractVersion, 4);
+  assert.equal(packet.provenance.promptContractVersion, 6);
 });
 
 test("same logical Worker role can be bootstrapped onto a different agent session", () => {
