@@ -15,6 +15,10 @@
       if (!this.bridge?.execute) return Promise.resolve({ apiVersion: 4, ok: false, reason: "desktop_bridge_unavailable" });
       return this.bridge.execute(String(name || ""), payload);
     }
+    selectRepositoryDirectory() {
+      if (!this.bridge?.selectRepositoryDirectory) return Promise.resolve({ ok: false, reason: "desktop_directory_picker_unavailable" });
+      return this.bridge.selectRepositoryDirectory();
+    }
   }
 
   root.DesktopDashboardTransport = DesktopDashboardTransport;
