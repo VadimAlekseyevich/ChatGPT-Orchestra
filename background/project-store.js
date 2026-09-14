@@ -1,6 +1,5 @@
 (() => {
   "use strict";
-
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const STORAGE_KEY = "orchestra.projects.v1";
   const SCHEMA_VERSION = 1;
@@ -25,9 +24,13 @@
     }
   }
 
-  function defaultState() {
-    return { schemaVersion: SCHEMA_VERSION, activeProjectId: null, projects: {}, updatedAt: 0 };
+  function normalizeRepositoryId(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const id = String(value).trim();
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) ? id : null;
   }
+
+  function defaultState() { return { schemaVersion: SCHEMA_VERSION, activeProjectId: null, projects: {}, updatedAt: 0 }; }
 
   class ProjectStore {
     constructor({ storageArea = globalThis.chrome?.storage?.local, clock = () => Date.now(), idFactory = null } = {}) {
@@ -37,38 +40,21 @@
       this.state = defaultState();
       this.writeChain = Promise.resolve();
     }
-
     async load() {
       if (!this.storageArea?.get) return this.snapshot();
       const stored = await this.storageArea.get(STORAGE_KEY);
       const candidate = stored?.[STORAGE_KEY];
-      if (candidate?.schemaVersion === SCHEMA_VERSION && candidate.projects && typeof candidate.projects === "object") {
-        this.state = { ...defaultState(), ...candidate, projects: { ...candidate.projects } };
-      }
+      if (candidate?.schemaVersion === SCHEMA_VERSION && candidate.projects && typeof candidate.projects === "object") this.state = { ...defaultState(), ...candidate, projects: { ...candidate.projects } };
       return this.snapshot();
     }
-
     snapshot() { return clone(this.state); }
     getProject(projectId) { return this.state.projects[projectId] ? clone(this.state.projects[projectId]) : null; }
     getActiveProject() { return this.state.activeProjectId ? this.getProject(this.state.activeProjectId) : null; }
-
     summary() {
       const project = this.getActiveProject();
       if (!project) return null;
-      return {
-        projectId: project.projectId,
-        status: project.status,
-        stage: project.stage,
-        repository: project.repository,
-        goal: project.initialGoal,
-        currentRunId: project.currentRunId || null,
-        taskCount: project.taskGraph?.tasks?.length || 0,
-        validation: project.validation || null,
-        execution: project.execution || null,
-        updatedAt: project.updatedAt
-      };
+      return { projectId: project.projectId, status: project.status, stage: project.stage, repository: project.repository, repositoryRuntime: project.repositoryRuntime || null, goal: project.initialGoal, currentRunId: project.currentRunId || null, taskCount: project.taskGraph?.tasks?.length || 0, validation: project.validation || null, execution: project.execution || null, updatedAt: project.updatedAt };
     }
-
     async persist() {
       this.state.updatedAt = this.clock();
       if (!this.storageArea?.set) return this.snapshot();
@@ -77,18 +63,16 @@
       await this.writeChain;
       return this.snapshot();
     }
-
-    async createProject({ goal, repositoryUrl }) {
+    async createProject({ goal, repositoryUrl, repositoryId = null }) {
       const normalizedGoal = String(goal || "").trim();
       const repository = normalizeRepositoryUrl(repositoryUrl);
+      const localRepositoryId = normalizeRepositoryId(repositoryId);
       if (normalizedGoal.length < 10) return { ok: false, reason: "goal_too_short" };
       if (normalizedGoal.length > 12000) return { ok: false, reason: "goal_too_long" };
       if (!repository) return { ok: false, reason: "invalid_repository_url" };
+      if (repositoryId !== null && repositoryId !== undefined && repositoryId !== "" && !localRepositoryId) return { ok: false, reason: "invalid_repository_id" };
       const active = this.getActiveProject();
-      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER", "COMPLETED_UNVERIFIED", "INTEGRATION_VERIFIED"].includes(active.status)) {
-        return { ok: false, reason: "active_project_in_progress", projectId: active.projectId };
-      }
-
+      if (active && !["READY", "FAILED", "CANCELLED", "NEEDS_USER", "COMPLETED_UNVERIFIED", "INTEGRATION_VERIFIED"].includes(active.status)) return { ok: false, reason: "active_project_in_progress", projectId: active.projectId };
       const now = this.clock();
       const projectId = this.idFactory();
       this.state.projects[projectId] = {
@@ -98,6 +82,7 @@
         stage: "BOOTSTRAP",
         initialGoal: normalizedGoal,
         repository,
+        repositoryRuntime: localRepositoryId ? { repositoryId: localRepositoryId } : null,
         artifacts: {},
         stageHistory: [],
         taskGraph: null,
@@ -111,83 +96,35 @@
       await this.persist();
       return { ok: true, project: this.getProject(projectId) };
     }
-
     async beginStage(projectId, { stage, runId }) {
-      const project = this.state.projects[projectId];
-      if (!project) return null;
-      project.status = "PLANNING";
-      project.stage = stage;
-      project.currentRunId = runId;
-      project.stageHistory.push({ stage, runId, status: "started", at: this.clock() });
-      project.updatedAt = this.clock();
-      await this.persist();
-      return this.getProject(projectId);
+      const project = this.state.projects[projectId]; if (!project) return null;
+      project.status = "PLANNING"; project.stage = stage; project.currentRunId = runId; project.stageHistory.push({ stage, runId, status: "started", at: this.clock() }); project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
-
     async completeStage(projectId, { stage, artifact }) {
-      const project = this.state.projects[projectId];
-      if (!project) return null;
+      const project = this.state.projects[projectId]; if (!project) return null;
       const runId = project.currentRunId;
       const alreadyCompleted = project.stageHistory.some((entry) => entry.stage === stage && entry.runId === runId && entry.status === "completed");
-      project.artifacts[stage] = clone(artifact);
-      if (!alreadyCompleted) project.stageHistory.push({ stage, runId, status: "completed", at: this.clock() });
-      project.updatedAt = this.clock();
-      await this.persist();
-      return this.getProject(projectId);
+      project.artifacts[stage] = clone(artifact); if (!alreadyCompleted) project.stageHistory.push({ stage, runId, status: "completed", at: this.clock() }); project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
-
     async setReady(projectId, taskGraph, validation) {
-      const project = this.state.projects[projectId];
-      if (!project) return null;
-      project.taskGraph = clone(taskGraph);
-      project.validation = clone(validation);
-      project.status = "READY";
-      project.stage = "READY";
-      project.currentRunId = null;
-      project.execution = null;
-      project.updatedAt = this.clock();
-      await this.persist();
-      return this.getProject(projectId);
+      const project = this.state.projects[projectId]; if (!project) return null;
+      project.taskGraph = clone(taskGraph); project.validation = clone(validation); project.status = "READY"; project.stage = "READY"; project.currentRunId = null; project.execution = null; project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
-
     async setExecutionStatus(projectId, status, details = null) {
-      const project = this.state.projects[projectId];
-      if (!project) return null;
-      const now = this.clock();
-      project.status = String(status || "RUNNING");
-      const stageByStatus = {
-        COMPLETED_UNVERIFIED: "REVIEW_REQUIRED",
-        READY_FOR_INTEGRATION: "REVIEW_COMPLETE",
-        INTEGRATING: "INTEGRATION",
-        INTEGRATION_REPAIRING: "INTEGRATION_REPAIR",
-        INTEGRATION_VERIFIED: "INTEGRATION_COMPLETE",
-        NEEDS_USER: "EXECUTION_BLOCKED"
-      };
-      project.stage = stageByStatus[project.status] || "EXECUTION";
-      project.currentRunId = null;
-      project.execution = {
-        status: project.status,
-        details: details && typeof details === "object" ? clone(details) : null,
-        updatedAt: now
-      };
-      project.updatedAt = now;
-      await this.persist();
-      return this.getProject(projectId);
+      const project = this.state.projects[projectId]; if (!project) return null;
+      const now = this.clock(); project.status = String(status || "RUNNING");
+      const stageByStatus = { COMPLETED_UNVERIFIED: "REVIEW_REQUIRED", READY_FOR_INTEGRATION: "REVIEW_COMPLETE", INTEGRATING: "INTEGRATION", INTEGRATION_REPAIRING: "INTEGRATION_REPAIR", INTEGRATION_VERIFIED: "INTEGRATION_COMPLETE", NEEDS_USER: "EXECUTION_BLOCKED" };
+      project.stage = stageByStatus[project.status] || "EXECUTION"; project.currentRunId = null; project.execution = { status: project.status, details: details && typeof details === "object" ? clone(details) : null, updatedAt: now }; project.updatedAt = now; await this.persist(); return this.getProject(projectId);
     }
-
     async fail(projectId, reason, details = null, status = "NEEDS_USER") {
-      const project = this.state.projects[projectId];
-      if (!project) return null;
-      project.status = status;
-      project.lastError = { reason: String(reason || "planning_failed"), details: clone(details), at: this.clock() };
-      project.updatedAt = this.clock();
-      await this.persist();
-      return this.getProject(projectId);
+      const project = this.state.projects[projectId]; if (!project) return null;
+      project.status = status; project.lastError = { reason: String(reason || "planning_failed"), details: clone(details), at: this.clock() }; project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
   }
 
   root.ProjectStore = ProjectStore;
   root.PROJECT_STORE_STORAGE_KEY = STORAGE_KEY;
   root.normalizeRepositoryUrl = normalizeRepositoryUrl;
-  if (typeof module !== "undefined" && module.exports) module.exports = { ProjectStore, STORAGE_KEY, normalizeRepositoryUrl };
+  root.normalizeRepositoryId = normalizeRepositoryId;
+  if (typeof module !== "undefined" && module.exports) module.exports = { ProjectStore, STORAGE_KEY, normalizeRepositoryUrl, normalizeRepositoryId };
 })();

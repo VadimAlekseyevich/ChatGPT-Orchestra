@@ -71,6 +71,7 @@
         }
 
         let planningArtifact = null;
+        let workerArtifact = null;
         let submittedEvent = parsed.event;
         if (String(parsed.event.taskId || "").startsWith("planning:") && parsed.event.event === "DONE") {
           const artifactResult = root.PlanningArtifactParser?.parsePlanningArtifact(snapshot.text);
@@ -85,9 +86,25 @@
           planningArtifact = artifactResult.artifact;
           submittedEvent = {
             ...parsed.event,
+            payload: { ...(parsed.event.payload || {}), artifactSignature: artifactResult.signature }
+          };
+        } else if (parsed.event.event === "DONE" && String(parsed.event.payload?.artifactFormat || "") === "file-set-v1") {
+          const artifactResult = root.WorkerArtifactParser?.parseWorkerArtifact(snapshot.text);
+          if (!artifactResult?.ok) {
+            this.messenger.send(root.MESSAGE_TYPES.PROTOCOL_ERROR, {
+              reason: artifactResult?.reason || "worker_artifact_parser_unavailable",
+              responseFingerprint: snapshot.fingerprint,
+              lastLine: parsed.lastLine
+            });
+            return;
+          }
+          workerArtifact = artifactResult.artifact;
+          submittedEvent = {
+            ...parsed.event,
             payload: {
               ...(parsed.event.payload || {}),
-              artifactSignature: artifactResult.signature
+              workerArtifactSignature: artifactResult.signature,
+              workerArtifactBytes: artifactResult.bytes
             }
           };
         }
@@ -97,7 +114,8 @@
           responseFingerprint: snapshot.fingerprint,
           pathname: snapshot.pathname,
           messageCount: snapshot.messageCount,
-          planningArtifact
+          planningArtifact,
+          workerArtifact
         });
         this.logger?.info?.("orchestra_protocol_event_submitted", {
           eventId: submittedEvent.eventId,

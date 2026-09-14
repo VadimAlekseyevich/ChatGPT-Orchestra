@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.15",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows. Alpha 15 adds contract conformance suites and CI release gates.",
-  "permissions": ["storage", "tabs", "alarms"],
+  "version_name": "2.0.0-alpha.16",
+  "description": "Multi-agent orchestration for ChatGPT coding workflows with a Phase 16 desktop control-plane checkpoint and Edge companion bridge.",
+  "permissions": ["storage", "tabs", "alarms", "nativeMessaging"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
     "service_worker": "background/service-worker.js"
@@ -24,6 +24,7 @@
       "content/message-types.js",
       "protocol/orchestra-protocol.js",
       "content/planning-artifact-parser.js",
+      "content/worker-artifact-parser.js",
       "content/generation-state.js",
       "content/protocol-parser.js",
       "content/assistant-message-reader.js",

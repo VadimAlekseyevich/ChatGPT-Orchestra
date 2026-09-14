@@ -3,6 +3,14 @@
 const { ensureDesktopPaths } = require("./app-data.js");
 const { StructuredLogger } = require("./structured-logger.js");
 const { loadDesktopCore } = require("./core-loader.js");
+const { DesktopRepositoryService } = require("./repository-service.js");
+const { createLocalPlanningEngine } = require("./local-planning-engine.js");
+const { LocalValidatingGitProvider } = require("./local-validating-git-provider.js");
+const { LocalIntegrationCoordinator } = require("./local-integration-coordinator.js");
+const { createLocalIntegrationEngine } = require("./local-integration-engine.js");
+const { createLocalReviewEngine } = require("./local-review-engine.js");
+const { createLocalSchedulerEngine } = require("./local-scheduler-engine.js");
+const { createLocalOrchestrator } = require("./local-orchestrator.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -22,6 +30,7 @@ class DesktopHost {
     agentRuntime = null,
     timerRuntime = null,
     gitProvider = null,
+    repositoryService = null,
     logger = null,
     clock = () => Date.now(),
     autoSeedFakeLead = true
@@ -36,7 +45,10 @@ class DesktopHost {
     this.stateStore = stateStore || new SQLiteStateStore({ filename: this.paths.stateDatabase, clock });
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
     this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.logger });
-    this.gitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
+    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock, logger: this.logger });
+    this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
+    this.gitProvider = new LocalValidatingGitProvider({ remoteProvider: this.remoteGitProvider, repositoryService: this.repositoryService, logger: this.logger });
+    this.localIntegrationCoordinator = new LocalIntegrationCoordinator({ repositoryService: this.repositoryService, clock, logger: this.logger });
     this.autoSeedFakeLead = autoSeedFakeLead;
     this.initialized = false;
     this.closed = false;
@@ -74,42 +86,49 @@ class DesktopHost {
     });
     root.ContextPackets.setDefaultService(this.contextPackets);
 
+    const LocalPlanningEngine = createLocalPlanningEngine(root.PlanningEngine);
+    const LocalIntegrationEngine = createLocalIntegrationEngine(root.RecoverableIntegrationEngine);
+    const LocalReviewEngine = createLocalReviewEngine(root.ReviewEngine);
+    const LocalSchedulerEngine = createLocalSchedulerEngine(root.SchedulerEngine);
+    const LocalOrchestrator = createLocalOrchestrator(root.ServiceWorkerOrchestrator);
     this.schedulerEngine = null;
-    this.planningEngine = new root.PlanningEngine({
+    this.planningEngine = new LocalPlanningEngine({
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
     });
-    this.reviewEngine = new root.ReviewEngine({
+    this.reviewEngine = new LocalReviewEngine({
       store: this.reviewStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
+      repositoryService: this.repositoryService,
       sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
       onSchedulerTick: (options) => this.schedulerEngine?.tick(options)
     });
-    this.integrationEngine = new root.RecoverableIntegrationEngine({
+    this.integrationEngine = new LocalIntegrationEngine({
       store: this.integrationStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
+      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
+      localIntegrationCoordinator: this.localIntegrationCoordinator
     });
-    this.schedulerEngine = new root.SchedulerEngine({
+    this.schedulerEngine = new LocalSchedulerEngine({
       store: this.schedulerStore,
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
       reviewEngine: this.reviewEngine,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
+      sendPrompt: (agentId, prompt) => this.sendWorkerPromptWithWorkspace(agentId, prompt)
     });
-    this.orchestrator = new root.ServiceWorkerOrchestrator({
+    this.orchestrator = new LocalOrchestrator({
       agentRuntime: this.agentRuntime,
       eventBus: this.eventBus,
       planningEngine: this.planningEngine,
@@ -170,8 +189,32 @@ class DesktopHost {
       observabilityService: this.observabilityService,
       taskControlService: this.taskControlService,
       contextStore: this.contextStore,
-      contextPackets: this.contextPackets
+      contextPackets: this.contextPackets,
+      repositoryService: this.repositoryService
     });
+  }
+
+  async sendWorkerPromptWithWorkspace(agentId, prompt) {
+    const agent = this.agentRuntime.getAgent?.(agentId) || null;
+    const context = agent?.protocolContext || null;
+    const run = context?.runId ? this.schedulerStore.getRun?.(context.runId) : null;
+    const taskState = context?.taskId ? this.schedulerStore.getTask?.(context.taskId) : null;
+    const project = this.projectStore.getActiveProject?.() || null;
+    if (run && taskState && project && this.gitProvider?.prepareRun) {
+      const task = taskState.definition || taskState;
+      const prepared = await this.gitProvider.prepareRun({ project, task, run, snapshot: this.schedulerStore.getGitSnapshot?.() || null });
+      if (!prepared?.ok) return { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
+      if (!prepared.skipped) {
+        await this.schedulerStore.logDecision?.("task_workspace_prepared", {
+          taskId: task.id,
+          runId: run.runId,
+          workspaceId: prepared.workspaceId,
+          created: prepared.created === true,
+          recovered: prepared.recovered === true
+        });
+      }
+    }
+    return this.agentRuntime.sendPrompt(agentId, prompt);
   }
 
   async seedFakeLead() {
@@ -223,7 +266,6 @@ class DesktopHost {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
     const command = String(name || "");
     const result = await this.orchestratorApi.execute(command, payload);
-
     if (result?.ok && command === "startProject") {
       const projectId = this.projectStore.getActiveProject()?.projectId;
       if (projectId) await this.recoveryController.attachProject(projectId, "project_started");
@@ -232,12 +274,8 @@ class DesktopHost {
       const projectId = this.projectStore.getActiveProject()?.projectId;
       if (projectId && this.recoveryStore.summary().projectId !== projectId) await this.recoveryController.attachProject(projectId, "execution_started");
     }
-    if (result?.ok && ["startExecution", "resume", "createWorkers"].includes(command)) {
-      await this.readyFakeWorkers(command);
-    }
-    if (!(command === "importProjectBundle" && result?.ok && result?.reloadRequired)) {
-      await this.recoveryController.tick({ reason: `desktop_api:${command || "unknown"}` });
-    }
+    if (result?.ok && ["startExecution", "resume", "createWorkers"].includes(command)) await this.readyFakeWorkers(command);
+    if (!(command === "importProjectBundle" && result?.ok && result?.reloadRequired)) await this.recoveryController.tick({ reason: `desktop_api:${command || "unknown"}` });
     return jsonClone(result);
   }
 

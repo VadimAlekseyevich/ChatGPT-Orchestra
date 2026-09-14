@@ -8,6 +8,7 @@
   const DEFAULT_MAX_REJECTIONS = 250;
   const DEFAULT_MAX_PROCESSED = 10000;
   const MAX_PLANNING_ARTIFACT_LENGTH = 262144;
+  const MAX_WORKER_ARTIFACT_LENGTH = 192 * 1024;
 
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -31,13 +32,21 @@
       payload: event.payload || {}
     });
   }
-  function normalizePlanningArtifact(value) {
+  function normalizeBoundedArtifact(value, maxLength) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     try {
       const encoded = JSON.stringify(value);
-      if (encoded.length > MAX_PLANNING_ARTIFACT_LENGTH) return null;
+      if (encoded.length > maxLength) return null;
       return clone(value);
     } catch (_) { return null; }
+  }
+  function normalizePlanningArtifact(value) {
+    return normalizeBoundedArtifact(value, MAX_PLANNING_ARTIFACT_LENGTH);
+  }
+  function normalizeWorkerArtifact(value) {
+    const artifact = normalizeBoundedArtifact(value, MAX_WORKER_ARTIFACT_LENGTH);
+    if (!artifact || String(artifact.format || "") !== "file-set-v1" || !Array.isArray(artifact.files)) return null;
+    return artifact;
   }
   function normalizeRuntimeSource(value) {
     if (!value || typeof value !== "object") return null;
@@ -52,6 +61,7 @@
       pathname: String(source?.pathname || "").slice(0, 1024),
       messageCount: Math.max(0, Number(source?.messageCount) || 0),
       planningArtifact: normalizePlanningArtifact(source?.planningArtifact),
+      workerArtifact: normalizeWorkerArtifact(source?.workerArtifact),
       runtime: normalizeRuntimeSource(source?.runtime)
     };
   }
@@ -187,6 +197,6 @@
   root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact, normalizeRuntimeSource };
+    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact, normalizeWorkerArtifact, normalizeRuntimeSource, MAX_WORKER_ARTIFACT_LENGTH };
   }
 })();

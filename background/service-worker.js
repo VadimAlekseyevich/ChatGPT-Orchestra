@@ -10,6 +10,11 @@ importScripts(
   "../context/context-packets.js",
   "../platform/contracts.js",
   "../platform/extension-runtime.js",
+  "../platform/companion-protocol.js",
+  "../platform/companion-rpc.js",
+  "../platform/native-messaging-transport.js",
+  "../platform/extension-companion-endpoint.js",
+  "../platform/extension-companion-mode.js",
   "../platform/transactional-state-store.js",
   "../persistence/migration-registry.js",
   "../persistence/portable-state.js",
@@ -80,6 +85,14 @@ const gitProvider = new root.GitProvider.GitHubRestProvider();
 const timerRuntime = new root.ChromeAlarmRuntime({ chromeApi: chrome });
 root.PlatformContracts.assertTimerRuntime(timerRuntime);
 const persistenceInfo = () => ({ backend: "chrome.storage.local", transactionalWrapper: true });
+
+const companionController = new root.ExtensionCompanionModeController({
+  chromeApi: chrome,
+  storageArea: chrome.storage.local,
+  agentRuntime,
+  timerRuntime,
+  logger: console
+});
 
 const contextPackets = new root.ContextPackets.ContextPacketService({
   contextStore,
@@ -189,16 +202,56 @@ const orchestratorApi = new root.OrchestratorApi({
   contextPackets
 });
 
-function initializeRuntime() {
-  return Promise.resolve(contextPackets.init())
-    .then(() => recoveryController.prepareForBoot())
-    .then(() => orchestrator.init())
-    .then(() => integrationEngine.init())
-    .then(() => recoveryController.afterRuntimeInit());
+const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
+const MIGRATION_SAFE_RECOVERY_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
+let localRuntimeInitialized = false;
+let localRuntimeActive = false;
+let watchdogCancel = null;
+let portableReloadPending = false;
+
+async function startWatchdog() {
+  if (watchdogCancel) return;
+  watchdogCancel = timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => {
+    if (!localRuntimeActive || portableReloadPending || companionController.isEnabled()) return;
+    return Promise.resolve()
+      .then(() => schedulerEngine.tick({ reason: "watchdog_alarm" }))
+      .then(() => integrationEngine.tick({ reason: "watchdog_alarm" }))
+      .then(() => recoveryController.tick({ reason: "watchdog_alarm" }))
+      .catch((error) => console.warn("[ChatGPT Orchestra] watchdog_failed", error));
+  });
+}
+
+async function suspendLocalRuntime() {
+  localRuntimeActive = false;
+  const cancel = watchdogCancel;
+  watchdogCancel = null;
+  if (cancel) await cancel();
+}
+
+async function initializeLocalRuntime() {
+  if (!localRuntimeInitialized) {
+    await contextPackets.init();
+    await recoveryController.prepareForBoot();
+    await orchestrator.init();
+    await integrationEngine.init();
+    await recoveryController.afterRuntimeInit();
+    localRuntimeInitialized = true;
+  }
+  localRuntimeActive = true;
+  await startWatchdog();
+  return { mode: "extension", active: true };
+}
+
+async function initializeRuntime() {
+  const companion = await companionController.load();
+  if (companion.enabled) {
+    await suspendLocalRuntime();
+    return { mode: "companion", companion };
+  }
+  return initializeLocalRuntime();
 }
 
 let readyPromise = initializeRuntime();
-let portableReloadPending = false;
 
 function withReady(callback) {
   return Promise.resolve(readyPromise)
@@ -210,8 +263,82 @@ function withReady(callback) {
     .then(callback);
 }
 
+async function stageActiveProjectMigration() {
+  if (companionController.isEnabled()) return { ok: false, reason: "companion_migration_requires_extension_mode" };
+  if (!localRuntimeActive) await initializeLocalRuntime();
+  const projectId = projectStore.getActiveProject()?.projectId || null;
+  if (!projectId) return { ok: false, reason: "companion_migration_project_missing" };
+
+  const recovery = recoveryStore.summary?.() || {};
+  const recoveryStatus = String(recovery.status || "IDLE");
+  if (!MIGRATION_SAFE_RECOVERY_STATES.has(recoveryStatus)) {
+    return { ok: false, reason: "companion_migration_requires_safe_point", recoveryStatus };
+  }
+
+  const exported = await projectBundleService.exportBundle({ projectId });
+  if (!exported?.ok) return exported || { ok: false, reason: "project_bundle_export_failed" };
+  const staged = await companionController.stageMigrationBundle(exported.serialized);
+  return staged?.ok
+    ? { ...staged, bundleBytes: exported.bytes || 0, filename: exported.filename || null }
+    : staged;
+}
+
+async function handleCompanionControl(message) {
+  const TYPES = root.MESSAGE_TYPES;
+  if (message?.type === TYPES.COMPANION_GET_STATUS) {
+    if (companionController.isEnabled()) await companionController.ensureConnected({ throwOnFailure: false });
+    return { ok: true, companion: companionController.getStatus(), localRuntimeActive };
+  }
+  if (message?.type === TYPES.COMPANION_GET_MIGRATION_STATUS) {
+    try {
+      const migration = await companionController.getMigrationStatus();
+      return { ok: true, migration };
+    } catch (error) {
+      return { ok: false, reason: "companion_migration_status_unavailable", message: error?.message || String(error) };
+    }
+  }
+  if (message?.type === TYPES.COMPANION_MIGRATE_PROJECT) return stageActiveProjectMigration();
+  if (message?.type === TYPES.COMPANION_ENABLE) {
+    const companion = await companionController.setEnabled(true);
+    if (!companion.enabled) {
+      return { ok: false, reason: companion.reason || "companion_enable_rejected", companion, localRuntimeActive };
+    }
+    await suspendLocalRuntime();
+    return { ok: true, companion, localRuntimeActive: false };
+  }
+  if (message?.type === TYPES.COMPANION_DISABLE) {
+    const companion = await companionController.setEnabled(false);
+    await initializeLocalRuntime();
+    return { ok: true, companion, localRuntimeActive: true };
+  }
+  if (message?.type === TYPES.COMPANION_RECONNECT) {
+    const companion = await companionController.reconnect();
+    return { ok: true, companion, localRuntimeActive };
+  }
+  return null;
+}
+
+async function companionUnavailable() {
+  const status = await companionController.ensureConnected({ throwOnFailure: false });
+  if (status.connected) return null;
+  return { ok: false, reason: "companion_disconnected", companion: status };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
+    const control = await handleCompanionControl(message);
+    if (control) return control;
+
+    if (companionController.isEnabled()) {
+      const unavailable = await companionUnavailable();
+      if (unavailable) return unavailable;
+      const senderContext = agentRuntime.normalizeSender(sender);
+      return senderContext.sessionId
+        ? companionController.forwardRuntimeMessage(message, sender)
+        : companionController.forwardApiMessage(message, sender);
+    }
+
+    if (!localRuntimeActive) await initializeLocalRuntime();
     if (portableReloadPending) return { ok: false, reason: "portable_reload_pending" };
     const senderContext = agentRuntime.normalizeSender(sender);
     const genericCommand = message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE ? String(message?.payload?.name || "") : "";
@@ -255,16 +382,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then((result) => sendResponse(result))
     .catch((error) => sendResponse({
       ok: false,
-      reason: "service_worker_exception",
-      message: error?.message || String(error)
+      reason: companionController.isEnabled() ? "companion_bridge_exception" : "service_worker_exception",
+      message: error?.message || String(error),
+      companion: companionController.isEnabled() ? companionController.getStatus() : undefined
     }));
   return true;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (portableReloadPending) return;
+  if (portableReloadPending && !companionController.isEnabled()) return;
   withReady(async () => {
     const sessionId = String(tabId);
+    if (companionController.isEnabled()) {
+      const unavailable = await companionUnavailable();
+      if (!unavailable) await companionController.forwardSessionRemoved(sessionId);
+      return;
+    }
+    if (!localRuntimeActive) await initializeLocalRuntime();
     const agent = agentRuntime.getAgentBySessionId(sessionId);
     await orchestrator.handleSessionRemoved(sessionId);
     if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
@@ -275,27 +409,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (portableReloadPending) return;
+  if (portableReloadPending && !companionController.isEnabled()) return;
   withReady(async () => {
     const sessionId = String(tabId);
     const session = { id: sessionId, url: tab?.url || changeInfo?.url || "", active: Boolean(tab?.active) };
+    if (companionController.isEnabled()) {
+      const unavailable = await companionUnavailable();
+      if (!unavailable) await companionController.forwardSessionUpdated(sessionId, changeInfo, session);
+      return;
+    }
+    if (!localRuntimeActive) await initializeLocalRuntime();
     await orchestrator.handleSessionUpdated(sessionId, changeInfo, session);
     const agent = agentRuntime.getAgentBySessionId(sessionId);
     if (agent) await integrationEngine.handleAgentStateChanged(agent);
     await recoveryController.tick({ reason: "session_updated" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] session_updated_handler_failed", error);
-  });
-});
-
-const SCHEDULER_WATCHDOG_ALARM = "orchestra-scheduler-watchdog";
-timerRuntime.scheduleRecurring(SCHEDULER_WATCHDOG_ALARM, { periodMinutes: 1 }, () => {
-  if (portableReloadPending) return;
-  return withReady(async () => {
-    await schedulerEngine.tick({ reason: "watchdog_alarm" });
-    await integrationEngine.tick({ reason: "watchdog_alarm" });
-    await recoveryController.tick({ reason: "watchdog_alarm" });
-  }).catch((error) => {
-    console.warn("[ChatGPT Orchestra] watchdog_failed", error);
   });
 });

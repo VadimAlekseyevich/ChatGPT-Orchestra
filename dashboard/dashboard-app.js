@@ -65,6 +65,7 @@
       this.download = download;
       this.confirmAction = confirmAction || ((message) => typeof globalThis.confirm === "function" ? globalThis.confirm(message) : false);
       this.dashboard = null;
+      this.localRepository = null;
       this.warningFilter = "info";
       this.timer = null;
       this.refreshing = false;
@@ -95,6 +96,13 @@
         const response = await this.transport.query("dashboard", { eventLimit: 60, decisionLimit: 60, minimumSeverity: "info" });
         if (!response?.ok) throw new Error(response?.reason || "dashboard_query_failed");
         this.dashboard = response.dashboard;
+        const repositoryId = this.dashboard?.project?.repositoryRuntime?.repositoryId || null;
+        this.localRepository = null;
+        if (repositoryId) {
+          const repository = await this.transport.query("repository", { repositoryId });
+          if (repository?.ok) this.localRepository = repository.repository || null;
+          else if (repository?.reason !== "repository_not_registered" && repository?.reason !== "unknown_api_query") throw new Error(repository?.reason || "repository_query_failed");
+        }
         this.lastError = null;
       } catch (error) {
         this.lastError = error?.message || String(error);
@@ -174,6 +182,15 @@
     renderProject(project, d) {
       if (!project) return `<section class="dashboard-section"><h3>Project</h3><p class="dashboard-muted">No active project.</p></section>`;
       const git = d.scheduler?.git || {};
+      const repositoryId = project.repositoryRuntime?.repositoryId || null;
+      const trust = this.localRepository?.trust || null;
+      const localControls = repositoryId ? `
+        <div class="dashboard-task-controls">
+          ${trust === "TRUSTED"
+            ? `<button class="secondary" data-dashboard-action="disableLocalExecution" data-repository-id="${escapeHtml(repositoryId)}">Disable Local Execution</button>`
+            : `<button data-dashboard-action="enableLocalExecution" data-repository-id="${escapeHtml(repositoryId)}">Enable Local Execution</button>`}
+          <small>${trust === "TRUSTED" ? "Repository-defined argv commands may run inside Orchestra worktrees." : "Repository-defined commands are blocked until you explicitly trust this repository."}</small>
+        </div>` : "";
       return `<section class="dashboard-section">
         <div class="dashboard-section-head"><h3>Project</h3>${statusBadge(project.status)}</div>
         <p class="dashboard-goal">${escapeHtml(project.goal || "")}</p>
@@ -182,7 +199,9 @@
           <span>Base</span><strong>${escapeHtml(git.defaultBranch || "—")}@${escapeHtml(shortSha(git.baseSha))}</strong>
           <span>Stage</span><strong>${escapeHtml(project.stage || "—")}</strong>
           <span>Persistence</span><strong>${escapeHtml(d.persistence?.backend || "unknown")} · schema ${escapeHtml(d.persistence?.portableSchemaVersion || "?")}</strong>
+          ${repositoryId ? `<span>Local execution</span><strong>${escapeHtml(trust || "UNAVAILABLE")}</strong>` : ""}
         </div>
+        ${localControls}
       </section>`;
     }
 
@@ -298,10 +317,21 @@
       if (!button || button.disabled) return;
       const action = button.dataset.dashboardAction;
       const taskId = button.dataset.taskId;
+      const repositoryId = button.dataset.repositoryId;
       if (action === "refresh") return this.refresh();
       if (["pause", "resume", "stopNow", "startIntegration"].includes(action)) return this.command(action);
       if (action === "exportProject") return this.exportBundle("exportProjectBundle");
       if (action === "exportDebug") return this.exportBundle("exportDebugBundle");
+      if (action === "enableLocalExecution") {
+        if (!repositoryId) return;
+        const confirmed = this.confirmAction("Trust this repository to run its structured local verification commands inside isolated Orchestra worktrees? Only enable this for repositories you trust.");
+        if (!confirmed) return;
+        return this.command("setRepositoryTrust", { repositoryId, trust: "TRUSTED" });
+      }
+      if (action === "disableLocalExecution") {
+        if (!repositoryId) return;
+        return this.command("setRepositoryTrust", { repositoryId, trust: "UNTRUSTED" });
+      }
       if (action === "openExecutor") return this.command("openExecutor", { agentId: button.dataset.agentId });
       if (action === "retryTask") return this.command("retryTask", { taskId });
       if (action === "requestReview") return this.command("requestReview", { taskId });
