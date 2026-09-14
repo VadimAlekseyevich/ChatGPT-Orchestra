@@ -61,7 +61,7 @@ jobs:
         run: npm run desktop:dist:win
       - name: Stage fallback extension
         run: npm run extension:stage-alpha
-      - name: Require valid Authenticode signatures
+      - name: Require valid build identity and Authenticode signatures
         shell: pwsh
         run: ./scripts/verify-windows-alpha.ps1 -RequireSignature
       - name: Record validated manual release evidence
@@ -87,6 +87,7 @@ jobs:
           retention-days: 30
           path: |
             dist/desktop/*.exe
+            dist/desktop/alpha-build-evidence.json
             dist/desktop/alpha-signature-evidence.json
             dist/desktop/alpha-manual-evidence.json
             dist/desktop/win-unpacked
