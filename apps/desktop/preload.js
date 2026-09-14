@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const IPC_QUERY_CHANNEL = "orchestra:query";
 const IPC_EXECUTE_CHANNEL = "orchestra:execute";
 const IPC_SELECT_REPOSITORY_DIRECTORY = "orchestra:select-repository-directory";
+const IPC_RESTART_APPLICATION = "orchestra:restart-application";
 
 function clone(value) {
   if (value === undefined) return {};
@@ -19,11 +20,15 @@ contextBridge.exposeInMainWorld("orchestraDesktop", Object.freeze({
   },
   selectRepositoryDirectory() {
     return ipcRenderer.invoke(IPC_SELECT_REPOSITORY_DIRECTORY);
+  },
+  restartApplication() {
+    return ipcRenderer.invoke(IPC_RESTART_APPLICATION);
   }
 }));
 
 module.exports = {
   IPC_QUERY_CHANNEL,
   IPC_EXECUTE_CHANNEL,
-  IPC_SELECT_REPOSITORY_DIRECTORY
+  IPC_SELECT_REPOSITORY_DIRECTORY,
+  IPC_RESTART_APPLICATION
 };
