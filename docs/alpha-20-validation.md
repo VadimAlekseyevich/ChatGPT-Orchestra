@@ -38,21 +38,23 @@ The release contract contains exactly the 17 scenarios from the roadmap. Automat
 
 A01 and A11 must each be recorded as a separate comment on an issue in this repository. The final workflow input must be the exact **GitHub issue-comment permalink** (`https://github.com/VadimAlekseyevich/ChatGPT-Orchestra/issues/<n>#issuecomment-<id>`), not free-form text, a screenshot-only reference, a generic issue URL, or `todo/pending` text. A01 and A11 must use distinct comment permalinks.
 
+The signed release workflow has read-only issue access and fetches the referenced comments before any signing/build work. It validates the structured fields below, rejects placeholders/failing fields/version drift, and records each validated comment's author/timestamps plus a SHA-256 hash of its body in `alpha-manual-evidence.json`. This prevents a permalink that merely exists from satisfying the gate. It still does not prove that a human statement is truthful; the actual clean-profile login and real OS reboot remain manual responsibilities.
+
 Recommended A01 comment body:
 
 ```text
 Scenario: A01
 Result: PASS
 Alpha version: 2.0.0-alpha.20
-Windows version: <version/build>
-Fresh profile: <clean Windows user or disposable VM; no existing Orchestra app-data>
+Windows version: <replace with version/build>
+Fresh profile: <replace with clean Windows user or disposable VM condition; no existing Orchestra app-data>
 Install/launch: PASS
 ChatGPT interactive login: PASS
 Lead registration/readiness: PASS
 Export privacy check: PASS — no credentials/cookies/browser-profile paths/runtime identifiers
-Tester: <name/reference>
-Timestamp UTC: <ISO-8601>
-Notes/evidence attachments: <optional>
+Tester: <replace with tester name/reference>
+Timestamp UTC: <replace with ISO-8601 UTC timestamp ending in Z>
+Notes/evidence attachments: <optional; replace or remove>
 ```
 
 Recommended A11 comment body:
@@ -61,21 +63,21 @@ Recommended A11 comment body:
 Scenario: A11
 Result: PASS
 Alpha version: 2.0.0-alpha.20
-Project/repository reference: <non-secret reference>
-State before OS restart: <project status + task/run references>
-Pre-restart systemBootTimeUtc: <dashboard.persistence.runtimeEvidence.systemBootTimeUtc>
+Project/repository reference: <replace with non-secret reference>
+State before OS restart: <replace with project status + task/run references>
+Pre-restart systemBootTimeUtc: <replace with dashboard.persistence.runtimeEvidence.systemBootTimeUtc>
 Real OS restart performed: PASS
-Post-restart systemBootTimeUtc: <must differ from pre-restart value>
-State after relaunch/reconciliation: <status + recovered task/run references>
+Post-restart systemBootTimeUtc: <replace with later post-reboot value>
+State after relaunch/reconciliation: <replace with status + recovered task/run references>
 Resume result: PASS
 Duplicate irreversible side effects check: PASS
 Worktree/state preservation: PASS
-Tester: <name/reference>
-Timestamp UTC: <ISO-8601>
-Notes/evidence attachments: <optional>
+Tester: <replace with tester name/reference>
+Timestamp UTC: <replace with ISO-8601 UTC timestamp ending in Z>
+Notes/evidence attachments: <optional; replace or remove>
 ```
 
-The workflow validates that both inputs are distinct comment permalinks in this repository. That validation makes the release evidence auditable, but it does **not** magically prove the real-world steps happened; the tester/release operator is still responsible for truthful PASS evidence.
+Before posting evidence, replace every angle-bracket placeholder. The validator rejects placeholder values such as `<...>`, `todo`, `pending`, and `tbd`.
 
 ## Manual A01 procedure
 
@@ -93,27 +95,30 @@ dashboard.persistence.runtimeEvidence.systemBootTimeUtc
 
 Then perform an actual operating-system restart. Merely closing/reopening Orchestra, killing its process, signing out/in, or restarting only the managed browser does not satisfy A11.
 
-Relaunch Orchestra from the same packaged alpha build. The app must load persisted SQLite/project state, keep dispatch closed until reconciliation completes, recover or safely replace browser/Worker state, preserve local worktrees, and resume without repeating an irreversible merge/push/commit effect. Export a second debug bundle after relaunch. Its `dashboard.persistence.runtimeEvidence.systemBootTimeUtc` must differ from the pre-reboot value. Because the value is derived from operating-system uptime and rounded to a minute, ordinary Orchestra restarts during the same Windows boot retain the same value while an actual reboot changes it.
+Relaunch Orchestra from the same packaged alpha build. The app must load persisted SQLite/project state, keep dispatch closed until reconciliation completes, recover or safely replace browser/Worker state, preserve local worktrees, and resume without repeating an irreversible merge/push/commit effect. Export a second debug bundle after relaunch. Its `dashboard.persistence.runtimeEvidence.systemBootTimeUtc` must be later than the pre-reboot value. Because the value is derived from operating-system uptime and rounded to a minute, ordinary Orchestra restarts during the same Windows boot retain the same value while an actual reboot changes it.
 
 Record at minimum: alpha version, project/repository reference, pre/post `systemBootTimeUtc`, state before restart, state after relaunch, recovery decision, resumed run/task identities, verification that no duplicate irreversible side effect occurred, timestamp, and tester identity/reference. Runtime evidence intentionally contains only platform, architecture, OS release and boot time; it does not contain hostname, username, filesystem path or credentials.
 
 ## Signed release validation
 
-Final distribution uses the manual GitHub Actions workflow **Alpha Release Validation** (`.github/workflows/alpha-release.yml`). It requires A01 and A11 GitHub issue-comment permalinks as workflow inputs and a real Windows code-signing certificate supplied through repository secrets `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD`.
+Final distribution uses the manual GitHub Actions workflow **Alpha Release Validation** (`.github/workflows/alpha-release.yml`). Run it from `main`. It requires A01 and A11 GitHub issue-comment permalinks as workflow inputs and a real Windows code-signing certificate supplied through repository secrets `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD`.
 
-The workflow first validates both evidence references with:
+The workflow validates both reference shape and comment contents with:
 
 ```text
 node scripts/validate-alpha-evidence-reference.js A01 <A01-comment-permalink> A11 <A11-comment-permalink>
+node scripts/validate-alpha-evidence-comments.js A01 <A01-comment-permalink> A11 <A11-comment-permalink>
 ```
 
-It then reruns `npm run test:alpha`, builds the Windows NSIS installer, stages the fallback extension, and executes:
+The second validator reads the exact GitHub comments through the workflow's read-only `issues: read` permission. For A01 it requires the clean-profile/install/login/Lead/privacy fields to pass. For A11 it requires the reboot/recovery fields to pass and requires `Post-restart systemBootTimeUtc` to be later than `Pre-restart systemBootTimeUtc`.
+
+The workflow then reruns `npm run test:alpha`, builds the Windows NSIS installer, stages the fallback extension, and executes:
 
 ```text
 ./scripts/verify-windows-alpha.ps1 -RequireSignature
 ```
 
-Both the unpacked `ChatGPT Orchestra.exe` and the installer must report **Authenticode=Valid** with a signer certificate. `NotSigned` is acceptable only for ordinary PR/CI candidate artifacts; it blocks the signed release validation workflow. The strict workflow uploads `chatgpt-orchestra-alpha20-signed-windows` plus signature evidence and the supplied manual evidence references. It does not create a GitHub tag or release automatically.
+Both the unpacked `ChatGPT Orchestra.exe` and the installer must report **Authenticode=Valid** with a signer certificate. `NotSigned` is acceptable only for ordinary PR/CI candidate artifacts; it blocks the signed release validation workflow. The strict workflow uploads `chatgpt-orchestra-alpha20-signed-windows` plus signature evidence and the validated manual evidence manifest. It does not create a GitHub tag or release automatically.
 
 Do not enable `PUBLISH_FOR_PULL_REQUEST=true` to expose release credentials to PR builds. Release signing stays isolated from pull-request CI.
 
