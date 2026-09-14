@@ -30,7 +30,7 @@ test("DesktopHost boots the real Core behind injected portable adapters", async 
   const state = await host.query("state");
   const persistence = await host.query("persistence");
   const dashboard = await host.query("dashboard", { eventLimit: 1, decisionLimit: 1 });
-  const debug = await host.query("debugBundle", { eventLimit: 1, decisionLimit: 1 });
+  const debug = await host.execute("exportDebugBundle", { eventLimit: 1, decisionLimit: 1 });
   assert.equal(state.apiVersion, 4);
   assert.equal(state.ok, true);
   assert.equal(state.state.lead.role, "lead");
