@@ -12,6 +12,7 @@ const {
 const ALPHA_VERSION = "2.0.0-alpha.20";
 const PLACEHOLDER = /(?:<[^>]+>|\b(?:todo|pending|tbd)\b)/i;
 const UTC_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const COMMIT_PATTERN = /^[a-f0-9]{40}$/i;
 
 function parseEvidenceFields(body) {
   const fields = new Map();
@@ -27,6 +28,11 @@ function parseEvidenceFields(body) {
 
 function invalid(reason) {
   return { ok: false, reason };
+}
+
+function normalizedCommit(value) {
+  const commit = String(value || "").trim();
+  return COMMIT_PATTERN.test(commit) ? commit.toLowerCase() : null;
 }
 
 function valueFor(fields, name) {
@@ -56,7 +62,18 @@ function requireUtc(fields, scenarioId, name) {
   return { ok: true, value: result.value, timestamp: Date.parse(result.value) };
 }
 
-function validateCommon(fields, scenarioId) {
+function requireBuildCommit(fields, scenarioId, expectedCommit = null) {
+  const result = requireValue(fields, scenarioId, "Build commit");
+  if (!result.ok) return result;
+  const commit = normalizedCommit(result.value);
+  if (!commit) return invalid(`alpha_manual_evidence_build_commit_invalid:${scenarioId}`);
+  const expected = normalizedCommit(expectedCommit);
+  if (expectedCommit && !expected) return invalid("alpha_manual_evidence_expected_commit_invalid");
+  if (expected && commit !== expected) return invalid(`alpha_manual_evidence_build_commit_mismatch:${scenarioId}`);
+  return { ok: true, value: commit };
+}
+
+function validateCommon(fields, scenarioId, { expectedCommit = null } = {}) {
   const scenario = requireValue(fields, scenarioId, "Scenario");
   if (!scenario.ok) return scenario;
   if (scenario.value.toUpperCase() !== scenarioId) return invalid(`alpha_manual_evidence_scenario_mismatch:${scenarioId}`);
@@ -68,18 +85,21 @@ function validateCommon(fields, scenarioId) {
   if (!version.ok) return version;
   if (version.value !== ALPHA_VERSION) return invalid(`alpha_manual_evidence_version_mismatch:${scenarioId}`);
 
+  const buildCommit = requireBuildCommit(fields, scenarioId, expectedCommit);
+  if (!buildCommit.ok) return buildCommit;
+
   const tester = requireValue(fields, scenarioId, "Tester");
   if (!tester.ok) return tester;
   const timestamp = requireUtc(fields, scenarioId, "Timestamp UTC");
   if (!timestamp.ok) return timestamp;
-  return { ok: true, tester: tester.value, timestampUtc: timestamp.value };
+  return { ok: true, tester: tester.value, timestampUtc: timestamp.value, buildCommit: buildCommit.value };
 }
 
-function validateEvidenceCommentBody(scenarioId, body) {
+function validateEvidenceCommentBody(scenarioId, body, { expectedCommit = null } = {}) {
   const id = String(scenarioId || "").trim().toUpperCase();
   if (!new Set(["A01", "A11"]).has(id)) return invalid(`alpha_manual_evidence_scenario_invalid:${id || "missing"}`);
   const fields = parseEvidenceFields(body);
-  const common = validateCommon(fields, id);
+  const common = validateCommon(fields, id, { expectedCommit });
   if (!common.ok) return common;
 
   if (id === "A01") {
@@ -94,7 +114,7 @@ function validateEvidenceCommentBody(scenarioId, body) {
     const privacy = requireValue(fields, id, "Export privacy check");
     if (!privacy.ok) return privacy;
     if (!/^PASS(?:\b|\s|—|-)/i.test(privacy.value)) return invalid(`alpha_manual_evidence_field_not_pass:${id}:Export privacy check`);
-    return { ok: true, scenarioId: id, tester: common.tester, timestampUtc: common.timestampUtc };
+    return { ok: true, scenarioId: id, tester: common.tester, timestampUtc: common.timestampUtc, buildCommit: common.buildCommit };
   }
 
   for (const name of ["Project/repository reference", "State before OS restart", "State after relaunch/reconciliation"]) {
@@ -116,6 +136,7 @@ function validateEvidenceCommentBody(scenarioId, body) {
     scenarioId: id,
     tester: common.tester,
     timestampUtc: common.timestampUtc,
+    buildCommit: common.buildCommit,
     preRestartSystemBootTimeUtc: before.value,
     postRestartSystemBootTimeUtc: after.value
   };
@@ -139,12 +160,19 @@ async function fetchComment(reference, { token, fetchImpl = globalThis.fetch } =
   return comment;
 }
 
-async function validateEvidenceComments(args, { token = process.env.GITHUB_TOKEN, fetchImpl = globalThis.fetch, clock = () => Date.now() } = {}) {
+async function validateEvidenceComments(args, {
+  token = process.env.GITHUB_TOKEN,
+  fetchImpl = globalThis.fetch,
+  clock = () => Date.now(),
+  expectedCommit = process.env.ALPHA_EXPECTED_COMMIT || process.env.GITHUB_SHA
+} = {}) {
+  const commit = normalizedCommit(expectedCommit);
+  if (!commit) throw new Error("alpha_manual_evidence_expected_commit_missing_or_invalid");
   const references = validateCliArgs(args);
   const scenarios = [];
   for (const reference of references) {
     const comment = await fetchComment(reference, { token, fetchImpl });
-    const validation = validateEvidenceCommentBody(reference.scenarioId, comment?.body || "");
+    const validation = validateEvidenceCommentBody(reference.scenarioId, comment?.body || "", { expectedCommit: commit });
     if (!validation.ok) throw new Error(validation.reason);
     scenarios.push({
       scenarioId: reference.scenarioId,
@@ -159,8 +187,9 @@ async function validateEvidenceComments(args, { token = process.env.GITHUB_TOKEN
     });
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     alphaVersion: ALPHA_VERSION,
+    expectedCommit: commit,
     validatedAtUtc: new Date(clock()).toISOString(),
     scenarios
   };
@@ -177,7 +206,7 @@ if (require.main === module) {
     .then((result) => {
       const output = process.env.ALPHA_EVIDENCE_VALIDATION_OUTPUT;
       if (output) writeValidationOutput(result, output);
-      console.log(`manual alpha evidence comments ok: ${result.scenarios.map((item) => `${item.scenarioId}=comment-${item.commentId}`).join("; ")}`);
+      console.log(`manual alpha evidence comments ok: commit=${result.expectedCommit}; ${result.scenarios.map((item) => `${item.scenarioId}=comment-${item.commentId}`).join("; ")}`);
     })
     .catch((error) => {
       console.error(String(error?.message || error));
@@ -187,6 +216,8 @@ if (require.main === module) {
 
 module.exports = {
   ALPHA_VERSION,
+  COMMIT_PATTERN,
+  normalizedCommit,
   parseEvidenceFields,
   validateEvidenceCommentBody,
   fetchComment,
