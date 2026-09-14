@@ -12,6 +12,7 @@ const manifest = JSON.parse(read("manifest.json"));
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
 const windowsBuildWrapper = read("scripts/build-windows-alpha.js");
+const releaseAssetPreparer = read("scripts/prepare-alpha-release-assets.js");
 const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
 const validationDoc = read("docs/alpha-20-validation.md");
 
@@ -34,6 +35,7 @@ test("every alpha scenario has executable automated evidence in the Phase 20 gat
   }
   assert.ok(phase20.includes("tests/phase20-alpha-scenarios.test.js"));
   assert.ok(phase20.includes("tests/alpha-build-identity.test.js"));
+  assert.ok(phase20.includes("tests/alpha-release-assets.test.js"));
 });
 
 test("alpha version, manifest and candidate artifact naming are consistent", () => {
@@ -77,7 +79,26 @@ test("final alpha validation binds manual evidence, build artifact and signature
   assert.match(windowsVerifier, /SignerCertificate/);
 });
 
-test("operator validation document covers every roadmap scenario and preserves manual/signing gates", () => {
+test("strict alpha workflow publishes one audited prerelease only after all release gates", () => {
+  assert.match(releaseWorkflow, /permissions:\s*[\s\S]*contents:\s*write/);
+  assert.match(releaseWorkflow, /Require unused alpha tag/);
+  assert.match(releaseWorkflow, /git ls-remote --tags origin/);
+  assert.match(releaseWorkflow, /prepare-alpha-release-assets\.js/);
+  assert.match(releaseWorkflow, /SHA256SUMS\.txt/);
+  assert.match(releaseWorkflow, /alpha-release-manifest\.json/);
+  assert.match(releaseWorkflow, /gh release create \$tag/);
+  assert.match(releaseWorkflow, /--target \$env:GITHUB_SHA/);
+  assert.match(releaseWorkflow, /--prerelease/);
+  assert.match(releaseWorkflow, /Verify published prerelease tag and assets/);
+  assert.match(releaseWorkflow, /git rev-list -n 1 \$tag/);
+  assert.match(releaseWorkflow, /alpha_release_tag_commit_mismatch/);
+  assert.match(releaseAssetPreparer, /alpha_release_signature_not_valid/);
+  assert.match(releaseAssetPreparer, /alpha_release_manual_scenarios_incomplete/);
+  assert.match(releaseAssetPreparer, /alpha-release-manifest\.json/);
+  assert.match(releaseAssetPreparer, /SHA256SUMS\.txt/);
+});
+
+test("operator validation document covers every roadmap scenario and preserves manual/signing/publish gates", () => {
   for (const scenario of ALPHA_SCENARIOS) {
     assert.ok(validationDoc.includes(scenario.id), `alpha_validation_doc_missing_id:${scenario.id}`);
     assert.ok(validationDoc.includes(scenario.title), `alpha_validation_doc_missing_title:${scenario.id}`);
@@ -86,4 +107,5 @@ test("operator validation document covers every roadmap scenario and preserves m
   assert.ok(validationDoc.includes("Build commit"));
   assert.ok(validationDoc.includes("WINDOWS_CSC_LINK"));
   assert.ok(validationDoc.includes("Authenticode=Valid"));
+  assert.ok(validationDoc.includes("v2.0.0-alpha.20"));
 });
