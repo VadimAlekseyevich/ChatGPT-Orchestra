@@ -1,12 +1,19 @@
 # ChatGPT Orchestra Documentation
 
-Этот каталог предназначен для проектной и архитектурной документации, которая слишком подробна для корневого `README.md`.
+Этот каталог содержит проектную, архитектурную и release-документацию, которая слишком подробна для корневого `README.md`.
 
-## Основные документы
+## Текущий release path
 
-- [`../ROADMAP.md`](../ROADMAP.md) — целевая архитектура, постепенная migration extension → desktop, platform contracts и release gates;
-- [`../CHANGELOG.md`](../CHANGELOG.md) — история изменений;
-- [`phase-2-tab-registry.md`](phase-2-tab-registry.md) — контракт service worker, agent registration, heartbeat и lifecycle вкладок;
+- [`alpha-20-validation.md`](alpha-20-validation.md) — канонический runbook desktop-first `2.0.0-alpha.20`: 17 acceptance-сценариев, обязательные ручные A01/A11 checks и signed Windows release gate;
+- [`alpha-16-smoke-test.md`](alpha-16-smoke-test.md) — исторический Phase 16 Windows checkpoint; это не финальный alpha gate;
+- [`../ROADMAP.md`](../ROADMAP.md) — целевая архитектура и полный browser-extension → desktop roadmap;
+- [`../CHANGELOG.md`](../CHANGELOG.md) — история изменений.
+
+Phase 15–20 уже реализованы в коде и regression suites. Для текущего состояния продукта исходной точкой является `alpha-20-validation.md`, а не старые extension-first smoke tests.
+
+## Архитектурные документы
+
+- [`phase-2-tab-registry.md`](phase-2-tab-registry.md) — contract service worker, agent registration, heartbeat и lifecycle вкладок;
 - [`phase-3-protocol-v1.md`](phase-3-protocol-v1.md) — Orchestra Protocol v1, Event Bus, idempotency, sequence и rejection semantics;
 - [`phase-4-project-planning.md`](phase-4-project-planning.md) — Project Store, staged planning pipeline, large-artifact framing, crash recovery и deterministic DAG gate;
 - [`phase-5-scheduler.md`](phase-5-scheduler.md) — persisted task/run state, runnable queue, parallel Worker assignment, conflict policy, retries и watchdog;
@@ -30,6 +37,17 @@
 - [`phase-14-contract-tests-ci.md`](phase-14-contract-tests-ci.md) — reusable adapter conformance, mock browser fixtures, deterministic release validation и GitHub Actions CI foundation;
 - [`adr/`](adr/) — Architecture Decision Records.
 
+## Phase 15–20 implementation evidence
+
+Desktop phases are primarily documented by the implementation and executable acceptance suites:
+
+- Phase 15 — `tests/phase15/desktop-synthetic-e2e.test.js` + desktop shell tests;
+- Phase 16 — companion bridge/native messaging tests + `alpha-16-smoke-test.md` historical checkpoint;
+- Phase 17 — local repository/worktree, verification, integration, lifecycle and salvage tests;
+- Phase 18 — managed-browser/direct-runtime tests;
+- Phase 19 — parity, chaos/recovery and release-policy tests;
+- Phase 20 — `tests/phase20-alpha-scenarios.test.js`, `scripts/alpha-release-contract.js` and `alpha-20-validation.md`.
+
 ## Что хранить в `docs/`
 
 По мере реализации roadmap сюда следует выносить:
@@ -48,4 +66,4 @@
 
 ## Правило документации
 
-Если решение меняет архитектурный контракт, формат persisted state, protocol, permissions, safety policy или существенно ограничивает будущие варианты реализации — его нужно фиксировать ADR, а не оставлять только в PR discussion или комментариях к коду.
+Если решение меняет архитектурный contract, persisted state format, protocol, permissions, safety policy или существенно ограничивает будущие варианты реализации, его нужно фиксировать ADR, а не оставлять только в PR discussion или комментариях к коду.
