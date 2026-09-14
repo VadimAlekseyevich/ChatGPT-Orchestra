@@ -8,6 +8,7 @@ const ROOT = path.resolve(__dirname, "..");
 const PACKAGE_PATH = path.join(ROOT, "package.json");
 const GENERATED_DIR = path.join(ROOT, "apps", "desktop", "generated");
 const BUILD_METADATA_PATH = path.join(GENERATED_DIR, "build-metadata.json");
+const BUILD_EVIDENCE_PATH = path.join(ROOT, "dist", "desktop", "alpha-build-evidence.json");
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/i;
 
 function normalizedCommit(value) {
@@ -42,13 +43,23 @@ function electronBuilderCli() {
   return path.resolve(path.dirname(packagePath), bin);
 }
 
-function writeBuildMetadata({ commit, version }) {
-  fs.mkdirSync(GENERATED_DIR, { recursive: true });
-  fs.writeFileSync(BUILD_METADATA_PATH, `${JSON.stringify({
-    schemaVersion: 1,
-    version,
-    commit
-  }, null, 2)}\n`, "utf8");
+function buildIdentity({ commit, version }) {
+  const normalized = normalizedCommit(commit);
+  if (!normalized) throw new Error("alpha_build_commit_invalid");
+  return Object.freeze({ schemaVersion: 1, version: String(version || ""), commit: normalized });
+}
+
+function writeJson(filename, value) {
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  fs.writeFileSync(filename, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function writeBuildMetadata(identity) {
+  writeJson(BUILD_METADATA_PATH, identity);
+}
+
+function writeBuildEvidence(identity) {
+  writeJson(BUILD_EVIDENCE_PATH, identity);
 }
 
 function removeGeneratedBuildMetadata() {
@@ -58,9 +69,9 @@ function removeGeneratedBuildMetadata() {
 
 function main() {
   const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, "utf8"));
-  const commit = resolveBuildCommit();
-  writeBuildMetadata({ commit, version: pkg.version });
-  console.log(`Windows alpha build identity: version=${pkg.version} commit=${commit}`);
+  const identity = buildIdentity({ commit: resolveBuildCommit(), version: pkg.version });
+  writeBuildMetadata(identity);
+  console.log(`Windows alpha build identity: version=${identity.version} commit=${identity.commit}`);
 
   try {
     const result = spawnSync(process.execPath, [electronBuilderCli(), "--win", "nsis", "--publish", "never"], {
@@ -70,7 +81,12 @@ function main() {
       windowsHide: false
     });
     if (result.error) throw result.error;
-    if (result.status !== 0) process.exitCode = Number.isInteger(result.status) ? result.status : 1;
+    if (result.status !== 0) {
+      process.exitCode = Number.isInteger(result.status) ? result.status : 1;
+      return;
+    }
+    writeBuildEvidence(identity);
+    console.log(`Windows alpha build evidence: ${path.relative(ROOT, BUILD_EVIDENCE_PATH)}`);
   } finally {
     removeGeneratedBuildMetadata();
   }
@@ -81,9 +97,12 @@ if (require.main === module) main();
 module.exports = {
   ROOT,
   BUILD_METADATA_PATH,
+  BUILD_EVIDENCE_PATH,
   normalizedCommit,
   resolveBuildCommit,
+  buildIdentity,
   writeBuildMetadata,
+  writeBuildEvidence,
   removeGeneratedBuildMetadata,
   electronBuilderCli
 };
