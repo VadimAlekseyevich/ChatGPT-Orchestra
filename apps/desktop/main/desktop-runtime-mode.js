@@ -14,18 +14,25 @@ function managedBrowserRequested(argv = process.argv, env = process.env) {
   return (argv || []).includes("--managed-browser") || env?.ORCHESTRA_MANAGED_BROWSER === "1";
 }
 
+function desktopShellRequested(argv = process.argv, env = process.env) {
+  return (argv || []).includes("--desktop-shell") || env?.ORCHESTRA_DESKTOP_SHELL === "1";
+}
+
 function resolveDesktopRuntimeMode(argv = process.argv, env = process.env) {
   const companion = companionRequested(argv, env);
   const managedBrowser = managedBrowserRequested(argv, env);
-  if (companion && managedBrowser) throw new Error("desktop_runtime_mode_conflict");
-  if (managedBrowser) return RUNTIME_MODES.MANAGED_BROWSER;
+  const desktopShell = desktopShellRequested(argv, env);
+  const selected = [companion, managedBrowser, desktopShell].filter(Boolean).length;
+  if (selected > 1) throw new Error("desktop_runtime_mode_conflict");
   if (companion) return RUNTIME_MODES.COMPANION;
-  return RUNTIME_MODES.DESKTOP;
+  if (desktopShell) return RUNTIME_MODES.DESKTOP;
+  return RUNTIME_MODES.MANAGED_BROWSER;
 }
 
 module.exports = {
   RUNTIME_MODES,
   companionRequested,
   managedBrowserRequested,
+  desktopShellRequested,
   resolveDesktopRuntimeMode
 };
