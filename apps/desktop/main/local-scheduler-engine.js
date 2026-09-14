@@ -13,9 +13,50 @@ const FATAL_GIT_REASONS = new Set([
   "git_changed_files_may_be_truncated"
 ]);
 
+function isReplayableLocalCompletion(record, run) {
+  const event = record?.event;
+  return Boolean(
+    run
+    && event?.event === "DONE"
+    && event.runId === run.runId
+    && event.taskId === run.taskId
+    && event.agentId === run.agentId
+    && String(event.payload?.artifactFormat || "") === "file-set-v1"
+    && String(event.payload?.workerArtifactSignature || "").startsWith("fnv1a64:")
+    && record?.source?.workerArtifact?.format === "file-set-v1"
+  );
+}
+
 function createLocalSchedulerEngine(BaseSchedulerEngine) {
   if (typeof BaseSchedulerEngine !== "function") throw new TypeError("base_scheduler_engine_required");
   return class LocalSchedulerEngine extends BaseSchedulerEngine {
+    async init() {
+      const state = await super.init();
+      await this.replayPersistedLocalCompletions();
+      return this.getPublicState?.() || state;
+    }
+
+    async replayPersistedLocalCompletions() {
+      const activeRuns = new Map((this.store?.activeRuns?.() || []).map((run) => [run.runId, run]));
+      if (!activeRuns.size) return { replayed: 0 };
+      const records = this.eventBus?.recent?.(200)?.events || [];
+      let replayed = 0;
+      for (const record of records) {
+        const run = activeRuns.get(record?.event?.runId);
+        if (!isReplayableLocalCompletion(record, run)) continue;
+        await this.store.logDecision?.("local_worker_completion_replayed", {
+          taskId: run.taskId,
+          runId: run.runId,
+          eventId: record.event.eventId || null,
+          cursor: record.cursor || null
+        });
+        await this.handleCompletion(record);
+        activeRuns.delete(run.runId);
+        replayed += 1;
+      }
+      return { replayed };
+    }
+
     async handleCompletion(record) {
       const run = this.matchesActiveRun(record);
       if (!run || record.event.event !== "DONE") return;
@@ -94,4 +135,4 @@ function createLocalSchedulerEngine(BaseSchedulerEngine) {
   };
 }
 
-module.exports = { createLocalSchedulerEngine, FATAL_GIT_REASONS };
+module.exports = { createLocalSchedulerEngine, FATAL_GIT_REASONS, isReplayableLocalCompletion };
