@@ -35,6 +35,7 @@
     "desktop:companion": "electron . --companion",
     "desktop:managed-browser": "electron . --managed-browser",
     "desktop:pack": "electron-builder --dir",
+    "desktop:dist:win": "electron-builder --win nsis",
     "extension:stage-alpha": "node scripts/stage-alpha-extension.js",
     "companion:register-host": "node scripts/register-native-host.js register",
     "companion:unregister-host": "node scripts/register-native-host.js unregister"
@@ -47,7 +48,9 @@
     "appId": "com.chatgptorchestra.desktop",
     "productName": "ChatGPT Orchestra",
     "directories": {"output":"dist/desktop"},
-    "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","content/protocol-parser.js","content/planning-artifact-parser.js","content/worker-artifact-parser.js","content/utils.js","content/selectors.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"]
+    "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","content/protocol-parser.js","content/planning-artifact-parser.js","content/worker-artifact-parser.js","content/utils.js","content/selectors.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"],
+    "win": {"target":["nsis"]},
+    "nsis": {"oneClick":false,"allowToChangeInstallationDirectory":true}
   },
   "engines": {"node": ">=18"}
 }
