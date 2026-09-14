@@ -12,7 +12,7 @@ test("desktop app data resolution is platform-specific and deterministic", () =>
   assert.equal(resolveDesktopDataDirectory({ platform: "linux", env: { XDG_DATA_HOME: "/data/u" }, home: "/home/u" }), path.join("/data/u", "chatgpt-orchestra"));
 });
 
-test("ensureDesktopPaths creates isolated state, logs, bundles, companion, repository and workspace directories", () => {
+test("ensureDesktopPaths creates isolated state, logs, bundles, companion, repository, workspace and browser-profile directories", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-desktop-paths-"));
   const paths = ensureDesktopPaths({ dataDirectory: path.join(root, "app") });
   for (const directory of [
@@ -22,7 +22,8 @@ test("ensureDesktopPaths creates isolated state, logs, bundles, companion, repos
     paths.bundlesDirectory,
     paths.companionDirectory,
     paths.repositoriesDirectory,
-    paths.workspacesDirectory
+    paths.workspacesDirectory,
+    paths.browserProfileDirectory
   ]) {
     assert.equal(fs.statSync(directory).isDirectory(), true);
   }
@@ -30,6 +31,7 @@ test("ensureDesktopPaths creates isolated state, logs, bundles, companion, repos
   assert.equal(paths.logFile, path.join(paths.logsDirectory, "orchestra.jsonl"));
   assert.equal(paths.repositoriesDirectory, path.join(paths.root, "repositories"));
   assert.equal(paths.workspacesDirectory, path.join(paths.root, "workspaces"));
+  assert.equal(paths.browserProfileDirectory, path.join(paths.root, "browser-profile"));
   assert.equal(paths.companionSecretFile, path.join(paths.companionDirectory, "pairing-secret"));
   assert.equal(paths.companionEndpointFile, path.join(paths.companionDirectory, "endpoint.json"));
   assert.equal(paths.companionMigrationPendingFile, path.join(paths.companionDirectory, "migration-pending.json"));
