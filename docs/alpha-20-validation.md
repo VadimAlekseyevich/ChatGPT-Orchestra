@@ -34,6 +34,47 @@ The release contract contains exactly the 17 scenarios from the roadmap. Automat
 | A16 | Extension-companion fallback | companion migration + desktop runtime-mode tests | Not required |
 | A17 | No duplicate irreversible side effects | EventBus idempotency + deterministic Git integration/recovery tests | Not required |
 
+## Manual evidence record format
+
+A01 and A11 must each be recorded as a separate comment on an issue in this repository. The final workflow input must be the exact **GitHub issue-comment permalink** (`https://github.com/VadimAlekseyevich/ChatGPT-Orchestra/issues/<n>#issuecomment-<id>`), not free-form text, a screenshot-only reference, a generic issue URL, or `todo/pending` text. A01 and A11 must use distinct comment permalinks.
+
+Recommended A01 comment body:
+
+```text
+Scenario: A01
+Result: PASS
+Alpha version: 2.0.0-alpha.20
+Windows version: <version/build>
+Fresh profile: <clean Windows user or disposable VM; no existing Orchestra app-data>
+Install/launch: PASS
+ChatGPT interactive login: PASS
+Lead registration/readiness: PASS
+Export privacy check: PASS — no credentials/cookies/browser-profile paths/runtime identifiers
+Tester: <name/reference>
+Timestamp UTC: <ISO-8601>
+Notes/evidence attachments: <optional>
+```
+
+Recommended A11 comment body:
+
+```text
+Scenario: A11
+Result: PASS
+Alpha version: 2.0.0-alpha.20
+Project/repository reference: <non-secret reference>
+State before OS restart: <project status + task/run references>
+Real OS restart performed: PASS
+State after relaunch/reconciliation: <status + recovered task/run references>
+Resume result: PASS
+Duplicate irreversible side effects check: PASS
+Worktree/state preservation: PASS
+Tester: <name/reference>
+Timestamp UTC: <ISO-8601>
+Notes/evidence attachments: <optional>
+```
+
+The workflow validates that both inputs are distinct comment permalinks in this repository. That validation makes the release evidence auditable, but it does **not** magically prove the real-world steps happened; the tester/release operator is still responsible for truthful PASS evidence.
+
 ## Manual A01 procedure
 
 Use the Windows alpha artifact on a clean Windows user account or disposable VM with no existing Orchestra app-data directory. Start `ChatGPT Orchestra.exe` with no runtime flags. Confirm the managed-browser onboarding window opens, sign into ChatGPT interactively, return to the Orchestra Dashboard, register the Lead, and verify the runtime reports ready. Export a debug/project bundle and confirm it contains no ChatGPT credentials, cookies, browser profile path, or browser runtime identifiers.
@@ -48,9 +89,15 @@ Record at minimum: alpha version, project/repository reference, state before res
 
 ## Signed release validation
 
-Final distribution uses the manual GitHub Actions workflow **Alpha Release Validation** (`.github/workflows/alpha-release.yml`). It requires non-placeholder A01 and A11 evidence references as workflow inputs and a real Windows code-signing certificate supplied through repository secrets `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD`.
+Final distribution uses the manual GitHub Actions workflow **Alpha Release Validation** (`.github/workflows/alpha-release.yml`). It requires A01 and A11 GitHub issue-comment permalinks as workflow inputs and a real Windows code-signing certificate supplied through repository secrets `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD`.
 
-The workflow reruns `npm run test:alpha`, builds the Windows NSIS installer, stages the fallback extension, and executes:
+The workflow first validates both evidence references with:
+
+```text
+node scripts/validate-alpha-evidence-reference.js A01 <A01-comment-permalink> A11 <A11-comment-permalink>
+```
+
+It then reruns `npm run test:alpha`, builds the Windows NSIS installer, stages the fallback extension, and executes:
 
 ```text
 ./scripts/verify-windows-alpha.ps1 -RequireSignature

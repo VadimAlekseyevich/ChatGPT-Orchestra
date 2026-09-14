@@ -12,6 +12,7 @@ const validation = read("docs/alpha-20-validation.md");
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
 const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
+const evidenceValidator = read("scripts/validate-alpha-evidence-reference.js");
 const { ALPHA_VERSION, ALPHA_ARTIFACT_NAME, ALPHA_SCENARIOS, MANUAL_SCENARIO_IDS } = require("./alpha-release-contract.js");
 
 assert.equal(pkg.version, ALPHA_VERSION, "alpha_readiness_version_mismatch");
@@ -28,6 +29,7 @@ for (const script of [
 assert.ok(pkg.scripts["test:alpha"].includes("test:phase20"), "alpha_gate_must_run_phase20");
 
 const phase20Gate = String(pkg.scripts["test:phase20"] || "");
+assert.ok(phase20Gate.includes("tests/alpha-manual-evidence.test.js"), "alpha_manual_evidence_tests_not_gated");
 for (const scenario of ALPHA_SCENARIOS) {
   assert.ok(validation.includes(scenario.id), `alpha_validation_missing_id:${scenario.id}`);
   assert.ok(validation.includes(scenario.title), `alpha_validation_missing_title:${scenario.id}`);
@@ -40,6 +42,7 @@ for (const scenario of ALPHA_SCENARIOS) {
 for (const marker of [
   "Desktop-first Alpha Validation",
   "A01 and A11 require real manual evidence",
+  "GitHub issue-comment permalink",
   "WINDOWS_CSC_LINK",
   "Authenticode=Valid",
   "final `v2.0.0-alpha.20` prerelease"
@@ -64,6 +67,7 @@ for (const marker of [
   "workflow_dispatch:",
   "a01_evidence:",
   "a11_evidence:",
+  "validate-alpha-evidence-reference.js",
   "WINDOWS_CSC_LINK",
   "WINDOWS_CSC_KEY_PASSWORD",
   "npm run test:alpha",
@@ -71,6 +75,9 @@ for (const marker of [
   "chatgpt-orchestra-alpha20-signed-windows"
 ]) assert.ok(releaseWorkflow.includes(marker), `alpha_release_workflow_marker_missing:${marker}`);
 assert.ok(!releaseWorkflow.includes("PUBLISH_FOR_PULL_REQUEST"), "alpha_release_must_not_force_pr_secrets");
+assert.ok(evidenceValidator.includes("issuecomment-"), "alpha_evidence_validator_must_require_comment_permalink");
+assert.ok(evidenceValidator.includes("VadimAlekseyevich"), "alpha_evidence_validator_owner_drift");
+assert.ok(evidenceValidator.includes("ChatGPT-Orchestra"), "alpha_evidence_validator_repo_drift");
 
 assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
 
