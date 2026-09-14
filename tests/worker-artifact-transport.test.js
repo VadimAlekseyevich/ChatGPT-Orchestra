@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const WorkerArtifactParser = require("../content/worker-artifact-parser.js");
 const OrchestraProtocol = require("../protocol/orchestra-protocol.js");
+const CompanionProtocol = require("../platform/companion-protocol.js");
 const { EventStore } = require("../background/event-store.js");
 const { createLocalOrchestrator } = require("../apps/desktop/main/local-orchestrator.js");
 
@@ -60,6 +61,26 @@ test("Worker artifact block is parsed separately while the final Orchestra event
   assert.equal(finalLine.includes("module.exports"), false);
 });
 
+test("bounded Worker artifact fits the authenticated companion frame budget", () => {
+  const artifact = {
+    format: "file-set-v1",
+    files: [{ path: "src/generated.txt", operation: "write", content: "x".repeat(96 * 1024) }]
+  };
+  const signature = WorkerArtifactParser.artifactSignature(artifact);
+  const message = {
+    type: "ORCHESTRA_EVENT",
+    payload: {
+      event: doneEvent(signature),
+      responseFingerprint: "fp",
+      pathname: "/c/test",
+      messageCount: 2,
+      workerArtifact: artifact
+    }
+  };
+  const frame = CompanionProtocol.request("R1", "orchestrator.runtimeMessage", { message, sender: { kind: "agent-session", sessionId: "7", agentId: "A1" } });
+  assert.ok(CompanionProtocol.byteLength(frame) < CompanionProtocol.MAX_FRAME_BYTES);
+});
+
 test("Worker artifact parser rejects ambiguous, malformed, wrong-format and oversized blocks", () => {
   const artifact = { format: "file-set-v1", files: [{ path: "src/a.js", operation: "write", content: "x" }] };
   assert.equal(WorkerArtifactParser.parseWorkerArtifact("no markers").reason, "worker_artifact_markers_missing");
@@ -90,7 +111,7 @@ test("EventStore persists Worker artifact in source, separate from the compact e
   assert.equal(Object.prototype.hasOwnProperty.call(record.event.payload, "localChanges"), false);
 });
 
-test("Desktop local orchestrator rejects Worker artifact signature mismatch before EventBus acceptance", async () => {
+test("Desktop local orchestrator rejects malformed or mismatched Worker artifacts before EventBus acceptance", async () => {
   const artifact = { format: "file-set-v1", files: [{ path: "src/value.js", operation: "write", content: "next\n" }] };
   const signature = WorkerArtifactParser.artifactSignature(artifact);
   const calls = [];
@@ -105,6 +126,11 @@ test("Desktop local orchestrator rejects Worker artifact signature mismatch befo
   const LocalOrchestrator = createLocalOrchestrator(BaseOrchestrator);
   const orchestrator = new LocalOrchestrator({ eventBus });
 
+  const malformed = await orchestrator.handleProtocolEvent({ payload: { event: doneEvent(signature), workerArtifact: { format: "file-set-v1", files: [{ path: "../escape", operation: "write", content: "x" }] } } }, { agentId: "A1" });
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.reason, "worker_artifact_invalid");
+
+  calls.length = 0;
   const mismatch = await orchestrator.handleProtocolEvent({ payload: { event: doneEvent("fnv1a64:0000000000000000"), workerArtifact: artifact } }, { agentId: "A1" });
   assert.equal(mismatch.ok, false);
   assert.equal(mismatch.reason, "worker_artifact_signature_mismatch");
