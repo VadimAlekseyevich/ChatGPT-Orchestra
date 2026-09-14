@@ -4,19 +4,41 @@ const path = require("node:path");
 
 const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
 const DEFAULT_AGENT_PRELOAD = path.join(__dirname, "..", "agent-preload.js");
+
+// Top-level navigation remains fail-closed. The first-party suffixes cover
+// OpenAI's current auth hosts such as setup.auth.openai.com and auth0.openai.com,
+// while the exact third-party origins are limited to login/challenge providers
+// that can be part of the interactive ChatGPT sign-in flow.
 const ALLOWED_ORIGINS = Object.freeze(new Set([
   "https://chatgpt.com",
-  "https://auth.openai.com"
+  "https://openai.com",
+  "https://accounts.google.com",
+  "https://appleid.apple.com",
+  "https://login.microsoftonline.com",
+  "https://login.live.com",
+  "https://setup.workos.com",
+  "https://forwarder.workos.com",
+  "https://challenges.cloudflare.com"
 ]));
+const ALLOWED_HOST_SUFFIXES = Object.freeze([
+  ".chatgpt.com",
+  ".openai.com"
+]);
 
 function asError(error) { return String(error?.message || error || "unknown_error"); }
+
+function isAllowedManagedNavigation(parsed) {
+  if (ALLOWED_ORIGINS.has(parsed.origin)) return true;
+  const hostname = String(parsed.hostname || "").toLowerCase();
+  return ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
+}
 
 function assertManagedNavigationUrl(value) {
   const raw = String(value || "").trim();
   if (raw === "about:blank") return raw;
   let parsed;
   try { parsed = new URL(raw); } catch (_) { throw new Error("managed_browser_navigation_url_invalid"); }
-  if (parsed.protocol !== "https:" || !ALLOWED_ORIGINS.has(parsed.origin)) throw new Error("managed_browser_navigation_forbidden");
+  if (parsed.protocol !== "https:" || !isAllowedManagedNavigation(parsed)) throw new Error("managed_browser_navigation_forbidden");
   return parsed.toString();
 }
 
@@ -122,7 +144,32 @@ class ElectronManagedBrowserDriver {
       this.sessions.delete(id);
       if (!this.closing) this.emit({ type: "session-removed", sessionId: id, reason: "window_closed" });
     });
-    window.webContents?.setWindowOpenHandler?.(() => ({ action: "deny" }));
+
+    // Auth flows may use window.open(). Do not create an unmanaged child window.
+    // Instead, redirect an allowlisted login URL through the same isolated
+    // BrowserWindow/session. Unknown destinations remain denied.
+    window.webContents?.setWindowOpenHandler?.((details = {}) => {
+      const rawUrl = String(details.url || "");
+      let targetUrl;
+      try {
+        targetUrl = assertManagedNavigationUrl(rawUrl);
+      } catch (error) {
+        this.emit({ type: "navigation-blocked", sessionId: id, url: rawUrl, reason: asError(error) });
+        return { action: "deny" };
+      }
+      Promise.resolve().then(async () => {
+        if (!this.sessions.has(id) || window.isDestroyed?.()) return;
+        try {
+          await window.loadURL(targetUrl);
+          const entry = this.entry(id);
+          if (entry) entry.url = targetUrl;
+          this.emit({ type: "auth-navigation-redirected", sessionId: id, url: targetUrl });
+        } catch (error) {
+          this.emit({ type: "navigation-blocked", sessionId: id, url: targetUrl, reason: `auth_redirect_failed:${asError(error)}` });
+        }
+      });
+      return { action: "deny" };
+    });
   }
 
   async createSession({ url = DEFAULT_CHATGPT_URL, active = false } = {}) {
@@ -262,5 +309,6 @@ module.exports = {
   DEFAULT_CHATGPT_URL,
   DEFAULT_AGENT_PRELOAD,
   ALLOWED_ORIGINS,
+  ALLOWED_HOST_SUFFIXES,
   assertManagedNavigationUrl
 };
