@@ -4,6 +4,7 @@ const { DesktopHost } = require("./desktop-host.js");
 const { ensureDesktopPaths } = require("./app-data.js");
 const { ManagedBrowserAgentRuntime } = require("./managed-browser-agent-runtime.js");
 const { ElectronManagedBrowserDriver, DEFAULT_CHATGPT_URL } = require("./electron-managed-browser-driver.js");
+const { ElectronPreloadChatGPTPageAdapter } = require("./electron-preload-chatgpt-page-adapter.js");
 const { bindManagedBrowserAgentRuntime } = require("./managed-browser-host-binding.js");
 
 class ManagedBrowserDesktopHost extends DesktopHost {
@@ -27,12 +28,19 @@ async function createManagedBrowserDesktopHost({
   agentRuntime = null,
   driver = null,
   pageAdapter = null,
+  ipcMain = null,
   openLoginWindow = true,
   ...options
 } = {}) {
   const resolvedPaths = paths || ensureDesktopPaths({ dataDirectory });
   const clock = options.clock || (() => Date.now());
-  const managedDriver = driver || (agentRuntime ? null : new ElectronManagedBrowserDriver({ pageAdapter, logger: logger || console }));
+  const managedPageAdapter = pageAdapter || (!agentRuntime && !driver
+    ? new ElectronPreloadChatGPTPageAdapter({ ipcMain, logger: logger || console })
+    : null);
+  const managedDriver = driver || (agentRuntime ? null : new ElectronManagedBrowserDriver({
+    pageAdapter: managedPageAdapter,
+    logger: logger || console
+  }));
   const runtime = agentRuntime || new ManagedBrowserAgentRuntime({
     driver: managedDriver,
     profileDirectory: resolvedPaths.browserProfileDirectory,
