@@ -11,6 +11,26 @@ const { ElectronManagedBrowserDriver, DEFAULT_CHATGPT_URL } = require("./electro
 const { ElectronPreloadChatGPTPageAdapter } = require("./electron-preload-chatgpt-page-adapter.js");
 const { bindManagedBrowserAgentRuntime } = require("./managed-browser-host-binding.js");
 
+function intervalsOverlap(left, right) {
+  const leftStart = Number(left?.startedAt || left?.assignedAt) || 0;
+  const rightStart = Number(right?.startedAt || right?.assignedAt) || 0;
+  if (!leftStart || !rightStart) return false;
+  const leftEnd = Number(left?.finishedAt) || Number.MAX_SAFE_INTEGER;
+  const rightEnd = Number(right?.finishedAt) || Number.MAX_SAFE_INTEGER;
+  return leftStart <= rightEnd && rightStart <= leftEnd;
+}
+
+function observedParallelWorkerRuns(runs = []) {
+  const workerRuns = runs.filter((run) => run?.agentId && run?.taskId && !String(run.taskId).startsWith("planning:"));
+  for (let index = 0; index < workerRuns.length; index += 1) {
+    for (let other = index + 1; other < workerRuns.length; other += 1) {
+      if (workerRuns[index].agentId === workerRuns[other].agentId) continue;
+      if (intervalsOverlap(workerRuns[index], workerRuns[other])) return true;
+    }
+  }
+  return false;
+}
+
 class ManagedBrowserDesktopHost extends DesktopHost {
   constructor(options = {}) {
     if (typeof options.agentRuntime?.bindHostHandlers !== "function") throw new TypeError("managed_browser_agent_runtime_required");
@@ -23,8 +43,34 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     this.reviewEngine.registry = this.managedBrowserRecoveryRegistry;
     this.integrationEngine.registry = this.managedBrowserRecoveryRegistry;
     this.recoveryController.registry = this.managedBrowserRecoveryRegistry;
+    this.managedBrowserValidationObservations = {
+      runtimeMessages: 0,
+      assistantCompletions: 0,
+      protocolErrors: 0,
+      sessionLosses: 0,
+      sessionRecoveries: 0
+    };
+    this.managedBrowserLostAgentIds = new Set();
     this.managedBrowserUnbind = bindManagedBrowserAgentRuntime(this);
     this.managedBrowserOnboardingSession = null;
+  }
+
+  noteManagedBrowserRuntimeMessage(message, sender) {
+    const observations = this.managedBrowserValidationObservations;
+    observations.runtimeMessages += 1;
+    const TYPES = this.root.MESSAGE_TYPES || {};
+    if (message?.type === TYPES.ASSISTANT_RESPONSE_COMPLETED) observations.assistantCompletions += 1;
+    if (message?.type === TYPES.PROTOCOL_ERROR) observations.protocolErrors += 1;
+    const agentId = sender?.agentId || null;
+    if (agentId && this.managedBrowserLostAgentIds.has(agentId) && this.agentRuntime.isAgentConnected?.(agentId)) {
+      this.managedBrowserLostAgentIds.delete(agentId);
+      observations.sessionRecoveries += 1;
+    }
+  }
+
+  noteManagedBrowserSessionRemoved(agent) {
+    this.managedBrowserValidationObservations.sessionLosses += 1;
+    if (agent?.agentId) this.managedBrowserLostAgentIds.add(agent.agentId);
   }
 
   async onboardingSession() {
@@ -69,6 +115,91 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     };
   }
 
+  async managedBrowserValidation() {
+    const status = (await this.managedBrowserStatus()).managedBrowser;
+    const project = this.projectStore.getActiveProject?.() || null;
+    const scheduler = this.schedulerStore.summary?.() || {};
+    const tasks = this.schedulerStore.listTasks?.() || [];
+    const runs = this.schedulerStore.listRuns?.() || [];
+    const reviews = this.reviewStore.list?.() || [];
+    const reviewSummary = this.reviewStore.summary?.() || {};
+    const integration = this.integrationStore.summary?.() || {};
+    const recovery = this.recoveryStore.summary?.() || {};
+    const agents = this.agentRuntime.listAgents?.() || [];
+    const workers = agents.filter((agent) => agent.role === "worker");
+    const observations = this.managedBrowserValidationObservations;
+    const projectStatus = String(project?.status || "IDLE");
+    const integrationStatus = String(integration.status || "IDLE");
+    const recoveryStatus = String(recovery.status || "IDLE");
+    const planningCompleted = Boolean(
+      project?.taskGraph?.tasks?.length
+      && project?.artifacts?.DAG_CRITIC
+      && !["NEW", "PLANNING", "FAILED"].includes(projectStatus)
+    );
+    const independentReviewObserved = reviews.some((review) => (
+      review?.authorAgentId
+      && review?.reviewerAgentId
+      && review.authorAgentId !== review.reviewerAgentId
+    ));
+    const integrationVerified = [projectStatus, String(scheduler.status || ""), integrationStatus].includes("INTEGRATION_VERIFIED");
+    const recoveryHealthy = !["RECOVERY_REQUIRED", "NEEDS_USER", "ERROR", "FAILED"].includes(recoveryStatus);
+    const checks = {
+      chatgptReady: Boolean(!status.loginRequired && ["ready", "generating"].includes(String(status.availability || ""))),
+      leadRegistered: Boolean(status.leadRegistered),
+      assistantCompletionObserved: observations.assistantCompletions > 0,
+      projectStarted: Boolean(project),
+      planningCompleted,
+      parallelWorkersObserved: observedParallelWorkerRuns(runs),
+      dependencyGraphObserved: tasks.some((task) => (task.dependencies || task.definition?.dependencies || []).length > 0),
+      independentReviewObserved,
+      integrationVerified,
+      sessionRecoveryObserved: observations.sessionRecoveries > 0,
+      recoveryHealthy
+    };
+    return {
+      ok: true,
+      validation: {
+        schemaVersion: 1,
+        runtimeKind: "desktop-managed-browser",
+        capturedAt: this.clock(),
+        complete: Object.values(checks).every(Boolean),
+        checks,
+        state: {
+          chatgptAvailability: String(status.availability || "unavailable"),
+          leadStatus: status.leadStatus || null,
+          projectStatus,
+          planningStage: project?.stage || null,
+          schedulerStatus: scheduler.status || null,
+          reviewStatus: reviewSummary.status || null,
+          integrationStatus,
+          recoveryStatus
+        },
+        counts: {
+          agents: agents.length,
+          workers: workers.length,
+          tasks: tasks.length,
+          workerRuns: runs.length,
+          completedWorkerRuns: runs.filter((run) => run.status === "DONE").length,
+          reviews: reviews.length,
+          assistantCompletions: observations.assistantCompletions,
+          protocolErrors: observations.protocolErrors,
+          sessionLosses: observations.sessionLosses,
+          sessionRecoveries: observations.sessionRecoveries
+        }
+      }
+    };
+  }
+
+  async exportManagedBrowserValidation() {
+    const result = await this.managedBrowserValidation();
+    const capturedAt = Number(result.validation?.capturedAt) || this.clock();
+    return {
+      ok: true,
+      filename: `chatgpt-orchestra-managed-browser-validation-${capturedAt}.json`,
+      serialized: JSON.stringify(result.validation, null, 2)
+    };
+  }
+
   async openManagedBrowser() {
     let session = await this.onboardingSession();
     if (!session?.id) session = await this.agentRuntime.createSession({ url: DEFAULT_CHATGPT_URL, active: true });
@@ -89,11 +220,16 @@ class ManagedBrowserDesktopHost extends DesktopHost {
   }
 
   async query(name, payload = {}) {
-    if (String(name || "") === "managedBrowserStatus") {
+    const query = String(name || "");
+    if (query === "managedBrowserStatus") {
       if (!this.initialized) throw new Error("desktop_host_not_initialized");
       return this.managedBrowserStatus();
     }
-    return super.query(name, payload);
+    if (query === "managedBrowserValidation") {
+      if (!this.initialized) throw new Error("desktop_host_not_initialized");
+      return this.managedBrowserValidation();
+    }
+    return super.query(query, payload);
   }
 
   async execute(name, payload = {}) {
@@ -106,12 +242,17 @@ class ManagedBrowserDesktopHost extends DesktopHost {
       if (!this.initialized) throw new Error("desktop_host_not_initialized");
       return this.registerManagedBrowserLead();
     }
+    if (command === "exportManagedBrowserValidation") {
+      if (!this.initialized) throw new Error("desktop_host_not_initialized");
+      return this.exportManagedBrowserValidation();
+    }
     return super.execute(command, payload);
   }
 
   async close() {
     try { this.managedBrowserUnbind?.(); } catch (_) {}
     this.managedBrowserUnbind = null;
+    this.managedBrowserLostAgentIds.clear();
     try { await this.agentRuntime.close?.(); } finally { await super.close(); }
   }
 }
@@ -185,5 +326,7 @@ async function createManagedBrowserDesktopHost({
 
 module.exports = {
   ManagedBrowserDesktopHost,
-  createManagedBrowserDesktopHost
+  createManagedBrowserDesktopHost,
+  intervalsOverlap,
+  observedParallelWorkerRuns
 };
