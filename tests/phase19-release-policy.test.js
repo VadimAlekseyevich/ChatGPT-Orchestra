@@ -15,7 +15,7 @@ function read(relative) { return fs.readFileSync(path.join(ROOT, relative), "utf
 const pkg = JSON.parse(read("package.json"));
 const electronMain = read("apps/desktop/main/electron-main.js");
 const rendererHtml = read("apps/desktop/renderer/index.html");
-const managedDriver = read("apps/desktop/main/electron-managed-browser-driver.js");
+const managedHost = read("apps/desktop/main/managed-browser-desktop-host.js");
 const repositoryService = read("apps/desktop/main/repository-service.js");
 
 const schedulerDefaults = globalThis.ChatGPTOrchestra.SCHEDULER_DEFAULTS;
@@ -39,7 +39,7 @@ test("release reliability budgets remain bounded", () => {
   assert.match(reviewSource, /maxReviewIterations:\s*3/);
   assert.match(integrationSource, /maxRepairAttempts:\s*2/);
   assert.match(integrationSource, /targetPolicy:\s*["']integration_branch_only["']/);
-  assert.match(managedDriver, /maxAgents/);
+  assert.match(managedHost, /maxAgents:\s*5/);
 });
 
 test("desktop renderer and browser surfaces retain fail-closed isolation", () => {
