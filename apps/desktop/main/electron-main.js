@@ -10,6 +10,8 @@ const {
   resolveDesktopRuntimeMode
 } = require("./desktop-runtime-mode.js");
 
+const IPC_SELECT_REPOSITORY_DIRECTORY = "orchestra:select-repository-directory";
+
 function nativeMessagingRequested(argv = process.argv.slice(1)) {
   return CompanionNativeHost.isNativeMessagingLaunch(argv);
 }
@@ -71,7 +73,7 @@ if (registrationRequest) {
   });
 } else {
   const path = require("node:path");
-  const { app, BrowserWindow, ipcMain, shell } = require("electron");
+  const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
   const { createDesktopHost } = require("./desktop-host.js");
   const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
   const { createManagedBrowserDesktopHost } = require("./managed-browser-desktop-host.js");
@@ -81,6 +83,19 @@ if (registrationRequest) {
   let unregisterIpc = null;
   let mainWindow = null;
 
+  function registerRepositoryDirectoryPicker() {
+    ipcMain.removeHandler(IPC_SELECT_REPOSITORY_DIRECTORY);
+    ipcMain.handle(IPC_SELECT_REPOSITORY_DIRECTORY, async () => {
+      const result = await dialog.showOpenDialog(mainWindow || undefined, {
+        title: "Open local Git repository",
+        properties: ["openDirectory"]
+      });
+      const selectedPath = result?.filePaths?.[0] || null;
+      if (result?.canceled || !selectedPath) return { ok: false, cancelled: true, path: null };
+      return { ok: true, cancelled: false, path: selectedPath };
+    });
+  }
+
   async function createMainWindow() {
     const dataDirectory = orchestraDataDirectory();
     const runtimeMode = resolveDesktopRuntimeMode();
@@ -88,6 +103,7 @@ if (registrationRequest) {
     else if (runtimeMode === RUNTIME_MODES.MANAGED_BROWSER) host = await createManagedBrowserDesktopHost({ dataDirectory });
     else host = await createDesktopHost({ dataDirectory });
     unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
+    registerRepositoryDirectoryPicker();
 
     const title = runtimeMode === RUNTIME_MODES.COMPANION
       ? "ChatGPT Orchestra · Companion"
@@ -134,6 +150,7 @@ if (registrationRequest) {
   });
 
   app.on("before-quit", () => {
+    ipcMain.removeHandler(IPC_SELECT_REPOSITORY_DIRECTORY);
     unregisterIpc?.();
     unregisterIpc = null;
     host?.close?.().catch((error) => console.warn("[ChatGPT Orchestra] desktop_close_failed", error));
@@ -149,5 +166,6 @@ module.exports = {
   nativeHostRegistrationRequest,
   orchestraDataDirectory,
   runNativeMessagingHost,
-  runNativeHostRegistration
+  runNativeHostRegistration,
+  IPC_SELECT_REPOSITORY_DIRECTORY
 };
