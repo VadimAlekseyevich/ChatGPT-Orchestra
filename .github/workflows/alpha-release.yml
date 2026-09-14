@@ -28,6 +28,8 @@ jobs:
       A01_EVIDENCE: ${{ inputs.a01_evidence }}
       A11_EVIDENCE: ${{ inputs.a11_evidence }}
       GITHUB_TOKEN: ${{ github.token }}
+      ALPHA_EXPECTED_COMMIT: ${{ github.sha }}
+      ORCHESTRA_BUILD_COMMIT: ${{ github.sha }}
       ALPHA_EVIDENCE_VALIDATION_OUTPUT: .alpha-release/manual-evidence-validation.json
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
@@ -43,7 +45,7 @@ jobs:
       - name: Require auditable manual evidence references
         shell: pwsh
         run: node scripts/validate-alpha-evidence-reference.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
-      - name: Validate manual evidence comment contents
+      - name: Validate manual evidence comment contents and build identity
         shell: pwsh
         run: node scripts/validate-alpha-evidence-comments.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Require Windows signing credentials
@@ -66,14 +68,15 @@ jobs:
         shell: pwsh
         run: |
           $validated = Get-Content -Path "$env:ALPHA_EVIDENCE_VALIDATION_OUTPUT" -Raw | ConvertFrom-Json
+          if ([string]$validated.expectedCommit -ne [string]$env:GITHUB_SHA) { throw "manual_evidence_commit_drift" }
           $evidence = [ordered]@{
-            schemaVersion = 3
+            schemaVersion = 4
             version = "2.0.0-alpha.20"
+            commit = [string]$env:GITHUB_SHA
             a01 = [string]$env:A01_EVIDENCE
             a11 = [string]$env:A11_EVIDENCE
             validation = $validated
             workflowRun = [string]$env:GITHUB_RUN_ID
-            commit = [string]$env:GITHUB_SHA
           }
           $evidence | ConvertTo-Json -Depth 8 | Set-Content -Path "dist/desktop/alpha-manual-evidence.json" -Encoding utf8
       - name: Upload signed alpha release candidate
