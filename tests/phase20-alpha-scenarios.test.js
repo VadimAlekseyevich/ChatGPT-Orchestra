@@ -44,6 +44,13 @@ test("alpha version, manifest and candidate artifact naming are consistent", () 
   assert.ok(ci.includes("alpha-signature-evidence.json"));
 });
 
+test("Windows packaging never implicitly publishes from CI", () => {
+  const windowsBuild = String(pkg.scripts?.["desktop:dist:win"] || "");
+  assert.match(windowsBuild, /electron-builder\s+--win\s+nsis/);
+  assert.match(windowsBuild, /--publish\s+never/);
+  assert.doesNotMatch(ci, /GH_TOKEN/);
+});
+
 test("final alpha validation requires manual A01/A11 evidence and valid Authenticode", () => {
   assert.ok(releaseWorkflow.includes("workflow_dispatch:"));
   assert.ok(releaseWorkflow.includes("a01_evidence:"));
