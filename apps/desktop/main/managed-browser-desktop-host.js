@@ -15,6 +15,89 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     if (typeof options.agentRuntime?.bindHostHandlers !== "function") throw new TypeError("managed_browser_agent_runtime_required");
     super({ ...options, autoSeedFakeLead: false });
     this.managedBrowserUnbind = bindManagedBrowserAgentRuntime(this);
+    this.managedBrowserOnboardingSession = null;
+  }
+
+  async onboardingSession() {
+    const lead = this.agentRuntime.listAgents?.().find((agent) => agent.role === "lead") || null;
+    const leadSessionId = lead ? this.agentRuntime.sessionIdForAgent?.(lead) : null;
+    if (leadSessionId) {
+      const leadSession = await this.agentRuntime.getSession?.(leadSessionId);
+      if (leadSession) return leadSession;
+    }
+    if (this.managedBrowserOnboardingSession?.id) {
+      const stored = await this.agentRuntime.getSession?.(this.managedBrowserOnboardingSession.id);
+      if (stored) return stored;
+    }
+    return this.agentRuntime.getActiveSession?.() || null;
+  }
+
+  async managedBrowserStatus() {
+    const lead = this.agentRuntime.listAgents?.().find((agent) => agent.role === "lead") || null;
+    const session = await this.onboardingSession();
+    let page = null;
+    if (session?.id && typeof this.agentRuntime.driver?.pingSession === "function") {
+      try { page = await this.agentRuntime.driver.pingSession(session.id); }
+      catch (error) { page = { ok: false, reason: "managed_browser_page_unreachable", message: String(error?.message || error) }; }
+    }
+    const availability = String(page?.availability || "unavailable");
+    const loginReady = Boolean(page?.ok && ["ready", "generating"].includes(availability));
+    return {
+      ok: true,
+      managedBrowser: {
+        runtimeKind: "desktop-managed-browser",
+        sessionOpen: Boolean(session?.id),
+        sessionId: session?.id || null,
+        url: String(page?.url || session?.url || ""),
+        availability,
+        generating: Boolean(page?.generating),
+        loginRequired: !loginReady,
+        leadRegistered: Boolean(lead?.agentId),
+        leadAgentId: lead?.agentId || null,
+        leadStatus: lead?.status || null,
+        pageError: page?.ok === false ? String(page.reason || "managed_browser_page_unavailable") : null
+      }
+    };
+  }
+
+  async openManagedBrowser() {
+    let session = await this.onboardingSession();
+    if (!session?.id) session = await this.agentRuntime.createSession({ url: DEFAULT_CHATGPT_URL, active: true });
+    else if (typeof this.agentRuntime.driver?.activateSession === "function") session = await this.agentRuntime.driver.activateSession(session.id);
+    this.managedBrowserOnboardingSession = session;
+    return this.managedBrowserStatus();
+  }
+
+  async registerManagedBrowserLead() {
+    const status = await this.managedBrowserStatus();
+    if (status.managedBrowser.loginRequired) {
+      return { ok: false, reason: "managed_browser_login_required", managedBrowser: status.managedBrowser };
+    }
+    const opened = await this.openManagedBrowser();
+    if (!opened?.ok) return opened;
+    const registered = await super.execute("registerActiveLead");
+    return { ...registered, managedBrowser: (await this.managedBrowserStatus()).managedBrowser };
+  }
+
+  async query(name, payload = {}) {
+    if (String(name || "") === "managedBrowserStatus") {
+      if (!this.initialized) throw new Error("desktop_host_not_initialized");
+      return this.managedBrowserStatus();
+    }
+    return super.query(name, payload);
+  }
+
+  async execute(name, payload = {}) {
+    const command = String(name || "");
+    if (command === "openManagedBrowser") {
+      if (!this.initialized) throw new Error("desktop_host_not_initialized");
+      return this.openManagedBrowser();
+    }
+    if (command === "registerManagedBrowserLead") {
+      if (!this.initialized) throw new Error("desktop_host_not_initialized");
+      return this.registerManagedBrowserLead();
+    }
+    return super.execute(command, payload);
   }
 
   async close() {
