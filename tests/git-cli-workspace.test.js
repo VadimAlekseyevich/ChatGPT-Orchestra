@@ -17,6 +17,13 @@ function git(args, cwd) {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true }).trim();
 }
 
+function assertSameDirectory(left, right) {
+  const actual = fs.statSync(left, { bigint: true });
+  const expected = fs.statSync(right, { bigint: true });
+  assert.equal(actual.dev, expected.dev);
+  assert.equal(actual.ino, expected.ino);
+}
+
 function createRepository(root) {
   const repository = path.join(root, "source");
   fs.mkdirSync(repository, { recursive: true });
@@ -45,7 +52,7 @@ test("repository registry defaults to UNTRUSTED and persists explicit trust", as
   const registered = await registry.registerLocal({ repositoryId: "repo-1", repositoryPath: repository });
   assert.equal(registered.trust, TRUST_STATES.UNTRUSTED);
   assert.equal(registered.mode, "local");
-  assert.equal(fs.realpathSync(registered.path), fs.realpathSync(repository));
+  assertSameDirectory(registered.path, repository);
 
   const trusted = await registry.setTrust("repo-1", TRUST_STATES.TRUSTED);
   assert.equal(trusted.trust, TRUST_STATES.TRUSTED);
@@ -176,7 +183,7 @@ test("GitCliWorkspace clone mode is confined to repositoriesRoot and integration
 
   const loaded = await workspace.loadRepository({ mode: "clone", sourceUrl: source, path: target });
   assert.equal(loaded.mode, "clone");
-  assert.equal(fs.realpathSync(loaded.path), fs.realpathSync(target));
+  assertSameDirectory(loaded.path, target);
   const base = await workspace.snapshotBase();
   const integration = await workspace.createIntegrationWorkspace("integration-1", base.sha);
   assert.equal(integration.branch, "orchestra/project-clone/integration/integration-1");

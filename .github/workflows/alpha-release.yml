@@ -1,0 +1,88 @@
+name: Alpha Release Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      a01_evidence:
+        description: "A01 fresh-install/login evidence reference"
+        required: true
+        type: string
+      a11_evidence:
+        description: "A11 real OS restart/resume evidence reference"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-release-validation
+  cancel-in-progress: false
+
+jobs:
+  signed-alpha:
+    name: Signed Windows alpha release validation
+    runs-on: windows-latest
+    env:
+      A01_EVIDENCE: ${{ inputs.a01_evidence }}
+      A11_EVIDENCE: ${{ inputs.a11_evidence }}
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Require real manual evidence references
+        shell: pwsh
+        run: |
+          foreach ($entry in @(
+            @{ id = "A01"; value = $env:A01_EVIDENCE },
+            @{ id = "A11"; value = $env:A11_EVIDENCE }
+          )) {
+            $value = [string]$entry.value
+            if ([string]::IsNullOrWhiteSpace($value) -or $value.Trim().Length -lt 8 -or $value -match '^(todo|pending|placeholder|none|n/a)$') {
+              throw "alpha_manual_evidence_invalid:$($entry.id)"
+            }
+          }
+      - name: Require Windows signing credentials
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK)) { throw "windows_signing_certificate_missing" }
+          if ([string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) { throw "windows_signing_password_missing" }
+      - name: Install packaging dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run full alpha acceptance gate
+        run: npm run test:alpha
+      - name: Build signed Windows alpha installer
+        run: npm run desktop:dist:win
+      - name: Stage fallback extension
+        run: npm run extension:stage-alpha
+      - name: Require valid Authenticode signatures
+        shell: pwsh
+        run: ./scripts/verify-windows-alpha.ps1 -RequireSignature
+      - name: Record manual release evidence references
+        shell: pwsh
+        run: |
+          $evidence = [ordered]@{
+            schemaVersion = 1
+            version = "2.0.0-alpha.20"
+            a01 = [string]$env:A01_EVIDENCE
+            a11 = [string]$env:A11_EVIDENCE
+            validatedAtUtc = [DateTime]::UtcNow.ToString("o")
+            workflowRun = [string]$env:GITHUB_RUN_ID
+            commit = [string]$env:GITHUB_SHA
+          }
+          $evidence | ConvertTo-Json -Depth 4 | Set-Content -Path "dist/desktop/alpha-manual-evidence.json" -Encoding utf8
+      - name: Upload signed alpha release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-orchestra-alpha20-signed-windows
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/desktop/*.exe
+            dist/desktop/alpha-signature-evidence.json
+            dist/desktop/alpha-manual-evidence.json
+            dist/desktop/win-unpacked
+            dist/alpha-extension

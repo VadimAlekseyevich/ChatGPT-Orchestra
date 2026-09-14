@@ -5,43 +5,74 @@ const path = require("node:path");
 const assert = require("node:assert/strict");
 
 const ROOT = path.resolve(__dirname, "..");
-
-function read(relative) {
-  return fs.readFileSync(path.join(ROOT, relative), "utf8");
-}
-
+const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
-const smoke = read("docs/alpha-16-smoke-test.md");
+const validation = read("docs/alpha-20-validation.md");
 const ci = read(".github/workflows/ci.yml");
+const releaseWorkflow = read(".github/workflows/alpha-release.yml");
+const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
+const { ALPHA_VERSION, ALPHA_ARTIFACT_NAME, ALPHA_SCENARIOS, MANUAL_SCENARIO_IDS } = require("./alpha-release-contract.js");
 
-assert.equal(pkg.version, "2.0.0-alpha.16", "alpha_readiness_version_mismatch");
-assert.equal(manifest.version_name, pkg.version, "alpha_readiness_manifest_version_mismatch");
-for (const script of ["test:alpha", "desktop:pack", "extension:stage-alpha", "companion:register-host", "companion:unregister-host"]) {
+assert.equal(pkg.version, ALPHA_VERSION, "alpha_readiness_version_mismatch");
+assert.equal(manifest.version_name, ALPHA_VERSION, "alpha_readiness_manifest_version_mismatch");
+assert.equal(ALPHA_SCENARIOS.length, 17, "alpha_readiness_scenario_count_mismatch");
+assert.deepEqual(MANUAL_SCENARIO_IDS, ["A01", "A11"], "alpha_manual_gate_drift");
+
+for (const script of [
+  "test:release", "test:phase17", "test:phase18", "test:phase19", "test:phase20", "test:alpha",
+  "desktop:pack", "desktop:dist:win", "extension:stage-alpha", "companion:register-host", "companion:unregister-host"
+]) {
   assert.equal(typeof pkg.scripts?.[script], "string", `alpha_readiness_script_missing:${script}`);
+}
+assert.ok(pkg.scripts["test:alpha"].includes("test:phase20"), "alpha_gate_must_run_phase20");
+
+const phase20Gate = String(pkg.scripts["test:phase20"] || "");
+for (const scenario of ALPHA_SCENARIOS) {
+  assert.ok(validation.includes(scenario.id), `alpha_validation_missing_id:${scenario.id}`);
+  assert.ok(validation.includes(scenario.title), `alpha_validation_missing_title:${scenario.id}`);
+  for (const evidence of scenario.evidence) {
+    assert.ok(fs.existsSync(path.join(ROOT, evidence)), `alpha_evidence_missing:${scenario.id}:${evidence}`);
+    assert.ok(phase20Gate.includes(evidence), `alpha_evidence_not_gated:${scenario.id}:${evidence}`);
+  }
 }
 
 for (const marker of [
-  "Phase 16 Checkpoint Smoke Test",
-  "not the final Desktop-first Alpha release from Phase 20",
-  "Migrate Project → Desktop",
-  "--register-native-host=",
-  "--companion",
-  "fail-closed",
-  "Phase 17 is the next implementation phase",
-  "Issue #26 remains deferred until after the Phase 20 Desktop-first Alpha"
-]) assert.ok(smoke.includes(marker), `alpha_readiness_smoke_marker_missing:${marker}`);
+  "Desktop-first Alpha Validation",
+  "A01 and A11 require real manual evidence",
+  "Issue #26 remains deferred",
+  "WINDOWS_CSC_LINK",
+  "Authenticode=Valid",
+  "final `v2.0.0-alpha.20` prerelease"
+]) assert.ok(validation.includes(marker), `alpha_validation_marker_missing:${marker}`);
 
 for (const marker of [
+  "desktop-alpha:",
+  "npm run test:phase20",
   "alpha-package:",
   "runs-on: windows-latest",
   "npm run test:alpha",
-  "npm run desktop:pack",
+  "npm run desktop:dist:win",
   "npm run extension:stage-alpha",
-  "actions/upload-artifact@v4",
-  "chatgpt-orchestra-alpha16-windows"
+  "./scripts/verify-windows-alpha.ps1",
+  `name: ${ALPHA_ARTIFACT_NAME}`,
+  "actions/upload-artifact@v4"
 ]) assert.ok(ci.includes(marker), `alpha_readiness_ci_marker_missing:${marker}`);
+assert.ok(windowsVerifier.includes(ALPHA_VERSION), "alpha_windows_verifier_version_mismatch");
+assert.ok(windowsVerifier.includes("alpha-signature-evidence.json"), "alpha_signature_evidence_missing");
 
-assert.ok(/needs:\s*\[[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_package_must_gate_aggregate");
+for (const marker of [
+  "workflow_dispatch:",
+  "a01_evidence:",
+  "a11_evidence:",
+  "WINDOWS_CSC_LINK",
+  "WINDOWS_CSC_KEY_PASSWORD",
+  "npm run test:alpha",
+  "verify-windows-alpha.ps1 -RequireSignature",
+  "chatgpt-orchestra-alpha20-signed-windows"
+]) assert.ok(releaseWorkflow.includes(marker), `alpha_release_workflow_marker_missing:${marker}`);
+assert.ok(!releaseWorkflow.includes("PUBLISH_FOR_PULL_REQUEST"), "alpha_release_must_not_force_pr_secrets");
 
-console.log(`phase16 checkpoint readiness ok: ${pkg.version}`);
+assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
+
+console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; signed release workflow=strict`);

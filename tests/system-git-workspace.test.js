@@ -15,6 +15,13 @@ function git(args, cwd) {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true }).trim();
 }
 
+function assertSameDirectory(left, right) {
+  const actual = fs.statSync(left, { bigint: true });
+  const expected = fs.statSync(right, { bigint: true });
+  assert.equal(actual.dev, expected.dev);
+  assert.equal(actual.ino, expected.ino);
+}
+
 function fixtureRepository(root) {
   const repository = path.join(root, "repo");
   fs.mkdirSync(repository, { recursive: true });
@@ -44,7 +51,7 @@ test("SystemGitWorkspace exposes the established GitWorkspace DTO contract", asy
   Contracts.assertGitWorkspace(workspace);
   const loaded = await workspace.loadRepository({ mode: "local", path: repository });
   assert.equal(loaded.ok, true);
-  assert.equal(fs.realpathSync(loaded.repository.path), fs.realpathSync(repository));
+  assertSameDirectory(loaded.repository.path, repository);
 
   const base = await workspace.snapshotBase();
   assert.equal(base.ok, true);
