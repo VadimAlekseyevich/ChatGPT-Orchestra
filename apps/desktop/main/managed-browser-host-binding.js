@@ -2,6 +2,7 @@
 
 async function handleManagedRuntimeMessage(host, message, sender) {
   const result = await host.orchestrator.handleRuntimeMessage(message, sender);
+  host.noteManagedBrowserRuntimeMessage?.(message, sender, result);
   if (sender?.agentId) {
     const agent = host.agentRuntime.getAgent(sender.agentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
@@ -27,6 +28,7 @@ async function handleManagedApiMessage(host, message, sender) {
 
 async function handleManagedSessionRemoved(host, sessionId) {
   const agent = host.agentRuntime.getAgentBySessionId(sessionId);
+  host.noteManagedBrowserSessionRemoved?.(agent);
   await host.orchestrator.handleSessionRemoved(sessionId);
   if (agent) await host.integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
   await host.recoveryController.tick({ reason: "direct-browser:session_removed" });
