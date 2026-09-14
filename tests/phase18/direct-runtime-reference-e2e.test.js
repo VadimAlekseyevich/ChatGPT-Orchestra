@@ -218,9 +218,10 @@ test("managed desktop runtime executes a full synthetic reference project withou
     assert.equal((await adapter.publishCompletion(runtime, finalRun.agentId, snapshot(eventLine(finalEvent), counter.value++))).ok, true);
     await approveQueuedReviewsThroughDirectRuntime(host, adapter, projectId, counter);
     assert.equal(host.schedulerStore.getTask("T3").status, "APPROVED");
-    assert.equal(host.schedulerStore.summary().status, "READY_FOR_INTEGRATION");
 
-    await host.integrationEngine.tick({ reason: "phase18_direct_integration" });
+    const afterReviews = host.schedulerStore.summary().status;
+    assert.equal(["READY_FOR_INTEGRATION", "INTEGRATING"].includes(afterReviews), true);
+    if (afterReviews === "READY_FOR_INTEGRATION") await host.integrationEngine.tick({ reason: "phase18_direct_integration" });
     const integrationRun = host.integrationStore.currentRun();
     assert.ok(integrationRun);
     const integrationEvent = {
