@@ -26,7 +26,7 @@ The release contract contains exactly the 17 scenarios from the roadmap. Automat
 | A08 | Semantic conflict | integration semantic-repair tests | Not required |
 | A09 | Task/browser death | managed-browser recovery + local Worker recovery tests | Not required |
 | A10 | App process kill/restart | recovery + local integration recovery tests | Not required |
-| A11 | OS restart / project resume | persisted recovery + Project Bundle + desktop data tests | **Required**: restart the operating system with a recoverable project, relaunch Orchestra, reconcile, resume the same project, verify no duplicate work or destructive action |
+| A11 | OS restart / project resume | persisted recovery + Project Bundle + desktop data + OS boot-evidence tests | **Required**: real OS restart with a recoverable project; pre/post debug exports must show a changed `systemBootTimeUtc`, while project state/worktrees recover without duplicate irreversible work |
 | A12 | Pause/Resume | RecoveryController safe-point tests | Not required |
 | A13 | Stop Now + late event protection | stop-boundary + desktop local-process cancellation tests | Not required |
 | A14 | Local worktree salvage | workspace lifecycle/salvage tests | Not required |
@@ -63,7 +63,9 @@ Result: PASS
 Alpha version: 2.0.0-alpha.20
 Project/repository reference: <non-secret reference>
 State before OS restart: <project status + task/run references>
+Pre-restart systemBootTimeUtc: <dashboard.persistence.runtimeEvidence.systemBootTimeUtc>
 Real OS restart performed: PASS
+Post-restart systemBootTimeUtc: <must differ from pre-restart value>
 State after relaunch/reconciliation: <status + recovered task/run references>
 Resume result: PASS
 Duplicate irreversible side effects check: PASS
@@ -83,9 +85,17 @@ Record at minimum: alpha version, Windows version, fresh-profile condition, onbo
 
 ## Manual A11 procedure
 
-Start a local-repository project, reach a persisted recoverable state with at least one completed or in-flight task, then perform an actual OS restart. Relaunch Orchestra from the packaged alpha build. The app must load persisted SQLite/project state, keep dispatch closed until reconciliation completes, recover or safely replace browser/Worker state, preserve local worktrees, and resume without repeating an irreversible merge/push/commit effect.
+Start a local-repository project and reach a persisted recoverable state with at least one completed or in-flight task. Export a debug bundle **before** reboot and record:
 
-Record at minimum: alpha version, project/repository reference, state before restart, state after relaunch, recovery decision, resumed run/task identities, verification that no duplicate irreversible side effect occurred, timestamp, and tester identity/reference.
+```text
+dashboard.persistence.runtimeEvidence.systemBootTimeUtc
+```
+
+Then perform an actual operating-system restart. Merely closing/reopening Orchestra, killing its process, signing out/in, or restarting only the managed browser does not satisfy A11.
+
+Relaunch Orchestra from the same packaged alpha build. The app must load persisted SQLite/project state, keep dispatch closed until reconciliation completes, recover or safely replace browser/Worker state, preserve local worktrees, and resume without repeating an irreversible merge/push/commit effect. Export a second debug bundle after relaunch. Its `dashboard.persistence.runtimeEvidence.systemBootTimeUtc` must differ from the pre-reboot value. Because the value is derived from operating-system uptime and rounded to a minute, ordinary Orchestra restarts during the same Windows boot retain the same value while an actual reboot changes it.
+
+Record at minimum: alpha version, project/repository reference, pre/post `systemBootTimeUtc`, state before restart, state after relaunch, recovery decision, resumed run/task identities, verification that no duplicate irreversible side effect occurred, timestamp, and tester identity/reference. Runtime evidence intentionally contains only platform, architecture, OS release and boot time; it does not contain hostname, username, filesystem path or credentials.
 
 ## Signed release validation
 

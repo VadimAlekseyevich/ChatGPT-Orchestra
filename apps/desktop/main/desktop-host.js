@@ -11,6 +11,7 @@ const { createLocalIntegrationEngine } = require("./local-integration-engine.js"
 const { createLocalReviewEngine } = require("./local-review-engine.js");
 const { createLocalSchedulerEngine } = require("./local-scheduler-engine.js");
 const { createLocalOrchestrator } = require("./local-orchestrator.js");
+const { createDesktopRuntimeEvidence } = require("./runtime-evidence.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
@@ -33,12 +34,14 @@ class DesktopHost {
     repositoryService = null,
     logger = null,
     clock = () => Date.now(),
+    runtimeEvidence = null,
     autoSeedFakeLead = true
   } = {}) {
     this.root = loadDesktopCore();
     this.paths = paths || ensureDesktopPaths({ dataDirectory });
     this.logger = logger || new StructuredLogger({ filename: this.paths.logFile, clock });
     this.clock = clock;
+    this.runtimeEvidence = runtimeEvidence || createDesktopRuntimeEvidence({ clock });
     this.ownsStateStore = !stateStore;
     this.ownsTimerRuntime = !timerRuntime;
     this.persistenceBackend = stateStore ? "injected" : "sqlite";
@@ -74,7 +77,12 @@ class DesktopHost {
     this.migrationRegistry = new root.MigrationRegistry({ currentVersion: root.PortableState.PORTABLE_SCHEMA_VERSION });
     this.portableStateManager = new root.PortableState.PortableStateManager({ stateStore: this.stateStore, migrations: this.migrationRegistry });
     this.projectBundleService = new root.ProjectBundle.ProjectBundleService({ portableStateManager: this.portableStateManager, sourceHost: "desktop-node" });
-    this.persistenceInfo = () => ({ backend: this.persistenceBackend, transactional: true, host: "desktop-node" });
+    this.persistenceInfo = () => ({
+      backend: this.persistenceBackend,
+      transactional: true,
+      host: "desktop-node",
+      runtimeEvidence: { ...this.runtimeEvidence }
+    });
 
     this.contextPackets = new root.ContextPackets.ContextPacketService({
       contextStore: this.contextStore,
