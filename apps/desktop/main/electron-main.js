@@ -3,10 +3,12 @@
 const CompanionNativeHost = require("../../companion/native-host.js");
 const NativeHostRegistration = require("../../companion/native-host-registration.js");
 const { resolveDesktopDataDirectory } = require("./app-data.js");
-
-function companionRequested(argv = process.argv, env = process.env) {
-  return argv.includes("--companion") || env.ORCHESTRA_COMPANION === "1";
-}
+const {
+  RUNTIME_MODES,
+  companionRequested,
+  managedBrowserRequested,
+  resolveDesktopRuntimeMode
+} = require("./desktop-runtime-mode.js");
 
 function nativeMessagingRequested(argv = process.argv.slice(1)) {
   return CompanionNativeHost.isNativeMessagingLaunch(argv);
@@ -72,6 +74,7 @@ if (registrationRequest) {
   const { app, BrowserWindow, ipcMain, shell } = require("electron");
   const { createDesktopHost } = require("./desktop-host.js");
   const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
+  const { createManagedBrowserDesktopHost } = require("./managed-browser-desktop-host.js");
   const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
 
   let host = null;
@@ -80,17 +83,24 @@ if (registrationRequest) {
 
   async function createMainWindow() {
     const dataDirectory = orchestraDataDirectory();
-    host = companionRequested()
-      ? await createNativeCompanionDesktopHost({ dataDirectory })
-      : await createDesktopHost({ dataDirectory });
+    const runtimeMode = resolveDesktopRuntimeMode();
+    if (runtimeMode === RUNTIME_MODES.COMPANION) host = await createNativeCompanionDesktopHost({ dataDirectory });
+    else if (runtimeMode === RUNTIME_MODES.MANAGED_BROWSER) host = await createManagedBrowserDesktopHost({ dataDirectory });
+    else host = await createDesktopHost({ dataDirectory });
     unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
+
+    const title = runtimeMode === RUNTIME_MODES.COMPANION
+      ? "ChatGPT Orchestra · Companion"
+      : runtimeMode === RUNTIME_MODES.MANAGED_BROWSER
+        ? "ChatGPT Orchestra · Managed Browser"
+        : "ChatGPT Orchestra";
 
     mainWindow = new BrowserWindow({
       width: 1280,
       height: 860,
       minWidth: 900,
       minHeight: 640,
-      title: companionRequested() ? "ChatGPT Orchestra · Companion" : "ChatGPT Orchestra",
+      title,
       webPreferences: {
         preload: path.join(__dirname, "..", "preload.js"),
         contextIsolation: true,
@@ -133,6 +143,8 @@ if (registrationRequest) {
 
 module.exports = {
   companionRequested,
+  managedBrowserRequested,
+  resolveDesktopRuntimeMode,
   nativeMessagingRequested,
   nativeHostRegistrationRequest,
   orchestraDataDirectory,
