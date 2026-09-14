@@ -106,13 +106,41 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   await driver.close();
 });
 
-test("managed browser navigation is fail-closed outside ChatGPT/OpenAI auth origins", () => {
+test("managed browser navigation allows current OpenAI auth hosts and known identity providers while remaining fail-closed", () => {
   assert.equal(assertManagedNavigationUrl("about:blank"), "about:blank");
   assert.equal(assertManagedNavigationUrl("https://chatgpt.com/c/123"), "https://chatgpt.com/c/123");
   assert.equal(assertManagedNavigationUrl("https://auth.openai.com/login"), "https://auth.openai.com/login");
+  assert.equal(assertManagedNavigationUrl("https://setup.auth.openai.com/login"), "https://setup.auth.openai.com/login");
+  assert.equal(assertManagedNavigationUrl("https://auth0.openai.com/authorize"), "https://auth0.openai.com/authorize");
+  assert.equal(assertManagedNavigationUrl("https://accounts.google.com/o/oauth2/v2/auth"), "https://accounts.google.com/o/oauth2/v2/auth");
+  assert.equal(assertManagedNavigationUrl("https://appleid.apple.com/auth/authorize"), "https://appleid.apple.com/auth/authorize");
+  assert.equal(assertManagedNavigationUrl("https://login.microsoftonline.com/common/oauth2/v2.0/authorize"), "https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
+  assert.equal(assertManagedNavigationUrl("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/"), "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/");
   assert.throws(() => assertManagedNavigationUrl("http://chatgpt.com/"), /managed_browser_navigation_forbidden/);
+  assert.throws(() => assertManagedNavigationUrl("https://evilopenai.com/"), /managed_browser_navigation_forbidden/);
   assert.throws(() => assertManagedNavigationUrl("https://example.com/"), /managed_browser_navigation_forbidden/);
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
+});
+
+test("allowlisted auth popups are redirected into the same managed window and arbitrary popups stay denied", async () => {
+  const { driver, profileDirectory } = harness();
+  const events = [];
+  await driver.start({ profileDirectory });
+  driver.subscribe((event) => events.push(event));
+  const session = await driver.createSession({ url: "https://chatgpt.com/auth/login", active: true });
+  const win = FakeBrowserWindow.instances[0];
+
+  assert.deepEqual(win.webContents.windowOpenHandler({ url: "https://setup.auth.openai.com/login?flow=1" }), { action: "deny" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(win.webContents.getURL(), "https://setup.auth.openai.com/login?flow=1");
+  assert.ok(events.some((event) => event.type === "auth-navigation-redirected" && event.sessionId === session.id));
+
+  const beforeBlockedPopup = win.webContents.getURL();
+  assert.deepEqual(win.webContents.windowOpenHandler({ url: "https://example.com/phish" }), { action: "deny" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(win.webContents.getURL(), beforeBlockedPopup);
+  assert.ok(events.some((event) => event.type === "navigation-blocked" && event.url === "https://example.com/phish"));
+  await driver.close();
 });
 
 test("driver delegates ChatGPT operations to a page adapter without exposing BrowserWindow handles", async () => {
