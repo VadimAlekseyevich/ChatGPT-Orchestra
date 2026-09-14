@@ -114,7 +114,13 @@ class DesktopRepositoryService {
 
   async workspaceScope(payload = {}) {
     const adapter = await this.adapterFor(payload.projectId, payload.repositoryId);
-    return { ok: true, scope: await adapter.validateScope(payload.workspaceId, { allow: payload.allowedPaths || payload.allow || [] }) };
+    return {
+      ok: true,
+      scope: await adapter.validateScope(payload.workspaceId, {
+        allow: payload.allowedPaths || payload.allow || [],
+        deny: payload.deniedPaths || payload.deny || []
+      })
+    };
   }
 
   async applyWorkerChanges(payload = {}) {
