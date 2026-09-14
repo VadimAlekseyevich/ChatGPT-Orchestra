@@ -6,6 +6,25 @@ const { SystemGitWorkspace } = require("../../../platform/system-git-workspace.j
 const { WorkspaceLifecyclePolicy } = require("./workspace-lifecycle.js");
 const { changeSetSummary } = require("../../../platform/local-change-set.js");
 
+function canonicalGitHubRepositoryUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /[\r\n\0?#]/.test(raw)) return null;
+  const patterns = [
+    /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/?$/i,
+    /^git@github\.com:([^/\s]+)\/([^/\s]+)$/i,
+    /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+)\/?$/i
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (!match) continue;
+    const owner = String(match[1] || "").trim();
+    const repository = String(match[2] || "").replace(/\.git$/i, "").trim();
+    if (!owner || !repository || repository === "." || repository === "..") return null;
+    return `https://github.com/${owner}/${repository}`;
+  }
+  return null;
+}
+
 class DesktopRepositoryService {
   constructor({ stateStore, paths, clock = () => Date.now(), workspaceFactory = null, logger = null, lifecyclePolicy = null } = {}) {
     if (!stateStore) throw new TypeError("desktop_repository_state_store_required");
@@ -51,6 +70,17 @@ class DesktopRepositoryService {
     return adapter;
   }
 
+  async detectGitHubOrigin(adapter) {
+    try {
+      const repository = adapter?.requireRepository?.() || adapter?.repository || null;
+      if (!repository?.path || typeof adapter?.execGit !== "function") return null;
+      const result = await adapter.execGit(["remote", "get-url", "origin"], { cwd: repository.path });
+      return canonicalGitHubRepositoryUrl(result?.stdout);
+    } catch (_) {
+      return null;
+    }
+  }
+
   async listRepositories() { return { ok: true, repositories: await this.registry.list() }; }
   async getRepository(repositoryId) {
     const repository = await this.registry.get(repositoryId);
@@ -62,8 +92,9 @@ class DesktopRepositoryService {
     const loaded = await adapter.loadRepository({ mode: "local", path: repositoryPath });
     const repository = await this.registry.registerLocal({ repositoryId, repositoryPath: loaded.repository?.path || repositoryPath, trust: TRUST_STATES.UNTRUSTED });
     this.adapters.set(this.adapterKey(repositoryId, repositoryId), adapter);
-    this.audit("repository_opened", { repositoryId: repository.repositoryId, mode: "local", trust: repository.trust });
-    return { ok: true, repository, base: await adapter.snapshotBase() };
+    const repositoryUrl = await this.detectGitHubOrigin(adapter);
+    this.audit("repository_opened", { repositoryId: repository.repositoryId, mode: "local", trust: repository.trust, githubOriginDetected: Boolean(repositoryUrl) });
+    return { ok: true, repository, repositoryUrl, base: await adapter.snapshotBase() };
   }
 
   async cloneRepository({ repositoryId, url } = {}) {
@@ -72,8 +103,9 @@ class DesktopRepositoryService {
     const loaded = await adapter.loadRepository({ mode: "clone", sourceUrl: url, path: target });
     const repository = await this.registry.registerClone({ repositoryId, repositoryPath: loaded.repository?.path || target, sourceUrl: url, trust: TRUST_STATES.UNTRUSTED });
     this.adapters.set(this.adapterKey(repositoryId, repositoryId), adapter);
-    this.audit("repository_cloned", { repositoryId: repository.repositoryId, mode: "clone", trust: repository.trust });
-    return { ok: true, repository, base: await adapter.snapshotBase() };
+    const repositoryUrl = canonicalGitHubRepositoryUrl(url) || await this.detectGitHubOrigin(adapter);
+    this.audit("repository_cloned", { repositoryId: repository.repositoryId, mode: "clone", trust: repository.trust, githubOriginDetected: Boolean(repositoryUrl) });
+    return { ok: true, repository, repositoryUrl, base: await adapter.snapshotBase() };
   }
 
   async setRepositoryTrust({ repositoryId, trust } = {}) {
@@ -242,4 +274,4 @@ class DesktopRepositoryService {
   }
 }
 
-module.exports = { DesktopRepositoryService };
+module.exports = { DesktopRepositoryService, canonicalGitHubRepositoryUrl };

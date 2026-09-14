@@ -8,7 +8,8 @@ const path = require("node:path");
 const {
   DesktopProjectOnboarding,
   MODE_LOCAL,
-  MODE_CLONE
+  MODE_CLONE,
+  repositoryPreparationKey
 } = require("../apps/desktop/renderer/desktop-project-onboarding.js");
 
 function fakeRoot() {
@@ -27,7 +28,7 @@ function changeEvent(dataset, value, extra = {}) {
   } } };
 }
 
-test("desktop first-project onboarding opens a local repository, optionally trusts it and starts planning", async () => {
+test("desktop first-project onboarding opens a local repository, auto-detects GitHub origin, trusts it and starts planning", async () => {
   let project = null;
   const calls = [];
   const transport = {
@@ -40,7 +41,7 @@ test("desktop first-project onboarding opens a local repository, optionally trus
     },
     async execute(name, payload) {
       calls.push({ name, payload: structuredClone(payload) });
-      if (name === "openLocalRepository") return { ok: true, repository: { repositoryId: payload.repositoryId, path: payload.path, trust: "UNTRUSTED" } };
+      if (name === "openLocalRepository") return { ok: true, repository: { repositoryId: payload.repositoryId, path: payload.path, trust: "UNTRUSTED" }, repositoryUrl: "https://github.com/acme/widget" };
       if (name === "setRepositoryTrust") return { ok: true, repository: { repositoryId: payload.repositoryId, trust: payload.trust } };
       if (name === "startProject") {
         project = { projectId: "P1", status: "PLANNING", stage: "DISCOVERY", goal: payload.goal, repositoryRuntime: { repositoryId: payload.repositoryId } };
@@ -55,11 +56,11 @@ test("desktop first-project onboarding opens a local repository, optionally trus
   await app.refresh();
   assert.match(root.innerHTML, /Start your first project/);
   assert.match(root.innerHTML, /Open local repository/);
+  assert.match(root.innerHTML, /auto-detected from origin/);
 
   await app.browse();
   assert.equal(app.form.repositoryPath, "C:\\Projects\\Widget");
   app.form.mode = MODE_LOCAL;
-  app.form.repositoryUrl = "https://github.com/acme/widget";
   app.form.goal = "Implement the requested feature and verify it end to end.";
   app.form.trust = true;
 
@@ -70,7 +71,54 @@ test("desktop first-project onboarding opens a local repository, optionally trus
   assert.equal(calls[1].payload.trust, "TRUSTED");
   assert.equal(calls[2].payload.repositoryUrl, "https://github.com/acme/widget");
   assert.equal(calls[2].payload.repositoryId, calls[0].payload.repositoryId);
+  assert.equal(app.form.repositoryUrl, "https://github.com/acme/widget");
   assert.match(root.innerHTML, /Lead is planning the project/);
+});
+
+test("local repository without detectable GitHub origin can reuse preparation after manual URL entry", async () => {
+  let project = null;
+  const calls = [];
+  const transport = {
+    async query() { return { ok: true, dashboard: { project } }; },
+    async execute(name, payload) {
+      calls.push({ name, payload: structuredClone(payload) });
+      if (name === "openLocalRepository") return { ok: true, repository: { repositoryId: payload.repositoryId }, repositoryUrl: null };
+      if (name === "startProject") {
+        project = { projectId: "P-local", status: "PLANNING", stage: "DISCOVERY" };
+        return { ok: true, project };
+      }
+      return { ok: false, reason: "unexpected_command" };
+    }
+  };
+  const root = fakeRoot();
+  const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+  app.form.mode = MODE_LOCAL;
+  app.form.repositoryPath = "C:\\Projects\\NoOrigin";
+  app.form.goal = "Plan and implement the requested local repository change.";
+
+  const first = await app.startProject();
+  assert.equal(first.ok, false);
+  assert.match(first.reason, /No GitHub origin was detected/);
+  assert.deepEqual(calls.map((item) => item.name), ["openLocalRepository"]);
+
+  const preparedId = calls[0].payload.repositoryId;
+  app.form.repositoryUrl = "https://github.com/acme/no-origin";
+  app.handleInput({ target: { dataset: { projectField: "repositoryUrl" }, value: app.form.repositoryUrl } });
+  const second = await app.startProject();
+  assert.equal(second.ok, true);
+  assert.deepEqual(calls.map((item) => item.name), ["openLocalRepository", "startProject"]);
+  assert.equal(calls[1].payload.repositoryId, preparedId);
+  assert.equal(calls[1].payload.repositoryUrl, "https://github.com/acme/no-origin");
+});
+
+test("local repository preparation identity ignores optional canonical URL while clone identity follows URL", () => {
+  const localA = repositoryPreparationKey({ mode: MODE_LOCAL, repositoryPath: "C:\\Repo", repositoryUrl: "" });
+  const localB = repositoryPreparationKey({ mode: MODE_LOCAL, repositoryPath: "C:\\Repo", repositoryUrl: "https://github.com/acme/repo" });
+  assert.equal(localA, localB);
+  assert.notEqual(
+    repositoryPreparationKey({ mode: MODE_CLONE, repositoryUrl: "https://github.com/acme/a" }),
+    repositoryPreparationKey({ mode: MODE_CLONE, repositoryUrl: "https://github.com/acme/b" })
+  );
 });
 
 test("desktop first-project onboarding clones a GitHub repository before starting the project", async () => {
@@ -80,7 +128,7 @@ test("desktop first-project onboarding clones a GitHub repository before startin
     async query() { return { ok: true, dashboard: { project } }; },
     async execute(name, payload) {
       calls.push({ name, payload: structuredClone(payload) });
-      if (name === "cloneRepository") return { ok: true, repository: { repositoryId: payload.repositoryId, sourceUrl: payload.url } };
+      if (name === "cloneRepository") return { ok: true, repository: { repositoryId: payload.repositoryId, sourceUrl: payload.url }, repositoryUrl: "https://github.com/acme/widget" };
       if (name === "startProject") {
         project = { projectId: "P2", status: "PLANNING", stage: "DISCOVERY" };
         return { ok: true, project };
