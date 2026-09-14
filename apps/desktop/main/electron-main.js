@@ -64,7 +64,7 @@ if (registrationRequest) {
     .then(() => runNativeHostRegistration(registrationRequest))
     .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
     .catch((error) => {
-      process.stderr.write(`${error?.stack || error?.message || error}\n`);
+      process.stderr.write(`${error?.stack || error?.message || error}\n`))
       process.exitCode = 1;
     });
 } else if (nativeMessagingRequested()) {
@@ -100,7 +100,7 @@ if (registrationRequest) {
       setTimeout(() => {
         try {
           app.relaunch();
-          app.exit(0);
+          app.quit();
         } catch (error) {
           console.error("[ChatGPT Orchestra] desktop_restart_failed", error);
           app.exit(1);
