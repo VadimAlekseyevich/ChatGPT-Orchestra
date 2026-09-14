@@ -30,7 +30,7 @@ The release contract contains exactly the 17 scenarios from the roadmap. Automat
 | A12 | Pause/Resume | RecoveryController safe-point tests | Not required |
 | A13 | Stop Now + late event protection | stop-boundary + desktop local-process cancellation tests | Not required |
 | A14 | Local worktree salvage | workspace lifecycle/salvage tests | Not required |
-| A15 | Export/import project | Project Bundle + persistence API tests | Not required |
+| A15 | Export/import project | Project Bundle + persistence API + packaged desktop import/relaunch tests | Not required |
 | A16 | Extension-companion fallback | companion migration + desktop runtime-mode tests | Not required |
 | A17 | No duplicate irreversible side effects | EventBus idempotency + deterministic Git integration/recovery tests | Not required |
 
