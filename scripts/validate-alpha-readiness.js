@@ -10,6 +10,8 @@ const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
 const validation = read("docs/alpha-20-validation.md");
 const ci = read(".github/workflows/ci.yml");
+const releaseWorkflow = read(".github/workflows/alpha-release.yml");
+const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
 const { ALPHA_VERSION, ALPHA_ARTIFACT_NAME, ALPHA_SCENARIOS, MANUAL_SCENARIO_IDS } = require("./alpha-release-contract.js");
 
 assert.equal(pkg.version, ALPHA_VERSION, "alpha_readiness_version_mismatch");
@@ -39,6 +41,8 @@ for (const marker of [
   "Desktop-first Alpha Validation",
   "A01 and A11 require real manual evidence",
   "Issue #26 remains deferred",
+  "WINDOWS_CSC_LINK",
+  "Authenticode=Valid",
   "final `v2.0.0-alpha.20` prerelease"
 ]) assert.ok(validation.includes(marker), `alpha_validation_marker_missing:${marker}`);
 
@@ -50,11 +54,25 @@ for (const marker of [
   "npm run test:alpha",
   "npm run desktop:dist:win",
   "npm run extension:stage-alpha",
+  "./scripts/verify-windows-alpha.ps1",
   `name: ${ALPHA_ARTIFACT_NAME}`,
-  ALPHA_VERSION,
   "actions/upload-artifact@v4"
 ]) assert.ok(ci.includes(marker), `alpha_readiness_ci_marker_missing:${marker}`);
+assert.ok(windowsVerifier.includes(ALPHA_VERSION), "alpha_windows_verifier_version_mismatch");
+assert.ok(windowsVerifier.includes("alpha-signature-evidence.json"), "alpha_signature_evidence_missing");
+
+for (const marker of [
+  "workflow_dispatch:",
+  "a01_evidence:",
+  "a11_evidence:",
+  "WINDOWS_CSC_LINK",
+  "WINDOWS_CSC_KEY_PASSWORD",
+  "npm run test:alpha",
+  "verify-windows-alpha.ps1 -RequireSignature",
+  "chatgpt-orchestra-alpha20-signed-windows"
+]) assert.ok(releaseWorkflow.includes(marker), `alpha_release_workflow_marker_missing:${marker}`);
+assert.ok(!releaseWorkflow.includes("PUBLISH_FOR_PULL_REQUEST"), "alpha_release_must_not_force_pr_secrets");
 
 assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
 
-console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}`);
+console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; signed release workflow=strict`);
