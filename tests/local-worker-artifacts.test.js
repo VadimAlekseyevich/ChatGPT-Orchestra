@@ -9,6 +9,7 @@ const { execFileSync } = require("node:child_process");
 
 const { GitCliWorkspace } = require("../platform/git-cli-workspace.js");
 const { normalizeLocalChangeSet, MAX_LOCAL_CHANGE_BYTES } = require("../platform/local-change-set.js");
+const { evaluateScope } = require("../platform/workspace-scope-policy.js");
 const { TRUST_STATES } = require("../platform/local-repository-registry.js");
 const { LocalValidatingGitProvider } = require("../apps/desktop/main/local-validating-git-provider.js");
 const { createLocalReviewEngine } = require("../apps/desktop/main/local-review-engine.js");
@@ -39,6 +40,15 @@ test("file-set-v1 rejects traversal and oversized content before filesystem appl
   const result = normalizeLocalChangeSet({ format: "file-set-v1", files: [{ path: "src/large.txt", operation: "write", content: oversized }] });
   assert.equal(result.ok, false);
   assert.ok(["local_change_file_too_large", "local_change_set_too_large"].includes(result.reason));
+});
+
+test("scope policy supports globs and deny rules before change application", () => {
+  const allowed = evaluateScope(["src/value.js", "src/nested/new.js"], { allow: ["src/**"], deny: ["src/generated/**"] });
+  assert.equal(allowed.ok, true);
+  const denied = evaluateScope(["src/value.js", "src/generated/client.js"], { allow: ["src/**"], deny: ["src/generated/**"] });
+  assert.equal(denied.ok, false);
+  assert.deepEqual(denied.denied, ["src/generated/client.js"]);
+  assert.deepEqual(denied.violations, ["src/generated/client.js"]);
 });
 
 test("local worker artifact executes worktree -> changes -> scope -> tests -> commit -> review diff without push", async (t) => {
@@ -80,7 +90,7 @@ test("local worker artifact executes worktree -> changes -> scope -> tests -> co
   assert.match(review.comparison.files.find((item) => item.filename === "src/value.js").patch, /module\.exports = 2/);
 });
 
-test("local validating provider creates a local commit without invoking remote artifact validation", async () => {
+test("local validating provider creates a local commit from side-channel changes without remote artifact validation", async () => {
   const calls = [];
   const repositoryService = {
     async createTaskWorkspace() { calls.push("create"); return { ok: true, workspace: { workspaceId: "task:T1:R1" } }; },
@@ -96,12 +106,14 @@ test("local validating provider creates a local commit without invoking remote a
     async validateArtifact() { throw new Error("remote_validate_must_not_run"); }
   };
   const provider = new LocalValidatingGitProvider({ remoteProvider, repositoryService, logger: { warn() {} } });
+  const workerArtifact = { format: "file-set-v1", files: [{ path: "src/value.js", operation: "write", content: "module.exports=2;\n" }] };
   const result = await provider.validateArtifact({
     project: { projectId: "P1", repositoryRuntime: { repositoryId: "repo-1" } },
-    task: { id: "T1", kind: "code", scope: { allow: ["src"] }, localVerification: [{ command: "node", args: ["--version"] }] },
+    task: { id: "T1", kind: "code", scope: { allow: ["src/**"], deny: ["src/generated/**"] }, localVerification: [{ command: "node", args: ["--version"] }] },
     run: { runId: "R1", git: { required: true, branch: "orchestra/P1/T1/R1", baseSha: "a".repeat(40), startSha: "a".repeat(40), targetBranch: "main" } },
     snapshot: { baseSha: "a".repeat(40), defaultBranch: "main" },
-    payload: { localChanges: { format: "file-set-v1", files: [{ path: "src/value.js", operation: "write", content: "module.exports=2;\n" }] } }
+    payload: { artifactFormat: "file-set-v1" },
+    source: { workerArtifact }
   });
   assert.equal(result.ok, true);
   assert.equal(result.artifact.localOnly, true);
@@ -109,7 +121,28 @@ test("local validating provider creates a local commit without invoking remote a
   assert.deepEqual(calls, ["freshness", "create", "apply", "scope", "verify", "commit", "artifact"]);
 });
 
-test("local-bound Worker prompt forbids intermediate push and requires file-set-v1 instead of git commit metadata", () => {
+test("local validating provider rejects scope.deny before writing Worker changes", async () => {
+  let applied = false;
+  const provider = new LocalValidatingGitProvider({
+    remoteProvider: { async validateArtifact() { throw new Error("remote_validate_must_not_run"); } },
+    repositoryService: { async applyWorkerChanges() { applied = true; throw new Error("must_not_apply"); } },
+    logger: { warn() {} }
+  });
+  const result = await provider.validateArtifact({
+    project: { projectId: "P1", repositoryRuntime: { repositoryId: "repo-1" } },
+    task: { id: "T1", kind: "code", scope: { allow: ["src/**"], deny: ["src/generated/**"] }, localVerification: [{ command: "node", args: ["--version"] }] },
+    run: { runId: "R1", git: { required: true, branch: "orchestra/P1/T1/R1", baseSha: "a".repeat(40), startSha: "a".repeat(40), targetBranch: "main" } },
+    snapshot: { baseSha: "a".repeat(40), defaultBranch: "main" },
+    payload: { artifactFormat: "file-set-v1" },
+    source: { workerArtifact: { format: "file-set-v1", files: [{ path: "src/generated/client.js", operation: "write", content: "generated\n" }] } }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "local_scope_violation");
+  assert.equal(applied, false);
+  assert.deepEqual(result.local.scope.denied, ["src/generated/client.js"]);
+});
+
+test("local-bound Worker prompt forbids intermediate push and keeps file contents outside compact @@ORCH payload", () => {
   const prompt = WorkerPrompts.buildWorkerPrompt({
     project: { projectId: "P1", repository: { url: "https://github.com/acme/widget" }, repositoryRuntime: { repositoryId: "repo-1" }, initialGoal: "make a safe change" },
     task: { id: "T1", kind: "code", scope: { allow: ["src"] }, acceptanceCriteria: ["works"] },
@@ -119,7 +152,10 @@ test("local-bound Worker prompt forbids intermediate push and requires file-set-
   });
   assert.match(prompt, /file-set-v1/);
   assert.match(prompt, /Do NOT push an intermediate task branch/);
-  assert.match(prompt, /payload\.localChanges is mandatory/);
+  assert.match(prompt, /@@ORCH_WORKER_ARTIFACT_BEGIN/);
+  assert.match(prompt, /Worker artifact block is mandatory/);
+  assert.match(prompt, /artifactFormat=file-set-v1/);
+  assert.doesNotMatch(prompt, /payload\.localChanges/);
   assert.doesNotMatch(prompt, /Push the task branch before reporting DONE/);
 });
 
