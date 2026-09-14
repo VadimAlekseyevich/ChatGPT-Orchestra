@@ -61,6 +61,7 @@ class ManagedBrowserAgentRuntime {
     this.nextAgent = 1;
     this.agents = new Map();
     this.unsubscribeDriver = null;
+    this.hostHandlers = null;
   }
 
   async load() {
@@ -132,6 +133,30 @@ class ManagedBrowserAgentRuntime {
     });
   }
 
+  bindHostHandlers({ onRuntimeMessage, onApiMessage, onSessionRemoved, onSessionUpdated } = {}) {
+    this.hostHandlers = {
+      onRuntimeMessage: typeof onRuntimeMessage === "function" ? onRuntimeMessage : null,
+      onApiMessage: typeof onApiMessage === "function" ? onApiMessage : null,
+      onSessionRemoved: typeof onSessionRemoved === "function" ? onSessionRemoved : null,
+      onSessionUpdated: typeof onSessionUpdated === "function" ? onSessionUpdated : null
+    };
+    return () => this.unbindHostHandlers();
+  }
+
+  unbindHostHandlers() { this.hostHandlers = null; }
+
+  async publishRuntimeMessage(message, sender = {}) {
+    const handler = this.hostHandlers?.onRuntimeMessage;
+    if (!handler) return { ok: false, reason: "managed_browser_host_unbound" };
+    return handler(message, this.normalizeSender(sender));
+  }
+
+  async publishApiMessage(message, sender = {}) {
+    const handler = this.hostHandlers?.onApiMessage;
+    if (!handler) return { ok: false, reason: "managed_browser_host_unbound" };
+    return handler(message, this.normalizeSender(sender));
+  }
+
   async setRuntimeStatus(status) {
     this.runtimeStatus = String(status || "idle");
     this.updatedAt = this.clock();
@@ -186,7 +211,7 @@ class ManagedBrowserAgentRuntime {
     const id = String(sessionId ?? "");
     const agent = this.getAgentBySessionId(id);
     const result = await this.driver.removeSession(id);
-    if (agent) await this.markSessionOffline(id, "session_removed");
+    if (agent && !this.hostHandlers?.onSessionRemoved) await this.markSessionOffline(id, "session_removed");
     return result;
   }
 
@@ -335,20 +360,30 @@ class ManagedBrowserAgentRuntime {
 
   async handleDriverEvent(event = {}) {
     const type = String(event.type || "");
-    if (type === "session-removed") return this.markSessionOffline(event.sessionId, event.reason || "session_removed");
-    if (type === "session-navigation") return this.updateSessionNavigation(event.sessionId, event.url || "");
+    if (type === "runtime-message") return this.publishRuntimeMessage(event.message || {}, { sessionId: event.sessionId, agentId: event.agentId, url: event.url || "" });
+    if (type === "api-message") return this.publishApiMessage(event.message || {}, { sessionId: event.sessionId, agentId: event.agentId, url: event.url || "" });
+    if (type === "session-removed") {
+      if (this.hostHandlers?.onSessionRemoved) return this.hostHandlers.onSessionRemoved(String(event.sessionId ?? ""));
+      return this.markSessionOffline(event.sessionId, event.reason || "session_removed");
+    }
+    if (type === "session-navigation") {
+      const sessionId = String(event.sessionId ?? "");
+      if (this.hostHandlers?.onSessionUpdated) {
+        const session = await this.driver.getSession(sessionId).catch?.(() => null) || null;
+        return this.hostHandlers.onSessionUpdated(sessionId, { url: String(event.url || "") }, session);
+      }
+      return this.updateSessionNavigation(sessionId, event.url || "");
+    }
     if (type === "heartbeat") return this.updateHeartbeat(event.sessionId, event.payload || {}, event.url || "");
     if (type === "browser-crashed") {
-      const now = this.clock();
-      for (const agent of this.agents.values()) {
-        agent.status = "OFFLINE";
-        agent.lastError = String(event.reason || "browser_crashed");
-        agent.sessionId = null;
-        agent.tabId = null;
-        agent.updatedAt = now;
+      const bindings = [...this.agents.values()].map((agent) => ({ agentId: agent.agentId, sessionId: this.sessionIdForAgent(agent) })).filter((item) => item.sessionId);
+      if (this.hostHandlers?.onSessionRemoved) {
+        for (const binding of bindings) await this.hostHandlers.onSessionRemoved(binding.sessionId);
+      } else {
+        for (const binding of bindings) await this.markSessionOffline(binding.sessionId, event.reason || "browser_crashed");
       }
       this.runtimeStatus = "offline";
-      this.updatedAt = now;
+      this.updatedAt = this.clock();
       return this.snapshot();
     }
     return null;
@@ -361,6 +396,7 @@ class ManagedBrowserAgentRuntime {
   async close() {
     try { this.unsubscribeDriver?.(); } catch (_) {}
     this.unsubscribeDriver = null;
+    this.unbindHostHandlers();
     if (this.started) await this.driver.close();
     this.started = false;
   }
