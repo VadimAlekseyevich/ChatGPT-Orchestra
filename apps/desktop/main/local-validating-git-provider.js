@@ -118,7 +118,13 @@ class LocalValidatingGitProvider {
     try {
       const applied = await this.repositoryService.applyWorkerChanges({ projectId: project.projectId, repositoryId, workspaceId, changeSet: normalized.changeSet });
       if (!applied?.ok) return { ok: false, reason: applied?.reason || "local_change_set_apply_failed", local: { ok: false, workspaceId, applied } };
-      const scope = await this.repositoryService.workspaceScope({ projectId: project.projectId, repositoryId, workspaceId, allowedPaths: task.scope?.allow || [] });
+      const scope = await this.repositoryService.workspaceScope({
+        projectId: project.projectId,
+        repositoryId,
+        workspaceId,
+        allowedPaths: task.scope?.allow || [],
+        deniedPaths: task.scope?.deny || []
+      });
       if (!scope?.scope?.ok) return { ok: false, reason: "local_scope_violation", local: { ok: false, workspaceId, scope: scope?.scope || null } };
 
       const verified = await this.verifyPreparedWorkspace({ project, task, run, repositoryId, workspaceId, localScope: scope.scope });
@@ -175,7 +181,13 @@ class LocalValidatingGitProvider {
 
     try {
       const materialized = await this.repositoryService.materializeTaskArtifact({ projectId: project.projectId, repositoryId, workspaceId, commit: remote.artifact?.commit, branch: remote.artifact?.branch || run.git?.branch, remote: "origin" });
-      const scope = await this.repositoryService.workspaceScope({ projectId: project.projectId, repositoryId, workspaceId, allowedPaths: task.scope?.allow || [] });
+      const scope = await this.repositoryService.workspaceScope({
+        projectId: project.projectId,
+        repositoryId,
+        workspaceId,
+        allowedPaths: task.scope?.allow || [],
+        deniedPaths: task.scope?.deny || []
+      });
       const localArtifact = materialized?.artifact || null;
       const localScope = scope?.scope || null;
       if (!materialized?.ok || !localArtifact?.head) return { ok: false, reason: "git_repository_or_ref_unavailable", remote, local: { ok: false, reason: "local_artifact_materialize_failed", materialized } };
