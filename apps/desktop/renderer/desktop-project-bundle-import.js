@@ -19,6 +19,7 @@
       this.confirmAction = confirmAction || ((message) => typeof globalThis.confirm === "function" ? globalThis.confirm(message) : false);
       this.project = null;
       this.recoveryStatus = "IDLE";
+      this.repositoryBindingMissing = false;
       this.busy = false;
       this.lastError = null;
       this.notice = null;
@@ -55,6 +56,13 @@
         if (!response?.ok) throw new Error(response?.reason || "dashboard_query_failed");
         this.project = response.dashboard?.project || null;
         this.recoveryStatus = String(response.dashboard?.recovery?.status || "IDLE");
+        this.repositoryBindingMissing = false;
+        const repositoryId = this.project?.repositoryRuntime?.repositoryId || null;
+        if (repositoryId) {
+          const linked = await this.transport.query("repository", { repositoryId });
+          if (!linked?.ok && linked?.reason === "repository_not_registered") this.repositoryBindingMissing = true;
+          else if (!linked?.ok && linked?.reason !== "repository_service_unavailable") throw new Error(linked?.reason || "repository_query_failed");
+        }
         this.lastError = null;
       } catch (error) {
         this.lastError = String(error?.message || error || "project_bundle_import_refresh_failed");
@@ -64,11 +72,30 @@
       }
     }
 
+    renderRepositoryRecovery() {
+      if (!this.repositoryBindingMissing) return "";
+      const repositoryId = this.project?.repositoryRuntime?.repositoryId || "";
+      const repositoryUrl = this.project?.repository?.url || "";
+      return `<div class="dashboard-error">
+        <strong>Local repository rebind required.</strong>
+        <p>This imported project references a desktop repository that is not registered on this host. Resume, execution and integration stay blocked until the canonical repository is restored.</p>
+        <div class="dashboard-kv compact">
+          <span>Repository</span><strong>${escapeHtml(repositoryUrl || "unknown")}</strong>
+          <span>Logical id</span><strong>${escapeHtml(repositoryId)}</strong>
+        </div>
+        <div class="dashboard-task-controls">
+          <button data-project-bundle-action="restore-repository" ${this.busy || !repositoryUrl ? "disabled" : ""}>Clone and Rebind Repository</button>
+        </div>
+        <small>The restored repository starts UNTRUSTED. Re-enable Local Execution only after verifying the checkout. Existing local-only artifacts still pass normal recovery checks; they are never assumed to exist on a different host.</small>
+      </div>`;
+    }
+
     render() {
       const allowed = this.canImport();
       const projectLabel = this.project?.projectId ? `Current project: ${this.project.projectId}` : "No active project";
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-bundle-import">
         <div class="dashboard-section-head"><h3>Project Bundle</h3><span>${escapeHtml(this.recoveryStatus)}</span></div>
+        ${this.renderRepositoryRecovery()}
         <p class="dashboard-muted">Import a portable Orchestra Project Bundle. The bundle is validated before mutation; browser/runtime identities and secrets are not restored.</p>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         ${this.notice ? `<div class="dashboard-evidence"><strong>${escapeHtml(this.notice)}</strong></div>` : ""}
@@ -85,6 +112,32 @@
       this.notice = null;
       this.render();
       return { ok: false, reason: this.lastError };
+    }
+
+    async restoreRepository() {
+      if (!this.repositoryBindingMissing) return { ok: true, ignored: true };
+      const repositoryId = this.project?.repositoryRuntime?.repositoryId || null;
+      const repositoryUrl = this.project?.repository?.url || null;
+      if (!repositoryId || !repositoryUrl) return this.setError("Imported project does not contain enough repository identity to restore safely.");
+      const confirmed = this.confirmAction(`Clone ${repositoryUrl} into Orchestra data and bind it to the imported project? Existing portable project state will not be changed.`);
+      if (!confirmed) return { ok: false, cancelled: true };
+
+      this.busy = true;
+      this.lastError = null;
+      this.notice = null;
+      this.render();
+      try {
+        const response = await this.transport.execute("cloneRepository", { repositoryId, url: repositoryUrl });
+        if (!response?.ok) return this.setError(`Repository restore failed: ${response?.reason || "unknown_error"}`);
+        this.notice = "Repository restored. Local Execution remains disabled until you explicitly trust this checkout.";
+        await this.refresh();
+        return response;
+      } catch (error) {
+        return this.setError(error?.message || error || "repository_restore_failed");
+      } finally {
+        this.busy = false;
+        this.render();
+      }
     }
 
     async importFile(file) {
@@ -131,7 +184,8 @@
     handleClick(event) {
       const button = event.target?.closest?.("[data-project-bundle-action]");
       if (!button || button.disabled) return;
-      if (button.dataset.projectBundleAction === "import") this.rootElement.querySelector?.("[data-project-bundle-file]")?.click?.();
+      if (button.dataset.projectBundleAction === "import") return this.rootElement.querySelector?.("[data-project-bundle-file]")?.click?.();
+      if (button.dataset.projectBundleAction === "restore-repository") return this.restoreRepository();
     }
 
     async handleChange(event) {
