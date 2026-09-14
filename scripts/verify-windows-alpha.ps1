@@ -5,16 +5,26 @@ param(
 $ErrorActionPreference = "Stop"
 $desktop = "dist/desktop/win-unpacked/ChatGPT Orchestra.exe"
 $extension = "dist/alpha-extension/manifest.json"
+$buildEvidencePath = "dist/desktop/alpha-build-evidence.json"
 $installer = Get-ChildItem "dist/desktop" -Filter "*.exe" -File |
   Where-Object { $_.FullName -ne (Resolve-Path $desktop -ErrorAction SilentlyContinue) } |
   Select-Object -First 1
 
 if (!(Test-Path $desktop -PathType Leaf)) { throw "missing_alpha_desktop_executable:$desktop" }
 if (!(Test-Path $extension -PathType Leaf)) { throw "missing_alpha_extension_manifest:$extension" }
+if (!(Test-Path $buildEvidencePath -PathType Leaf)) { throw "missing_alpha_build_evidence:$buildEvidencePath" }
 if (!$installer) { throw "missing_alpha_windows_installer" }
 
 $manifest = Get-Content $extension -Raw | ConvertFrom-Json
 if ($manifest.version_name -ne "2.0.0-alpha.20") { throw "alpha_extension_version_mismatch" }
+
+$buildEvidence = Get-Content $buildEvidencePath -Raw | ConvertFrom-Json
+$buildCommit = [string]$buildEvidence.commit
+if ([string]$buildEvidence.version -ne "2.0.0-alpha.20") { throw "alpha_build_evidence_version_mismatch" }
+if ($buildCommit -notmatch '^[a-fA-F0-9]{40}$') { throw "alpha_build_evidence_commit_invalid" }
+if (![string]::IsNullOrWhiteSpace($env:ORCHESTRA_BUILD_COMMIT) -and $buildCommit.ToLowerInvariant() -ne ([string]$env:ORCHESTRA_BUILD_COMMIT).ToLowerInvariant()) {
+  throw "alpha_build_evidence_commit_mismatch"
+}
 
 $signatureEvidence = @()
 foreach ($signedFile in @((Resolve-Path $desktop).Path, $installer.FullName)) {
@@ -38,8 +48,9 @@ foreach ($signedFile in @((Resolve-Path $desktop).Path, $installer.FullName)) {
 }
 
 $evidence = [ordered]@{
-  schemaVersion = 1
+  schemaVersion = 2
   version = [string]$manifest.version_name
+  buildCommit = $buildCommit.ToLowerInvariant()
   requireSignature = [bool]$RequireSignature
   installer = [string]$installer.Name
   signatures = $signatureEvidence
@@ -51,5 +62,6 @@ if (!$RequireSignature -and ($signatureEvidence | Where-Object { $_.status -eq "
   Write-Warning "Unsigned PR/CI alpha candidate detected. Final release validation requires Authenticode=Valid."
 }
 
+Write-Host "alpha build commit: $buildCommit"
 Write-Host "alpha installer: $($installer.FullName)"
 Write-Host "signature evidence: $evidencePath"
