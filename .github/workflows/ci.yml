@@ -138,6 +138,8 @@ jobs:
     name: Alpha candidate installer / Windows Node 22
     runs-on: windows-latest
     needs: [desktop-alpha]
+    env:
+      ORCHESTRA_BUILD_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -151,7 +153,7 @@ jobs:
         run: npm run desktop:dist:win
       - name: Stage fallback extension
         run: npm run extension:stage-alpha
-      - name: Verify alpha artifact layout and signing evidence
+      - name: Verify alpha artifact layout, build identity and signing evidence
         shell: pwsh
         run: ./scripts/verify-windows-alpha.ps1
       - name: Upload Windows alpha candidate
@@ -162,6 +164,7 @@ jobs:
           retention-days: 14
           path: |
             dist/desktop/*.exe
+            dist/desktop/alpha-build-evidence.json
             dist/desktop/alpha-signature-evidence.json
             dist/desktop/win-unpacked
             dist/alpha-extension
