@@ -306,7 +306,7 @@ class ManagedBrowserAgentRuntime {
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
     if (payload.generating === true || payload.availability === "generating") mutable.status = "BUSY";
-    else if (payload.availability === "ready" || payload.generating === false) mutable.status = "IDLE";
+    else if (payload.availability === "ready") mutable.status = "IDLE";
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
     mutable.lastError = null;
@@ -369,7 +369,8 @@ class ManagedBrowserAgentRuntime {
     if (type === "session-navigation") {
       const sessionId = String(event.sessionId ?? "");
       if (this.hostHandlers?.onSessionUpdated) {
-        const session = await this.driver.getSession(sessionId).catch?.(() => null) || null;
+        let session = null;
+        try { session = await this.driver.getSession(sessionId); } catch (_) { session = null; }
         return this.hostHandlers.onSessionUpdated(sessionId, { url: String(event.url || "") }, session);
       }
       return this.updateSessionNavigation(sessionId, event.url || "");
