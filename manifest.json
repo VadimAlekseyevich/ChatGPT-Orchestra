@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
-  "version_name": "2.0.0-alpha.16",
-  "description": "Multi-agent orchestration for ChatGPT coding workflows with a Phase 16 desktop control-plane checkpoint and Edge companion bridge.",
+  "version_name": "2.0.0-alpha.20",
+  "description": "Optional extension companion/fallback for the ChatGPT Orchestra desktop-first alpha.",
   "permissions": ["storage", "tabs", "alarms", "nativeMessaging"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],
   "background": {
