@@ -5,6 +5,7 @@
   const MODE_LOCAL = "local";
   const MODE_CLONE = "clone";
   const PROJECT_MODES = new Set([MODE_LOCAL, MODE_CLONE]);
+  const TERMINAL_PROJECT_STATUSES = new Set(["INTEGRATION_VERIFIED", "FAILED", "CANCELLED"]);
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -32,6 +33,17 @@
     return JSON.stringify({ mode: MODE_CLONE, repositoryUrl: String(state.repositoryUrl || "").trim() });
   }
 
+  function defaultForm() {
+    return {
+      mode: MODE_LOCAL,
+      goal: "",
+      repositoryPath: "",
+      repositoryUrl: "",
+      trust: false,
+      maxWorkers: 4
+    };
+  }
+
   class DesktopProjectOnboarding {
     constructor({ rootElement, transport, pollMs = 3000 } = {}) {
       if (!rootElement) throw new TypeError("desktop_project_onboarding_root_required");
@@ -40,19 +52,14 @@
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 3000);
       this.project = null;
+      this.agents = [];
+      this.newProjectRequested = false;
       this.busy = false;
       this.lastError = null;
       this.timer = null;
       this.refreshing = false;
       this.preparedRepository = null;
-      this.form = {
-        mode: MODE_LOCAL,
-        goal: "",
-        repositoryPath: "",
-        repositoryUrl: "",
-        trust: false,
-        maxWorkers: 4
-      };
+      this.form = defaultForm();
       this.onClick = (event) => this.handleClick(event);
       this.onInput = (event) => this.handleInput(event);
       this.onChange = (event) => this.handleChange(event);
@@ -82,6 +89,7 @@
         const response = await this.transport.query("dashboard", { eventLimit: 1, decisionLimit: 1, minimumSeverity: "warning" });
         if (!response?.ok) throw new Error(response?.reason || "dashboard_query_failed");
         this.project = response.dashboard?.project || null;
+        this.agents = Array.isArray(response.dashboard?.agents) ? response.dashboard.agents : [];
       } catch (error) {
         this.lastError = String(error?.message || error || "project_onboarding_refresh_failed");
       } finally {
@@ -90,12 +98,20 @@
       }
     }
 
+    leadReady() {
+      return this.agents.some((agent) => String(agent?.role || "").toLowerCase() === "lead" && agent?.connected === true && String(agent?.status || "") === "IDLE");
+    }
+
     render() {
-      if (this.project?.status === "READY") {
+      if (this.project && !this.newProjectRequested && TERMINAL_PROJECT_STATUSES.has(String(this.project.status || ""))) {
+        this.rootElement.innerHTML = this.renderTerminalProject();
+        return;
+      }
+      if (this.project?.status === "READY" && !this.newProjectRequested) {
         this.rootElement.innerHTML = this.renderExecutionStart();
         return;
       }
-      if (this.project) {
+      if (this.project && !this.newProjectRequested) {
         const planning = this.project.status === "PLANNING";
         this.rootElement.innerHTML = planning
           ? `<section class="dashboard-section desktop-project-onboarding">
@@ -108,9 +124,20 @@
         return;
       }
 
+      if (!this.leadReady()) {
+        this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-onboarding">
+          <div class="dashboard-section-head"><h3>Project setup</h3><span>WAITING FOR LEAD</span></div>
+          ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
+          <p><strong>Connect the Lead before starting a project.</strong></p>
+          <p class="dashboard-muted">Finish ChatGPT sign-in above, wait for the page to become ready, then choose “Register this ChatGPT page as Lead”. The project form will appear automatically when the Lead is connected and IDLE.</p>
+        </section>`;
+        return;
+      }
+
       const local = this.form.mode === MODE_LOCAL;
+      const heading = this.newProjectRequested ? "Start another project" : "Start your first project";
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-onboarding">
-        <div class="dashboard-section-head"><h3>Start your first project</h3><span>Phase 20</span></div>
+        <div class="dashboard-section-head"><h3>${heading}</h3><span>READY</span></div>
         <p class="dashboard-muted">Choose a repository, describe the outcome you want, then Orchestra will ask the registered Lead to plan the work.</p>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         <div class="dashboard-task-controls">
@@ -157,6 +184,27 @@
       </section>`;
     }
 
+    renderTerminalProject() {
+      const status = String(this.project?.status || "COMPLETE");
+      const verified = status === "INTEGRATION_VERIFIED";
+      return `<section class="dashboard-section desktop-project-onboarding">
+        <div class="dashboard-section-head"><h3>${verified ? "Project complete" : "Project ended"}</h3><span>${escapeHtml(status)}</span></div>
+        ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
+        <p><strong>${verified ? "Integration is verified." : "This project is no longer running."}</strong></p>
+        <p class="dashboard-muted">The previous project remains persisted for audit/export. Starting another project only changes which project is active.</p>
+        <div class="dashboard-task-controls"><button data-project-action="new-project">Start another project</button></div>
+      </section>`;
+    }
+
+    resetForNewProject() {
+      this.newProjectRequested = true;
+      this.preparedRepository = null;
+      this.form = defaultForm();
+      this.lastError = null;
+      this.render();
+      return { ok: true };
+    }
+
     setError(reason) {
       this.lastError = String(reason || "unknown_error");
       this.render();
@@ -201,6 +249,7 @@
     }
 
     async startProject() {
+      if (!this.leadReady()) return this.setError("Connect the Lead and wait for it to become IDLE before starting a project.");
       const validated = this.validateForm();
       if (!validated.ok) return this.setError(validated.reason);
       this.busy = true;
@@ -223,6 +272,7 @@
           repositoryId: prepared.repositoryId
         });
         if (!started?.ok) return this.setError(started?.reason || "project_start_failed");
+        this.newProjectRequested = false;
         this.lastError = null;
         await this.refresh();
         return started;
@@ -283,6 +333,7 @@
       if (action === "browse") return this.browse();
       if (action === "start") return this.startProject();
       if (action === "execute") return this.startExecution();
+      if (action === "new-project") return this.resetForNewProject();
     }
   }
 
@@ -291,8 +342,10 @@
     DesktopProjectOnboarding,
     MODE_LOCAL,
     MODE_CLONE,
+    TERMINAL_PROJECT_STATUSES,
     normalizeGitHubUrl,
     createRepositoryId,
-    repositoryPreparationKey
+    repositoryPreparationKey,
+    defaultForm
   };
 })();
