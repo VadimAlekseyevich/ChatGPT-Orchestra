@@ -1,6 +1,6 @@
 # ChatGPT Orchestra `2.0.0-alpha.20` — Desktop-first Alpha Validation
 
-This is the release runbook for the Phase 20 desktop-first alpha. The desktop managed-browser runtime is the primary path; the extension companion remains an explicit fallback. Issue #26 remains deferred until after alpha validation and is not part of this release gate.
+This is the release runbook for the Phase 20 desktop-first alpha. The desktop managed-browser runtime is the primary path; the extension companion remains an explicit fallback.
 
 ## Automated candidate gate
 

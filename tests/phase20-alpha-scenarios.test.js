@@ -71,7 +71,6 @@ test("operator validation document covers every roadmap scenario and preserves m
     assert.ok(validationDoc.includes(scenario.title), `alpha_validation_doc_missing_title:${scenario.id}`);
   }
   assert.ok(validationDoc.includes("A01 and A11 require real manual evidence"));
-  assert.ok(validationDoc.includes("Issue #26 remains deferred"));
   assert.ok(validationDoc.includes("WINDOWS_CSC_LINK"));
   assert.ok(validationDoc.includes("Authenticode=Valid"));
 });

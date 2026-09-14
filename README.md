@@ -20,8 +20,6 @@ The current source candidate is **`2.0.0-alpha.20`**. Phases 0–20 are implemen
 
 Tracking issue: [#43 — complete manual alpha validation and signed Windows release](https://github.com/VadimAlekseyevich/ChatGPT-Orchestra/issues/43).
 
-Issue #26 (external execution feedback loop) remains deferred until after alpha validation.
-
 ## What it is
 
 ChatGPT Orchestra coordinates Lead, Worker, Reviewer and Integrator agents around durable project state. Chats are executors, not the source of truth: planning, DAG state, run identities, local Git provenance, review, integration, recovery and observability live in Orchestra.
@@ -43,6 +41,9 @@ managed ChatGPT agents     trusted local verification
 
 ## Desktop-first alpha capabilities
 
+- guided first-project flow after Lead readiness: open a local repository or clone from GitHub, set a goal and start planning;
+- automatic canonical GitHub URL detection from a local repository `origin` when available, with manual fallback;
+- one active project at a time with a clear terminal-state path to start another project without deleting prior history;
 - local repository registration and clone;
 - isolated task and integration Git worktrees;
 - explicit repository trust before local commands may run;

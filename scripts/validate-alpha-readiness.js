@@ -40,7 +40,6 @@ for (const scenario of ALPHA_SCENARIOS) {
 for (const marker of [
   "Desktop-first Alpha Validation",
   "A01 and A11 require real manual evidence",
-  "Issue #26 remains deferred",
   "WINDOWS_CSC_LINK",
   "Authenticode=Valid",
   "final `v2.0.0-alpha.20` prerelease"
