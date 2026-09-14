@@ -165,7 +165,7 @@ jobs:
           foreach ($signedFile in @((Resolve-Path $desktop).Path, $installer.FullName)) {
             $signature = Get-AuthenticodeSignature $signedFile
             Write-Host "Authenticode $signedFile => $($signature.Status); signer=$($signature.SignerCertificate.Subject)"
-            if ($signature.Status -ne "Valid" -or !$signature.SignerCertificate) { throw "alpha_windows_signature_invalid:$signedFile:$($signature.Status)" }
+            if ($signature.Status -ne "Valid" -or !$signature.SignerCertificate) { throw "alpha_windows_signature_invalid:${signedFile}:$($signature.Status)" }
           }
           Write-Host "alpha installer: $($installer.FullName)"
       - name: Upload Windows alpha candidate
