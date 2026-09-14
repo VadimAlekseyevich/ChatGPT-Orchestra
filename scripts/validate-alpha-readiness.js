@@ -12,6 +12,7 @@ const validation = read("docs/alpha-20-validation.md");
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
 const windowsBuildWrapper = read("scripts/build-windows-alpha.js");
+const releaseAssetPreparer = read("scripts/prepare-alpha-release-assets.js");
 const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
 const evidenceReferenceValidator = read("scripts/validate-alpha-evidence-reference.js");
 const evidenceCommentValidator = read("scripts/validate-alpha-evidence-comments.js");
@@ -36,6 +37,7 @@ for (const requiredTest of [
   "tests/alpha-manual-evidence.test.js",
   "tests/alpha-evidence-comments.test.js",
   "tests/alpha-build-identity.test.js",
+  "tests/alpha-release-assets.test.js",
   "tests/desktop-runtime-evidence.test.js"
 ]) assert.ok(phase20Gate.includes(requiredTest), `alpha_phase20_required_test_not_gated:${requiredTest}`);
 
@@ -85,6 +87,7 @@ for (const marker of [
   "workflow_dispatch:",
   "a01_evidence:",
   "a11_evidence:",
+  "contents: write",
   "validate-alpha-evidence-reference.js",
   "validate-alpha-evidence-comments.js",
   "ALPHA_EXPECTED_COMMIT: ${{ github.sha }}",
@@ -94,9 +97,23 @@ for (const marker of [
   "npm run test:alpha",
   "alpha-build-evidence.json",
   "verify-windows-alpha.ps1 -RequireSignature",
+  "prepare-alpha-release-assets.js",
+  "alpha-release-manifest.json",
+  "SHA256SUMS.txt",
+  "gh release create $tag",
+  "--target $env:GITHUB_SHA",
+  "--prerelease",
+  "Verify published prerelease tag and assets",
   "chatgpt-orchestra-alpha20-signed-windows"
 ]) assert.ok(releaseWorkflow.includes(marker), `alpha_release_workflow_marker_missing:${marker}`);
 assert.ok(!releaseWorkflow.includes("PUBLISH_FOR_PULL_REQUEST"), "alpha_release_must_not_force_pr_secrets");
+
+for (const marker of [
+  "alpha_release_signature_not_valid",
+  "alpha_release_manual_scenarios_incomplete",
+  "alpha-release-manifest.json",
+  "SHA256SUMS.txt"
+]) assert.ok(releaseAssetPreparer.includes(marker), `alpha_release_asset_gate_missing:${marker}`);
 
 assert.ok(evidenceReferenceValidator.includes("issuecomment-"), "alpha_evidence_validator_must_require_comment_permalink");
 assert.ok(evidenceReferenceValidator.includes("VadimAlekseyevich"), "alpha_evidence_validator_owner_drift");
@@ -106,4 +123,4 @@ assert.ok(evidenceCommentValidator.includes("alpha_manual_evidence_build_commit_
 
 assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
 
-console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; signed release workflow=strict; build identity=commit-bound`);
+console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; signed release workflow=strict; build identity=commit-bound; publish=prerelease-after-strict-gates`);
