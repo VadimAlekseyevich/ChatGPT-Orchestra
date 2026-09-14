@@ -10,7 +10,7 @@ Run:
 npm run test:alpha
 ```
 
-The Windows CI job must also build the unpacked desktop executable, stage the fallback extension, verify version consistency, and upload the `chatgpt-orchestra-alpha20-windows` artifact.
+The Windows CI job builds the unpacked desktop executable and NSIS installer, stages the fallback extension, verifies version consistency, records Authenticode status in `alpha-signature-evidence.json`, and uploads the `chatgpt-orchestra-alpha20-windows` candidate artifact. Pull-request builds do not receive release signing credentials; an unsigned `NotSigned` PR candidate is therefore allowed only as candidate evidence and must never be treated as the final published alpha.
 
 The release contract contains exactly the 17 scenarios from the roadmap. Automated evidence is mandatory for all 17. A01 and A11 require real manual evidence in addition to automation because CI cannot truthfully prove an interactive ChatGPT login on a fresh user profile or a real OS reboot.
 
@@ -46,8 +46,22 @@ Start a local-repository project, reach a persisted recoverable state with at le
 
 Record at minimum: alpha version, project/repository reference, state before restart, state after relaunch, recovery decision, resumed run/task identities, verification that no duplicate irreversible side effect occurred, timestamp, and tester identity/reference.
 
+## Signed release validation
+
+Final distribution uses the manual GitHub Actions workflow **Alpha Release Validation** (`.github/workflows/alpha-release.yml`). It requires non-placeholder A01 and A11 evidence references as workflow inputs and a real Windows code-signing certificate supplied through repository secrets `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD`.
+
+The workflow reruns `npm run test:alpha`, builds the Windows NSIS installer, stages the fallback extension, and executes:
+
+```text
+./scripts/verify-windows-alpha.ps1 -RequireSignature
+```
+
+Both the unpacked `ChatGPT Orchestra.exe` and the installer must report **Authenticode=Valid** with a signer certificate. `NotSigned` is acceptable only for ordinary PR/CI candidate artifacts; it blocks the signed release validation workflow. The strict workflow uploads `chatgpt-orchestra-alpha20-signed-windows` plus signature evidence and the supplied manual evidence references. It does not create a GitHub tag or release automatically.
+
+Do not enable `PUBLISH_FOR_PULL_REQUEST=true` to expose release credentials to PR builds. Release signing stays isolated from pull-request CI.
+
 ## Release decision
 
-The automated CI candidate gate must be green. A01 and A11 must each have real PASS evidence before publishing the final `v2.0.0-alpha.20` prerelease. A failure in either manual scenario blocks the final alpha tag and returns to Phase 20 fix/verify work.
+The automated CI candidate gate must be green. A01 and A11 must each have real PASS evidence, and the strict signed release workflow must complete with Authenticode=Valid before publishing the final `v2.0.0-alpha.20` prerelease. A failure in either manual scenario or signing validation blocks the final alpha tag and returns to Phase 20 fix/verify work.
 
 The alpha keeps final target-branch merge/push manual by default. Local command execution remains repository-trust gated, extension companion remains optional fallback, and unknown recovery state remains fail-closed.
