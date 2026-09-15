@@ -13,7 +13,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
   issues: read
 
 concurrency:
@@ -22,18 +22,14 @@ concurrency:
 
 jobs:
   signed-alpha:
-    name: Signed Windows alpha release validation and publish
+    name: Signed Windows alpha release validation
     runs-on: windows-latest
     env:
       A01_EVIDENCE: ${{ inputs.a01_evidence }}
       A11_EVIDENCE: ${{ inputs.a11_evidence }}
-      GITHUB_TOKEN: ${{ github.token }}
-      GH_TOKEN: ${{ github.token }}
       ALPHA_EXPECTED_COMMIT: ${{ github.sha }}
       ORCHESTRA_BUILD_COMMIT: ${{ github.sha }}
       ALPHA_EVIDENCE_VALIDATION_OUTPUT: .alpha-release/manual-evidence-validation.json
-      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,6 +41,8 @@ jobs:
           if ($env:GITHUB_REF -ne "refs/heads/main") { throw "alpha_release_validation_must_run_from_main" }
       - name: Require unused alpha tag
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v2.0.0-alpha.20"
           $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
@@ -57,9 +55,14 @@ jobs:
         run: node scripts/validate-alpha-evidence-reference.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Validate manual evidence comment contents and build identity
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/validate-alpha-evidence-comments.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Require Windows signing credentials
         shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CSC_LINK)) { throw "windows_signing_certificate_missing" }
           if ([string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) { throw "windows_signing_password_missing" }
@@ -68,6 +71,9 @@ jobs:
       - name: Run full alpha acceptance gate
         run: npm run test:alpha
       - name: Build signed Windows alpha installer
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npm run desktop:dist:win
       - name: Stage fallback extension
         run: npm run extension:stage-alpha
@@ -113,8 +119,49 @@ jobs:
             dist/desktop/alpha-release-notes.md
             dist/desktop/win-unpacked
             dist/alpha-extension
+
+  publish-alpha:
+    name: Publish validated alpha prerelease
+    needs: signed-alpha
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      ALPHA_EXPECTED_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Download validated signed alpha candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: chatgpt-orchestra-alpha20-signed-windows
+          path: dist
+      - name: Require main branch publication
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne "refs/heads/main") { throw "alpha_release_publication_must_run_from_main" }
+      - name: Re-verify downloaded release bundle
+        run: node scripts/verify-alpha-release-bundle.js
+      - name: Require unused alpha tag immediately before publication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if (-not [string]::IsNullOrWhiteSpace([string]$remoteTag)) { throw "alpha_release_tag_already_exists:$tag" }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "alpha_release_already_exists:$tag" }
+          $global:LASTEXITCODE = 0
       - name: Publish final alpha prerelease
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v2.0.0-alpha.20"
           $installer = Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1
@@ -136,6 +183,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "alpha_release_publish_failed" }
       - name: Verify published prerelease tag and assets
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v2.0.0-alpha.20"
           git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
