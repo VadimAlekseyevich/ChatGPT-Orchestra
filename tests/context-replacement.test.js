@@ -73,7 +73,14 @@ test("failed fresh Lead dispatch clears protocol binding so registration can ret
   };
   const projectStore = {
     getActiveProject: () => clone(project),
-    summary: () => ({ projectId: project.projectId, status: project.status, stage: project.stage, currentRunId: project.currentRunId })
+    summary: () => ({ projectId: project.projectId, status: project.status, stage: project.stage, currentRunId: project.currentRunId }),
+    async fail(projectId, reason, details, status = "NEEDS_USER") {
+      assert.equal(projectId, project.projectId);
+      project.status = status;
+      project.lastError = { reason, details: clone(details) };
+      operations.push(["fail", reason, status]);
+      return clone(project);
+    }
   };
   const engine = new PlanningEngine({
     projectStore,
@@ -85,7 +92,9 @@ test("failed fresh Lead dispatch clears protocol binding so registration can ret
   assert.equal(result.ok, false);
   assert.equal(result.reason, "lead_replacement_prompt_failed");
   assert.equal(result.retryable, true);
-  assert.deepEqual(operations.at(-1), ["clear", "LEAD-NEW"]);
+  assert.equal(project.status, "PLANNING");
+  assert.deepEqual(operations.at(-2), ["clear", "LEAD-NEW"]);
+  assert.deepEqual(operations.at(-1), ["fail", "lead_prompt_failed", "PLANNING"]);
 });
 
 test("Lead replacement fails closed when there is no active persisted planning role", async () => {
