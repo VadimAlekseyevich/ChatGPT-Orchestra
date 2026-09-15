@@ -188,11 +188,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v2.0.0-alpha.20"
-          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets | ConvertFrom-Json
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets,body | ConvertFrom-Json
           if ([string]$release.tagName -ne $tag) { throw "alpha_release_draft_tag_name_mismatch" }
           if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { throw "alpha_release_draft_target_mismatch:$($release.targetCommitish)" }
           if ($release.isDraft -ne $true) { throw "alpha_release_stage_not_draft" }
           if ($release.isPrerelease -ne $true) { throw "alpha_release_stage_not_prerelease" }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { throw "alpha_release_draft_workflow_run_mismatch" }
 
           $installer = (Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1).Name
           $required = @(
@@ -224,11 +225,12 @@ jobs:
           $tagCommit = (git rev-list -n 1 $tag).Trim()
           if ($tagCommit -ne $env:GITHUB_SHA) { throw "alpha_release_tag_commit_mismatch:$tagCommit" }
 
-          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets | ConvertFrom-Json
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets,body | ConvertFrom-Json
           if ([string]$release.tagName -ne $tag) { throw "alpha_release_tag_name_mismatch" }
           if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { throw "alpha_release_target_mismatch:$($release.targetCommitish)" }
           if ($release.isDraft -ne $false) { throw "alpha_release_still_draft" }
           if ($release.isPrerelease -ne $true) { throw "alpha_release_not_prerelease" }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { throw "alpha_release_workflow_run_mismatch_after_publish" }
 
           $installer = (Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1).Name
           $required = @(
@@ -250,12 +252,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v2.0.0-alpha.20"
-          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft *> $null
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,body *> $null
           if ($LASTEXITCODE -ne 0) {
             $global:LASTEXITCODE = 0
             exit 0
           }
-          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft | ConvertFrom-Json
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,body | ConvertFrom-Json
           if ([string]$release.tagName -ne $tag) { exit 0 }
           if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { exit 0 }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { exit 0 }
           gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag
