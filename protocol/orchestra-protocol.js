@@ -48,6 +48,13 @@
     return text;
   }
 
+  function versionConflict(input) {
+    if (!isPlainObject(input) || input.v == null || input.protocolVersion == null) return null;
+    const canonical = Number(input.v);
+    const alias = Number(input.protocolVersion);
+    return canonical === alias ? null : { v: input.v, protocolVersion: input.protocolVersion };
+  }
+
   function normalizeEnvelope(input) {
     if (!isPlainObject(input)) return null;
 
@@ -57,7 +64,10 @@
       : {};
 
     const normalized = {
-      v: Number(input.v),
+      // `v` is canonical. `protocolVersion` is accepted only as a compatibility
+      // alias because model-generated responses can spell out the version field
+      // even when the prompt says "Protocol v1". Normalized events always use v.
+      v: Number(input.v ?? input.protocolVersion),
       event: String(input.event || "").trim().toUpperCase(),
       projectId: input.projectId ?? input.project,
       taskId: input.taskId ?? input.task,
@@ -80,6 +90,8 @@
   }
 
   function validateEnvelope(input) {
+    const conflict = versionConflict(input);
+    if (conflict) return { ok: false, reason: "conflicting_version_fields", received: conflict };
     const event = normalizeEnvelope(input);
     if (!event) return { ok: false, reason: "envelope_not_object" };
     if (event.v !== VERSION) return { ok: false, reason: "unsupported_version", received: event.v };
