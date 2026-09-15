@@ -9,11 +9,13 @@
     constructor({
       documentRef = globalThis.document,
       windowRef = globalThis.window,
-      sendTimeoutMs = 5000
+      sendTimeoutMs = 5000,
+      submissionTimeoutMs = 1500
     } = {}) {
       this.documentRef = documentRef;
       this.windowRef = windowRef;
       this.sendTimeoutMs = Math.max(250, Number(sendTimeoutMs) || 5000);
+      this.submissionTimeoutMs = Math.max(250, Number(submissionTimeoutMs) || 1500);
     }
 
     setSendTimeoutMs(sendTimeoutMs) {
@@ -118,6 +120,19 @@
       return null;
     }
 
+    submissionObserved() {
+      return this.isGenerating() || !this.isComposerOccupied();
+    }
+
+    async waitForSubmission(timeoutMs = this.submissionTimeoutMs) {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        if (this.submissionObserved()) return true;
+        await Utils.sleep(50);
+      }
+      return this.submissionObserved();
+    }
+
     hasErrorIndicator() {
       return Boolean(Utils.queryFirst(this.documentRef, SELECTORS.errorIndicators));
     }
@@ -152,11 +167,26 @@
       const sendButton = await this.waitForSendButton();
 
       if (!sendButton) {
-        return { ok: false, reason: "send_button_timeout" };
+        return { ok: false, reason: "send_button_timeout", promptStaged: this.isComposerOccupied() };
       }
 
       sendButton.click?.();
-      return { ok: true };
+      if (await this.waitForSubmission(Math.min(700, this.submissionTimeoutMs))) {
+        return { ok: true, accepted: true, confirmed: true, method: "button-click" };
+      }
+
+      // Extension/content-script mode has no Electron trusted-input boundary. If a
+      // synthetic click is ignored, request a normal form submission and confirm
+      // state changed instead of claiming success just because click() returned.
+      const form = sendButton.form || sendButton.closest?.("form") || null;
+      if (typeof form?.requestSubmit === "function") {
+        try { form.requestSubmit(sendButton); } catch (_) {}
+        if (await this.waitForSubmission()) {
+          return { ok: true, accepted: true, confirmed: true, method: "form-request-submit" };
+        }
+      }
+
+      return { ok: false, reason: "send_not_confirmed", promptStaged: this.isComposerOccupied() };
     }
 
     stopGeneration() {
