@@ -95,6 +95,15 @@
     const normalizedStage = String(stage || "").toUpperCase();
     if (!STAGES.includes(normalizedStage)) throw new Error(`unknown_planning_stage:${normalizedStage}`);
     const taskId = `planning:${normalizedStage.toLowerCase()}`;
+    const eventId = `${runId}-final`;
+    const protocolIdentity = { v: 1, projectId: project.projectId, taskId, runId, agentId };
+    const finalEnvelope = {
+      ...protocolIdentity,
+      event: "DONE",
+      eventId,
+      sequence: 1,
+      payload: { stage: normalizedStage }
+    };
     const contextService = root.ContextPackets?.getDefaultService?.();
     const contextPacket = packet || contextService?.buildLeadPacket?.({ project, stage: normalizedStage, runId, agentId }) || {
       packetVersion: 0,
@@ -115,8 +124,9 @@
         "Do NOT plan from memory, inspect unrelated history, invent omitted artifacts, advance the stage or emit a planning artifact.",
         `PORTABLE CONTEXT PACKET:\n${json(packetForPrompt)}`,
         "PROTOCOL CONTRACT:",
-        `- Identity: ${json({ v: 1, projectId: project.projectId, taskId, runId, agentId })}`,
-        "- Emit NEEDS_USER with sequence=1, a fresh eventId and payload.reason=context_packet_incomplete.",
+        `- Identity: ${json(protocolIdentity)}`,
+        "- The protocol version field is named exactly `v` and its numeric value is 1. Do not rename it to `protocolVersion`.",
+        `- Emit NEEDS_USER with sequence=1, eventId=${eventId} and payload.reason=context_packet_incomplete.`,
         "- Include packet.completeness in payload details. DONE, BLOCKED and ERROR are not valid outcomes for this turn.",
         "- The final non-empty line must be exactly one @@ORCH JSON envelope; no text follows it."
       ].join("\n");
@@ -146,11 +156,13 @@
       "@@ORCH_ARTIFACT_BEGIN",
       "{ ... complete artifact for this stage ... }",
       "@@ORCH_ARTIFACT_END",
-      "3. The final non-empty line must be one small Orchestra Protocol v1 JSON envelope; no text may follow it.",
-      `4. Use event DONE, projectId=${project.projectId}, taskId=${taskId}, runId=${runId}, agentId=${agentId}, sequence=1 and a fresh unique eventId.`,
-      `5. The final envelope payload must be exactly {\"stage\":\"${normalizedStage}\"}; do NOT duplicate the large artifact inside the envelope.`,
-      "6. If you cannot proceed, emit BLOCKED or NEEDS_USER with a small reason payload instead of inventing an artifact.",
-      "7. Do not put markdown fences around the artifact markers or the final @@ORCH line."
+      "3. The final non-empty line must be exactly one Orchestra Protocol v1 JSON envelope beginning with `@@ORCH `; no text may follow it.",
+      "4. The protocol version field is named exactly `v` and its numeric value is 1. Do not write `protocolVersion`, `version`, or a string value.",
+      `5. Use event=DONE, projectId=${project.projectId}, taskId=${taskId}, runId=${runId}, agentId=${agentId}, eventId=${eventId}, sequence=1.`,
+      `6. The final envelope payload must be exactly {\"stage\":\"${normalizedStage}\"}; do NOT duplicate the large artifact inside the envelope.`,
+      `7. Canonical final-line example for this exact turn: @@ORCH ${JSON.stringify(finalEnvelope)}`,
+      "8. If you cannot proceed, emit BLOCKED or NEEDS_USER with the same v/identity/eventId/sequence and a small reason payload instead of inventing an artifact.",
+      "9. Do not put markdown fences around the artifact markers or the final @@ORCH line."
     ].join("\n");
   }
 

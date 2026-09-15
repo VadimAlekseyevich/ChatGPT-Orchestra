@@ -38,6 +38,11 @@ function composerText(element) {
   return element.innerText || element.textContent || "";
 }
 
+function composerOccupied(selectors) {
+  const input = composer(selectors);
+  return input ? Boolean(composerText(input).trim()) : null;
+}
+
 function availability(selectors) {
   if (stopButton(selectors)) return "generating";
   if (composer(selectors)) return "ready";
@@ -55,6 +60,7 @@ function status(selectors) {
     ok: true,
     availability: availability(selectors),
     generating: Boolean(stopButton(selectors)),
+    composerOccupied: composerOccupied(selectors),
     messageCount,
     pathname: String(location.pathname || ""),
     url: String(location.href || "")
@@ -121,6 +127,22 @@ function setComposerText(element, text) {
   }
 }
 
+function submissionObserved(selectors, initialPathname) {
+  if (stopButton(selectors)) return true;
+  if (String(location.pathname || "") !== String(initialPathname || "")) return true;
+  const input = composer(selectors);
+  return Boolean(input && !composerText(input).trim());
+}
+
+async function waitForSubmission(selectors, initialPathname, timeoutMs = 1200) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (submissionObserved(selectors, initialPathname)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return submissionObserved(selectors, initialPathname);
+}
+
 async function sendPrompt(selectors, payload = {}) {
   if (stopButton(selectors)) return { ok: false, reason: "generation_in_progress" };
   const text = String(payload.prompt || "").trim();
@@ -129,6 +151,7 @@ async function sendPrompt(selectors, payload = {}) {
   const input = composer(selectors);
   if (!input) return { ok: false, reason: errorIndicator(selectors) ? "chat_error" : "composer_unavailable" };
   if (composerText(input).trim()) return { ok: false, reason: "composer_occupied" };
+  const initialPathname = String(location.pathname || "");
   setComposerText(input, text);
   const timeoutMs = Math.max(250, Math.min(15000, Number(payload.timeoutMs) || 5000));
   const startedAt = Date.now();
@@ -137,9 +160,20 @@ async function sendPrompt(selectors, payload = {}) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     button = sendButton(selectors);
   }
-  if (!button) return { ok: false, reason: "send_button_timeout" };
+  if (!button) return { ok: false, reason: "send_button_timeout", promptStaged: composerOccupied(selectors) === true };
+
   button.click?.();
-  return { ok: true, accepted: true, url: String(location.href || "") };
+  const confirmationMs = Math.max(250, Math.min(2000, Number(payload.confirmationMs) || 1200));
+  const confirmed = await waitForSubmission(selectors, initialPathname, confirmationMs);
+  if (!confirmed) {
+    return {
+      ok: false,
+      reason: "send_not_confirmed",
+      promptStaged: composerOccupied(selectors) === true,
+      url: String(location.href || "")
+    };
+  }
+  return { ok: true, accepted: true, confirmed: true, method: "button-click", url: String(location.href || "") };
 }
 
 function stopGeneration(selectors) {

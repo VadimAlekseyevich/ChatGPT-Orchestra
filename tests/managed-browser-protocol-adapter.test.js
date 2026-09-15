@@ -64,6 +64,47 @@ test("managed browser protocol adapter reuses heartbeat, completion and Orchestr
   assert.equal(protocol.sender.sessionId, "S1");
 });
 
+test("managed browser accepts planning output that spells v1 as protocolVersion and still transports its artifact", async () => {
+  const { runtime, messages } = harness();
+  const adapter = new ManagedBrowserProtocolAdapter({ logger: { info() {} } });
+  const artifact = {
+    repositoryAccess: { status: "ok", inspectedPaths: ["README.md"], gaps: [] },
+    stack: ["HTML"],
+    entrypoints: [],
+    commands: { build: [], test: [], lint: [], typecheck: [] },
+    modules: [],
+    persistence: [],
+    ci: [],
+    instructions: { agentsMd: "absent", paths: [] },
+    sensitiveAreas: [],
+    constraints: []
+  };
+  const response = [
+    "@@ORCH_ARTIFACT_BEGIN",
+    JSON.stringify(artifact, null, 2),
+    "@@ORCH_ARTIFACT_END",
+    `@@ORCH ${JSON.stringify({
+      protocolVersion: 1,
+      event: "DONE",
+      projectId: "P1",
+      taskId: "planning:discovery",
+      runId: "R1",
+      agentId: "A1",
+      sequence: 1,
+      eventId: "R1-final",
+      payload: { stage: "DISCOVERY" }
+    })}`
+  ].join("\n");
+
+  const result = await adapter.publishCompletion(runtime, "A1", snapshot(response));
+  assert.equal(result.ok, true);
+  const protocol = messages.find((item) => item.message.type === MESSAGE_TYPES.ORCHESTRA_EVENT);
+  assert.ok(protocol);
+  assert.equal(protocol.message.payload.event.v, 1);
+  assert.equal(protocol.message.payload.event.taskId, "planning:discovery");
+  assert.deepEqual(protocol.message.payload.planningArtifact, artifact);
+});
+
 test("managed browser protocol adapter rejects an event claiming another logical agent", async () => {
   const { runtime, messages } = harness();
   const adapter = new ManagedBrowserProtocolAdapter({ logger: { info() {} } });

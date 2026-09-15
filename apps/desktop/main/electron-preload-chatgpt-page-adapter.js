@@ -90,8 +90,53 @@ class ElectronPreloadChatGPTPageAdapter {
     return this.request(webContents, "status");
   }
 
+  async waitForNativeSubmission(webContents, timeoutMs = 1800) {
+    const startedAt = Date.now();
+    let latest = null;
+    while (Date.now() - startedAt < timeoutMs) {
+      latest = await this.request(webContents, "status");
+      if (!latest?.ok) return latest;
+      const generating = latest.generating === true || latest.availability === "generating";
+      const readyAndCleared = latest.availability === "ready" && latest.composerOccupied === false;
+      if (generating || readyAndCleared) {
+        return { ...latest, ok: true, accepted: true, confirmed: true, method: "trusted-enter" };
+      }
+      await Utils.sleep(100);
+    }
+    return {
+      ok: false,
+      reason: "send_not_confirmed",
+      promptStaged: latest?.composerOccupied === true,
+      fallback: "trusted-enter"
+    };
+  }
+
   async sendPrompt(webContents, prompt) {
-    return this.request(webContents, "send-prompt", { prompt: String(prompt || ""), timeoutMs: Math.min(this.requestTimeoutMs - 250, 15000) });
+    const result = await this.request(webContents, "send-prompt", {
+      prompt: String(prompt || ""),
+      timeoutMs: Math.min(this.requestTimeoutMs - 250, 15000),
+      confirmationMs: 900
+    });
+    if (result?.ok) return result;
+    if (result?.reason !== "send_not_confirmed" || result?.promptStaged !== true) return result;
+    if (typeof webContents?.sendInputEvent !== "function") return result;
+
+    try {
+      // A BrowserWindow-level keyboard event is trusted by Chromium, unlike a
+      // synthetic DOM click/KeyboardEvent created inside the remote page.
+      webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+      webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+    } catch (error) {
+      return {
+        ...result,
+        ok: false,
+        reason: "send_not_confirmed",
+        fallback: "trusted-enter",
+        message: String(error?.message || error)
+      };
+    }
+
+    return this.waitForNativeSubmission(webContents);
   }
 
   async stopGeneration(webContents) {
