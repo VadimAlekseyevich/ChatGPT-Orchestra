@@ -16,6 +16,7 @@ const releaseAssetPreparer = read("scripts/prepare-alpha-release-assets.js");
 const windowsVerifier = read("scripts/verify-windows-alpha.ps1");
 const evidenceReferenceValidator = read("scripts/validate-alpha-evidence-reference.js");
 const evidenceCommentValidator = read("scripts/validate-alpha-evidence-comments.js");
+const evidencePreflight = read("scripts/prepare-alpha-manual-evidence.js");
 const { ALPHA_VERSION, ALPHA_ARTIFACT_NAME, ALPHA_SCENARIOS, MANUAL_SCENARIO_IDS } = require("./alpha-release-contract.js");
 
 assert.equal(pkg.version, ALPHA_VERSION, "alpha_readiness_version_mismatch");
@@ -24,18 +25,20 @@ assert.equal(ALPHA_SCENARIOS.length, 17, "alpha_readiness_scenario_count_mismatc
 assert.deepEqual(MANUAL_SCENARIO_IDS, ["A01", "A11"], "alpha_manual_gate_drift");
 
 for (const script of [
-  "test:release", "test:phase17", "test:phase18", "test:phase19", "test:phase20", "test:alpha",
+  "test:release", "test:phase17", "test:phase18", "test:phase19", "test:phase20", "test:alpha", "alpha:evidence",
   "desktop:pack", "desktop:dist:win", "extension:stage-alpha", "companion:register-host", "companion:unregister-host"
 ]) {
   assert.equal(typeof pkg.scripts?.[script], "string", `alpha_readiness_script_missing:${script}`);
 }
 assert.ok(pkg.scripts["test:alpha"].includes("test:phase20"), "alpha_gate_must_run_phase20");
+assert.equal(pkg.scripts["alpha:evidence"], "node scripts/prepare-alpha-manual-evidence.js", "alpha_manual_evidence_helper_drift");
 assert.equal(pkg.scripts["desktop:dist:win"], "node scripts/build-windows-alpha.js", "alpha_windows_build_must_embed_identity");
 
 const phase20Gate = String(pkg.scripts["test:phase20"] || "");
 for (const requiredTest of [
   "tests/alpha-manual-evidence.test.js",
   "tests/alpha-evidence-comments.test.js",
+  "tests/alpha-manual-evidence-preflight.test.js",
   "tests/alpha-build-identity.test.js",
   "tests/alpha-release-assets.test.js",
   "tests/desktop-runtime-evidence.test.js"
@@ -55,6 +58,7 @@ for (const marker of [
   "A01 and A11 require real manual evidence",
   "GitHub issue-comment permalink",
   "Build commit",
+  "npm run alpha:evidence",
   "WINDOWS_CSC_LINK",
   "Authenticode=Valid",
   "final `v2.0.0-alpha.20` prerelease"
@@ -120,7 +124,15 @@ assert.ok(evidenceReferenceValidator.includes("VadimAlekseyevich"), "alpha_evide
 assert.ok(evidenceReferenceValidator.includes("ChatGPT-Orchestra"), "alpha_evidence_validator_repo_drift");
 assert.ok(evidenceCommentValidator.includes("Build commit"), "alpha_evidence_comment_build_commit_missing");
 assert.ok(evidenceCommentValidator.includes("alpha_manual_evidence_build_commit_mismatch"), "alpha_evidence_comment_commit_match_gate_missing");
+for (const marker of [
+  "prepareA01Evidence",
+  "prepareA11Evidence",
+  "a01_privacy_check_failed",
+  "a11_boot_time_not_advanced",
+  "a11_build_commit_changed",
+  "confirmation_required"
+]) assert.ok(evidencePreflight.includes(marker), `alpha_manual_evidence_preflight_marker_missing:${marker}`);
 
 assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
 
-console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; signed release workflow=strict; build identity=commit-bound; publish=prerelease-after-strict-gates`);
+console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; manual evidence preflight=fail-closed; signed release workflow=strict; build identity=commit-bound; publish=prerelease-after-strict-gates`);
