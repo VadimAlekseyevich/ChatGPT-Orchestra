@@ -4,6 +4,68 @@
 
 Формат основан на принципах Keep a Changelog. Новая multi-agent архитектура развивается как линия `2.x`; prerelease-имя хранится в `manifest.version_name`.
 
+## [2.0.0-alpha.20] - 2026-09-15
+
+Эта запись консолидирует desktop migration после alpha.15 (Phases 15–20) и фиксирует состояние release candidate перед реальными manual release gates.
+
+### Added
+
+- Electron/Node desktop shell с shared Dashboard, application data directory, SQLite persistence и IPC boundary;
+- desktop control plane с authenticated Extension Companion / Native Messaging bridge и migration из extension state;
+- local repository runtime: open/clone repository, isolated task/integration Git worktrees, local provenance/scope validation и deterministic `--no-ff` integration;
+- repository trust boundary и bounded local verification command runner с cancellation/audit/redaction;
+- direct desktop ChatGPT `AgentRuntime` с dedicated managed-browser profile, interactive login onboarding, logical agent/page mapping и browser recovery;
+- parity/reliability/security suites для desktop runtime, recovery, worktrees, companion bridge, command execution и duplicate/late-event guards;
+- desktop-first alpha onboarding для local repository/clone flow и single active project policy;
+- automated evidence mapping для всех 17 Phase 20 alpha scenarios;
+- exact build identity (`version + 40-char source commit`) в packaged Windows candidate и runtime/debug evidence;
+- Windows NSIS candidate packaging, staged fallback extension и candidate artifact verification in CI;
+- manual evidence preflight для A01 clean-install/login и A11 real-OS-reboot/recovery scenarios;
+- strict signed `Alpha Release Validation` workflow с commit-bound A01/A11 GitHub issue-comment evidence;
+- release asset manifest, SHA-256 checksums, signed bundle verification и fail-closed draft/prerelease publication;
+- explicit manual, signed-only alpha update policy; automatic updater intentionally deferred post-alpha.
+
+### Reliability and safety
+
+- desktop state является canonical source of truth; browser pages/process handles не являются durable project state;
+- dispatch остаётся закрытым до migration/startup/recovery reconciliation;
+- local commands запускаются только в explicitly trusted repository/workspace, через executable + argv (`shell:false`) с bounded runtime/output;
+- dirty abandoned worktrees salvage'ятся вместо destructive auto-cleanup;
+- managed-browser runtime использует dedicated profile и не извлекает cookies/credentials из обычного Edge/Chrome profile;
+- extension остаётся optional authenticated companion/fallback, а не primary orchestration runtime;
+- Stop Now отменяет active local verification и блокирует late state-machine effects;
+- Project Bundle/debug export redacts credentials и runtime identities;
+- final target-branch merge/push остаётся user-controlled по default alpha policy;
+- unsigned CI artifacts считаются только candidates; финальный Windows prerelease обязан иметь `Authenticode=Valid`;
+- final release workflow принимает A01/A11 evidence только от того же exact source commit, который собирается и подписывается;
+- alpha publication fail-closed: mismatch version/commit/evidence/signature/checksum/asset set блокирует или откатывает staged release/tag.
+
+### Changed
+
+- prerelease version обновлена до `2.0.0-alpha.20`;
+- desktop managed-browser runtime становится primary alpha product path;
+- extension policy изменена на `Optional Companion Runtime`;
+- Windows 10/11 выбран primary alpha distribution target при сохранении platform-neutral Core/contracts;
+- Phase 21 provider/cutover expansion заблокирован до завершения Phase 20 manual validation и signed alpha release.
+
+### Validation
+
+- current `main` Phase 15–20 CI matrix проходит Core/contracts, desktop shell, companion bridge, local Git/worktrees, direct browser runtime, parity/chaos, Phase 20 acceptance, release contract и Windows candidate packaging gates;
+- `npm run test:alpha` является automated candidate gate;
+- все 17 roadmap alpha scenarios имеют automated evidence;
+- A01 и A11 намеренно требуют дополнительного реального human evidence, потому что CI не может правдиво доказать interactive login на clean Windows profile и настоящий OS reboot;
+- финальный `v2.0.0-alpha.20` prerelease ещё не считается выпущенным до A01/A11 PASS на одном exact build commit и успешного signed `Alpha Release Validation` workflow.
+
+### Release next
+
+- merge финальный pre-release cleanup и дождаться green push CI;
+- freeze один exact `main` commit;
+- выполнить A01 и A11 на packaged candidate этого commit;
+- настроить Windows signing credentials;
+- запустить strict `Alpha Release Validation` и публиковать `v2.0.0-alpha.20` только после `Authenticode=Valid` и полной release-bundle verification.
+
+---
+
 ## [2.0.0-alpha.15] - 2026-09-13
 
 ### Added
@@ -84,7 +146,7 @@
 - frozen PR review выполнен для packet compaction, critical-source completeness, Lead replacement delivery, API boundary, portable persistence и service-worker composition;
 - feature branch перед merge была `behind=0`, PR #23 был `mergeable=true` и merged через exact-head squash;
 - repository пока не имеет CI — это Phase 14;
-- полный `npm test` / `npm run test:phase13` из checkout в текущей environment не запускался из-за отсутствующего DNS-доступа к GitHub;
+- полный repository `npm test` / `npm run test:phase13` из checkout в текущей environment не запускался из-за отсутствующего DNS-доступа к GitHub;
 - documented Edge fresh-session/replacement smoke-test остаётся внешний release gate.
 
 ### Next

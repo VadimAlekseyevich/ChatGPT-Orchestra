@@ -1,10 +1,10 @@
 # ChatGPT Orchestra — Roadmap: Browser Extension → Desktop Application
 
-> **Статус документа:** основной архитектурный и продуктовый roadmap после `2.0.0-alpha.10`.
+> **Статус документа:** основной архитектурный и продуктовый roadmap; статус синхронизирован с `2.0.0-alpha.20`.
 >
-> **Текущий baseline:** Phases 0–9 завершены. Orchestra уже умеет planning, parallel scheduling, Git artifact validation, independent review, verified integration и deterministic Pause/Resume/Crash Recovery внутри Microsoft Edge extension.
+> **Текущий baseline:** Phases 0–20 реализованы в `main`. Desktop-first alpha candidate проходит автоматические Core/contract/desktop/release gates; для финального `v2.0.0-alpha.20` остаются реальные manual A01/A11 evidence и Authenticode-signed release workflow.
 >
-> **Новая цель:** не переписывать продукт заново, а постепенно превратить существующую extension-реализацию в platform-neutral Orchestra Core и затем перенести основной runtime в отдельное desktop-приложение.
+> **Следующий продуктовый этап:** Phase 21 начинается только после завершения Phase 20 release validation. До этого новые provider/cutover features не добавляются в final candidate.
 
 ---
 
@@ -537,25 +537,25 @@ Orchestra не должна хранить GitHub password/token в project stat
 
 ## Phase 10 — Platform Boundary + Orchestrator API
 
-**Статус:** NEXT.
+**Статус:** ✅ Complete.
 
 **Цель:** сделать существующий extension Core переносимым, не меняя пользовательское поведение.
 
 ### Реализация
 
-- [ ] составить inventory всех прямых `chrome.*` usages;
-- [ ] разделить domain Core и extension composition root;
-- [ ] ввести `AgentRuntime` contract;
-- [ ] ввести `StateStore` contract;
-- [ ] ввести `TimerRuntime` contract;
-- [ ] формализовать `Orchestrator API` command/query DTO;
-- [ ] обернуть текущий TabRegistry/targeted messaging в `ExtensionAgentRuntime`;
-- [ ] обернуть `chrome.storage.local` в `ChromeStorageStateStore`;
-- [ ] обернуть `chrome.alarms` в `ChromeAlarmRuntime`;
-- [ ] перевести Planning/Scheduler/Review/Integration/Recovery на dependency injection contracts;
-- [ ] service worker оставить composition root, а не domain owner;
-- [ ] добавить `FakeAgentRuntime`, `MemoryStateStore`, deterministic timer для tests;
-- [ ] запретить новым Core modules импортировать browser APIs напрямую.
+- [x] составить inventory всех прямых `chrome.*` usages;
+- [x] разделить domain Core и extension composition root;
+- [x] ввести `AgentRuntime` contract;
+- [x] ввести `StateStore` contract;
+- [x] ввести `TimerRuntime` contract;
+- [x] формализовать `Orchestrator API` command/query DTO;
+- [x] обернуть текущий TabRegistry/targeted messaging в `ExtensionAgentRuntime`;
+- [x] обернуть `chrome.storage.local` в `ChromeStorageStateStore`;
+- [x] обернуть `chrome.alarms` в `ChromeAlarmRuntime`;
+- [x] перевести Planning/Scheduler/Review/Integration/Recovery на dependency injection contracts;
+- [x] service worker оставить composition root, а не domain owner;
+- [x] добавить `FakeAgentRuntime`, `MemoryStateStore`, deterministic timer для tests;
+- [x] запретить новым Core modules импортировать browser APIs напрямую.
 
 ### Инвариант
 
@@ -576,23 +576,25 @@ core/** MUST NOT reference chrome.*
 
 ## Phase 11 — Portable Persistence + Project Export/Import
 
+**Статус:** ✅ Complete.
+
 **Цель:** отвязать durable state от `chrome.storage.local` и подготовить migration bridge.
 
 ### Реализация
 
-- [ ] определить canonical portable state schema;
-- [ ] namespace existing stores через общий StateStore;
-- [ ] `ChromeStorageStateStore` conformance suite;
-- [ ] `MemoryStateStore` conformance suite;
-- [ ] первая `SQLiteStateStore` реализация под Node;
-- [ ] transactional write semantics;
-- [ ] snapshot + append-only event persistence strategy;
-- [ ] schema migration registry;
-- [ ] automatic pre-migration backup;
-- [ ] portable Project Bundle export;
-- [ ] Project Bundle import/validation;
-- [ ] redaction secrets из export;
-- [ ] extension → SQLite migration test.
+- [x] определить canonical portable state schema;
+- [x] namespace existing stores через общий StateStore;
+- [x] `ChromeStorageStateStore` conformance suite;
+- [x] `MemoryStateStore` conformance suite;
+- [x] первая `SQLiteStateStore` реализация под Node;
+- [x] transactional write semantics;
+- [x] snapshot + append-only event persistence strategy;
+- [x] schema migration registry;
+- [x] automatic pre-migration backup;
+- [x] portable Project Bundle export;
+- [x] Project Bundle import/validation;
+- [x] redaction secrets из export;
+- [x] extension → SQLite migration test.
 
 ### DoD
 
@@ -610,6 +612,8 @@ export from extension
 ---
 
 ## Phase 12 — Portable Dashboard + Observability API
+
+**Статус:** ✅ Complete.
 
 **Цель:** построить Dashboard один раз и затем использовать его и в extension, и в desktop.
 
@@ -653,18 +657,18 @@ Orchestrator API
 
 ### Возможности
 
-- [ ] task details;
-- [ ] event timeline;
-- [ ] agent health;
-- [ ] scheduler explanation;
-- [ ] pause/resume/stop;
-- [ ] retry/cancel task;
-- [ ] change priority;
-- [ ] reassign agent;
-- [ ] open corresponding executor;
-- [ ] inspect review/integration evidence;
-- [ ] filter warnings/errors;
-- [ ] export project/debug bundle.
+- [x] task details;
+- [x] event timeline;
+- [x] agent health;
+- [x] scheduler explanation;
+- [x] pause/resume/stop;
+- [x] retry/cancel task;
+- [x] change priority;
+- [x] reassign agent;
+- [x] open corresponding executor;
+- [x] inspect review/integration evidence;
+- [x] filter warnings/errors;
+- [x] export project/debug bundle.
 
 ### DoD
 
@@ -679,23 +683,25 @@ Orchestrator API
 
 ## Phase 13 — Context Management + Portable Agent Packets
 
+**Статус:** ✅ Complete.
+
 **Цель:** ChatGPT session должна быть заменяемым executor, а не носителем project memory.
 
 ### Реализация
 
-- [ ] Lead summary artifact;
-- [ ] task packet schema;
-- [ ] review packet schema;
-- [ ] integration packet schema;
-- [ ] decisions register;
-- [ ] context budget policy;
-- [ ] completed-task compaction;
-- [ ] artifact references вместо transcript copying;
-- [ ] fresh Lead replacement;
-- [ ] fresh Worker replacement;
-- [ ] fresh Reviewer/Integrator bootstrap из persisted packets;
-- [ ] prompt version provenance;
-- [ ] bounded repository context selection.
+- [x] Lead summary artifact;
+- [x] task packet schema;
+- [x] review packet schema;
+- [x] integration packet schema;
+- [x] decisions register;
+- [x] context budget policy;
+- [x] completed-task compaction;
+- [x] artifact references вместо transcript copying;
+- [x] fresh Lead replacement;
+- [x] fresh Worker replacement;
+- [x] fresh Reviewer/Integrator bootstrap из persisted packets;
+- [x] prompt version provenance;
+- [x] bounded repository context selection.
 
 ### DoD
 
@@ -706,6 +712,8 @@ Orchestrator API
 ---
 
 ## Phase 14 — Contract Tests + CI Foundation
+
+**Статус:** ✅ Complete.
 
 **Цель:** второй runtime нельзя добавлять без автоматических parity tests.
 
@@ -749,14 +757,14 @@ navigation changed
 
 ### CI
 
-- [ ] GitHub Actions;
-- [ ] unit tests;
-- [ ] integration tests;
-- [ ] manifest validation;
-- [ ] migration tests;
-- [ ] extension mock-browser tests;
-- [ ] SQLite tests;
-- [ ] package/version consistency.
+- [x] GitHub Actions;
+- [x] unit tests;
+- [x] integration tests;
+- [x] manifest validation;
+- [x] migration tests;
+- [x] extension mock-browser tests;
+- [x] SQLite tests;
+- [x] package/version consistency.
 
 ### DoD
 
@@ -767,6 +775,8 @@ Production ChatGPT smoke-test остаётся отдельным manual/release
 ---
 
 ## Phase 15 — Desktop Shell Bootstrap
+
+**Статус:** ✅ Complete.
 
 **Цель:** запустить настоящий Orchestra Core как локальный desktop process, пока executor'ы ещё fake.
 
@@ -780,18 +790,18 @@ apps/desktop/
 
 ### Реализация
 
-- [ ] desktop application bootstrap;
-- [ ] application data directory;
-- [ ] SQLiteStateStore;
-- [ ] NodeTimerRuntime;
-- [ ] local structured logs;
-- [ ] Orchestrator API IPC boundary;
-- [ ] shared Dashboard renderer;
-- [ ] FakeAgentRuntime;
-- [ ] open/import Project Bundle;
-- [ ] crash/restart desktop process recovery;
-- [ ] dev packaging for primary OS;
-- [ ] no Electron/Node objects leaked into Core DTOs.
+- [x] desktop application bootstrap;
+- [x] application data directory;
+- [x] SQLiteStateStore;
+- [x] NodeTimerRuntime;
+- [x] local structured logs;
+- [x] Orchestrator API IPC boundary;
+- [x] shared Dashboard renderer;
+- [x] FakeAgentRuntime;
+- [x] open/import Project Bundle;
+- [x] crash/restart desktop process recovery;
+- [x] dev packaging for primary OS;
+- [x] no Electron/Node objects leaked into Core DTOs.
 
 ### DoD
 
@@ -815,6 +825,8 @@ Extension при этом продолжает работать независи
 
 ## Phase 16 — Desktop Control Plane + Extension Companion Bridge
 
+**Статус:** ✅ Complete.
+
 **Цель:** перенести реальный source of truth из MV3 service worker в desktop, не переписывая ChatGPT DOM automation.
 
 ### Архитектура переходного периода
@@ -835,18 +847,18 @@ ChatGPT tabs/content adapter
 
 ### Реализация
 
-- [ ] companion transport contract;
-- [ ] secure pairing desktop ↔ extension;
-- [ ] production transport: Native Messaging или equivalent authenticated local channel;
-- [ ] dev-only loopback transport при необходимости;
-- [ ] extension service worker перестаёт быть canonical project state owner в companion mode;
-- [ ] extension передаёт только agent/browser events;
-- [ ] desktop выдаёт prompts/stop/context commands;
-- [ ] protocol events persist'ятся desktop EventStore;
-- [ ] extension popup в companion mode показывает connection status + `Open Orchestra`;
-- [ ] migration wizard Chrome storage → SQLite;
-- [ ] disconnect/reconnect bridge recovery;
-- [ ] version handshake extension ↔ desktop.
+- [x] companion transport contract;
+- [x] secure pairing desktop ↔ extension;
+- [x] production transport: Native Messaging или equivalent authenticated local channel;
+- [x] dev-only loopback transport при необходимости;
+- [x] extension service worker перестаёт быть canonical project state owner в companion mode;
+- [x] extension передаёт только agent/browser events;
+- [x] desktop выдаёт prompts/stop/context commands;
+- [x] protocol events persist'ятся desktop EventStore;
+- [x] extension popup в companion mode показывает connection status + `Open Orchestra`;
+- [x] migration wizard Chrome storage → SQLite;
+- [x] disconnect/reconnect bridge recovery;
+- [x] version handshake extension ↔ desktop.
 
 ### Security
 
@@ -861,6 +873,8 @@ Local bridge обязан иметь authentication/pairing; нельзя отк
 ---
 
 ## Phase 17 — Local Repository Runtime + Git Worktrees
+
+**Статус:** ✅ Complete.
 
 **Цель:** перенести инженерную работу с remote-only Git artifact validation на полноценные локальные isolated workspaces.
 
@@ -889,20 +903,20 @@ orchestra/<projectId>/<taskId>/<runId>
 
 ### Реализация
 
-- [ ] local repository registry;
-- [ ] Git CLI adapter;
-- [ ] worktree create/remove;
-- [ ] per-run workspace metadata;
-- [ ] diff/scope validation локально;
-- [ ] local commit validation;
-- [ ] integration worktree;
-- [ ] deterministic `--no-ff` merges;
-- [ ] local verification commands;
-- [ ] optional push only after local validation;
-- [ ] system Git credentials / SSH integration;
-- [ ] abandoned worktree cleanup policy;
-- [ ] workspace recovery after app crash;
-- [ ] changed-files provenance independent from agent report.
+- [x] local repository registry;
+- [x] Git CLI adapter;
+- [x] worktree create/remove;
+- [x] per-run workspace metadata;
+- [x] diff/scope validation локально;
+- [x] local commit validation;
+- [x] integration worktree;
+- [x] deterministic `--no-ff` merges;
+- [x] local verification commands;
+- [x] optional push only after local validation;
+- [x] system Git credentials / SSH integration;
+- [x] abandoned worktree cleanup policy;
+- [x] workspace recovery after app crash;
+- [x] changed-files provenance independent from agent report.
 
 ### Command execution trust model
 
@@ -943,6 +957,8 @@ worktree
 
 ## Phase 18 — Direct Desktop ChatGPT AgentRuntime
 
+**Статус:** ✅ Complete.
+
 **Цель:** убрать обязательную зависимость desktop Orchestra от browser extension.
 
 ### Runtime
@@ -956,22 +972,22 @@ Playwright / CDP
 
 ### Реализация
 
-- [ ] desktop-managed Chromium lifecycle;
-- [ ] dedicated Orchestra browser profile;
-- [ ] explicit login onboarding;
-- [ ] logical agent ↔ browser page mapping;
-- [ ] reuse существующего ChatGPTAdapter logic где возможно;
-- [ ] generation detection;
-- [ ] prompt send;
-- [ ] Stop Generation;
-- [ ] protocol artifact extraction;
-- [ ] heartbeat/health;
-- [ ] chat navigation detection;
-- [ ] fresh page replacement;
-- [ ] browser process crash recovery;
-- [ ] visible/open-chat action из Dashboard;
-- [ ] rate/concurrency policy;
-- [ ] compatibility contract tests против ExtensionAgentRuntime.
+- [x] desktop-managed Chromium lifecycle;
+- [x] dedicated Orchestra browser profile;
+- [x] explicit login onboarding;
+- [x] logical agent ↔ browser page mapping;
+- [x] reuse существующего ChatGPTAdapter logic где возможно;
+- [x] generation detection;
+- [x] prompt send;
+- [x] Stop Generation;
+- [x] protocol artifact extraction;
+- [x] heartbeat/health;
+- [x] chat navigation detection;
+- [x] fresh page replacement;
+- [x] browser process crash recovery;
+- [x] visible/open-chat action из Dashboard;
+- [x] rate/concurrency policy;
+- [x] compatibility contract tests против ExtensionAgentRuntime.
 
 ### Не делать
 
@@ -989,6 +1005,8 @@ Playwright / CDP
 ---
 
 ## Phase 19 — Desktop Parity + Reliability / Security Hardening
+
+**Статус:** ✅ Complete как implementation + automated parity/security gate. Финальная signed alpha artifact остаётся частью Phase 20 release validation.
 
 **Цель:** доказать, что desktop runtime как минимум не слабее extension baseline.
 
@@ -1024,18 +1042,18 @@ Playwright / CDP
 
 ### Security hardening
 
-- [ ] repository trust boundary;
-- [ ] local command execution audit;
-- [ ] secret redaction;
-- [ ] no secrets in Project Bundle;
-- [ ] signed desktop builds;
-- [ ] secure update strategy;
-- [ ] desktop IPC allowlist;
-- [ ] renderer isolation / CSP;
-- [ ] authenticated companion bridge;
-- [ ] file path validation;
-- [ ] destructive Git actions require policy/user gate;
-- [ ] telemetry remains opt-in.
+- [x] repository trust boundary;
+- [x] local command execution audit;
+- [x] secret redaction;
+- [x] no secrets in Project Bundle;
+- [x] signed desktop build/release pipeline; финальный signed artifact проверяется Phase 20 gate;
+- [x] secure update strategy;
+- [x] desktop IPC allowlist;
+- [x] renderer isolation / CSP;
+- [x] authenticated companion bridge;
+- [x] file path validation;
+- [x] destructive Git actions require policy/user gate;
+- [x] telemetry remains opt-in.
 
 ### DoD
 
@@ -1044,6 +1062,8 @@ Chaos tests не приводят к destructive action в unknown state, а des
 ---
 
 ## Phase 20 — Desktop-first Alpha Release
+
+**Статус:** ✅ code + automated CI candidate complete; ⏳ real A01/A11 + signed `v2.0.0-alpha.20` release pending.
 
 **Цель:** переключить основной продуктовый путь с extension на desktop, не удаляя fallback преждевременно.
 
@@ -1105,9 +1125,13 @@ Desktop-first alpha нельзя выпускать без успешных сц
 16. extension-companion fallback;
 17. no duplicate irreversible side effects.
 
+Automated evidence для всех 17 сценариев входит в `npm run test:phase20` / `npm run test:alpha`. A01 и A11 дополнительно требуют реального manual evidence на одном exact build commit; финальный Windows prerelease требует `Authenticode=Valid` и публикации только через strict `Alpha Release Validation` workflow.
+
 ---
 
 ## Phase 21 — Post-alpha Cutover / Provider Expansion
+
+**Статус:** ⏸ Blocked until Phase 20 manual validation + signed alpha release.
 
 **Цель:** только после desktop alpha решить, что делать с extension как самостоятельным продуктом.
 
@@ -1142,6 +1166,8 @@ Extension сохраняет только browser integration, если direct d
 
 ## Milestone A — Portable Core
 
+**Статус:** ✅ Complete.
+
 Phases 10–11.
 
 Результат:
@@ -1149,6 +1175,8 @@ Phases 10–11.
 > Core больше не привязан к Chrome APIs, state можно перенести из extension storage в SQLite.
 
 ## Milestone B — Portable Product Surface
+
+**Статус:** ✅ Complete.
 
 Phases 12–14.
 
@@ -1158,6 +1186,8 @@ Phases 12–14.
 
 ## Milestone C — Desktop Control Plane
 
+**Статус:** ✅ Complete.
+
 Phases 15–16.
 
 Результат:
@@ -1165,6 +1195,8 @@ Phases 15–16.
 > Desktop process является source of truth, extension — только Agent bridge.
 
 ## Milestone D — Local Engineering Runtime
+
+**Статус:** ✅ Complete.
 
 Phase 17.
 
@@ -1174,6 +1206,8 @@ Phase 17.
 
 ## Milestone E — Extensionless Runtime
 
+**Статус:** ✅ Complete.
+
 Phase 18.
 
 Результат:
@@ -1181,6 +1215,8 @@ Phase 18.
 > Desktop управляет ChatGPT sessions напрямую.
 
 ## Milestone F — Desktop Alpha
+
+**Статус:** ✅ code + CI candidate complete; ⏳ manual A01/A11 + signed release pending.
 
 Phases 19–20.
 
@@ -1313,9 +1349,9 @@ External telemetry — только отдельное opt-in решение.
 
 ---
 
-# 14. Что сознательно не делать во время миграции
+# 14. Что сознательно не делать до post-alpha cutover
 
-Пока desktop parity не достигнут, не приоритетны:
+До завершения Phase 20 manual validation и принятия Phase 21 cutover/provider решения не приоритетны:
 
 - собственный LLM backend;
 - remote distributed scheduler;
@@ -1400,36 +1436,30 @@ Desktop migration не меняет эту модель — она убирае�
 
 # 17. Ближайшая следующая задача
 
-Следующая implementation-задача после `2.0.0-alpha.10`:
-
-> **Phase 10 — Platform Boundary + Orchestrator API.**
-
-Нельзя сразу начинать Electron UI или Playwright automation.
-
-Сначала необходимо доказать, что существующие Planning/Scheduler/Review/Integration/Recovery могут работать без знания о `chrome.*`.
-
-Первый Phase 10 PR должен сделать behavior-preserving vertical slice:
+Следующая задача для `2.0.0-alpha.20` — **не новая implementation phase**, а завершение release validation:
 
 ```text
-Current chrome.tabs messaging
+merge final pre-release cleanup
         ↓
-ExtensionAgentRuntime
+wait for green push CI on main
         ↓
-AgentRuntime contract
+freeze one exact 40-char main commit
         ↓
-Scheduler / Review / Integration
+build/use candidate from that exact commit
+        ↓
+A01 clean Windows install + interactive ChatGPT login evidence
+        ↓
+A11 real Windows reboot + persisted project recovery evidence
+        ↓
+configure Windows code-signing credentials
+        ↓
+run strict Alpha Release Validation workflow
+        ↓
+Authenticode=Valid + release manifest/checksum verification
+        ↓
+publish v2.0.0-alpha.20 prerelease
 ```
 
-и аналогично для persistence:
+A01 и A11 должны быть выполнены на одном exact build commit. Любое изменение `main` после manual evidence инвалидирует старые evidence records и требует повторить manual gates на новом candidate.
 
-```text
-chrome.storage.local
-        ↓
-ChromeStorageStateStore
-        ↓
-StateStore contract
-        ↓
-Core stores
-```
-
-Только после того как существующая extension проходит прежние regression/smoke gates через эти boundaries, начинается Phase 11.
+Phase 21 не начинается до успешной публикации alpha. Канонический release runbook: `docs/alpha-20-validation.md`; tracking: issue #43.
