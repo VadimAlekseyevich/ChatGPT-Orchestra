@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const packageJson = require("../package.json");
 
@@ -36,5 +37,15 @@ test("desktop package includes every direct-browser runtime dependency", () => {
   for (const file of [...REQUIRED_CONTENT_FILES, ...REQUIRED_DESKTOP_FILES]) {
     assert.equal(fs.existsSync(path.resolve(__dirname, "..", file)), true, `missing source dependency: ${file}`);
     assert.equal(coveredByBuildFiles(file), true, `desktop build excludes direct-browser dependency: ${file}`);
+  }
+});
+
+test("every packaged direct-browser JavaScript entry parses before packaging", () => {
+  for (const file of [...REQUIRED_CONTENT_FILES, ...REQUIRED_DESKTOP_FILES]) {
+    const filename = path.resolve(__dirname, "..", file);
+    assert.doesNotThrow(
+      () => execFileSync(process.execPath, ["--check", filename], { stdio: "pipe" }),
+      `syntax check failed for packaged runtime file: ${file}`
+    );
   }
 });
