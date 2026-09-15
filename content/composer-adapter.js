@@ -45,7 +45,8 @@
     }
 
     isComposerOccupied() {
-      return Boolean(this.getComposerText().trim());
+      const composer = this.findComposer();
+      return composer ? Boolean(this.getComposerText(composer).trim()) : null;
     }
 
     setNativeValue(element, value) {
@@ -120,17 +121,24 @@
       return null;
     }
 
-    submissionObserved() {
-      return this.isGenerating() || !this.isComposerOccupied();
+    pathname() {
+      return String(this.windowRef?.location?.pathname || "");
     }
 
-    async waitForSubmission(timeoutMs = this.submissionTimeoutMs) {
+    submissionObserved(initialPathname = "") {
+      if (this.isGenerating()) return true;
+      if (initialPathname && this.pathname() && this.pathname() !== initialPathname) return true;
+      const composer = this.findComposer();
+      return Boolean(composer && !this.getComposerText(composer).trim());
+    }
+
+    async waitForSubmission(initialPathname = "", timeoutMs = this.submissionTimeoutMs) {
       const startedAt = Date.now();
       while (Date.now() - startedAt < timeoutMs) {
-        if (this.submissionObserved()) return true;
+        if (this.submissionObserved(initialPathname)) return true;
         await Utils.sleep(50);
       }
-      return this.submissionObserved();
+      return this.submissionObserved(initialPathname);
     }
 
     hasErrorIndicator() {
@@ -163,15 +171,16 @@
         return { ok: false, reason: "composer_occupied" };
       }
 
+      const initialPathname = this.pathname();
       this.setComposerText(composer, text);
       const sendButton = await this.waitForSendButton();
 
       if (!sendButton) {
-        return { ok: false, reason: "send_button_timeout", promptStaged: this.isComposerOccupied() };
+        return { ok: false, reason: "send_button_timeout", promptStaged: this.isComposerOccupied() === true };
       }
 
       sendButton.click?.();
-      if (await this.waitForSubmission(Math.min(700, this.submissionTimeoutMs))) {
+      if (await this.waitForSubmission(initialPathname, Math.min(700, this.submissionTimeoutMs))) {
         return { ok: true, accepted: true, confirmed: true, method: "button-click" };
       }
 
@@ -181,12 +190,12 @@
       const form = sendButton.form || sendButton.closest?.("form") || null;
       if (typeof form?.requestSubmit === "function") {
         try { form.requestSubmit(sendButton); } catch (_) {}
-        if (await this.waitForSubmission()) {
+        if (await this.waitForSubmission(initialPathname)) {
           return { ok: true, accepted: true, confirmed: true, method: "form-request-submit" };
         }
       }
 
-      return { ok: false, reason: "send_not_confirmed", promptStaged: this.isComposerOccupied() };
+      return { ok: false, reason: "send_not_confirmed", promptStaged: this.isComposerOccupied() === true };
     }
 
     stopGeneration() {
