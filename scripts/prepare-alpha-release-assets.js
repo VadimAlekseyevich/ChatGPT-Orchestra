@@ -7,6 +7,7 @@ const path = require("node:path");
 const ALPHA_VERSION = "2.0.0-alpha.20";
 const ALPHA_TAG = "v2.0.0-alpha.20";
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/i;
+const WORKFLOW_RUN_PATTERN = /^[1-9][0-9]*$/;
 
 function readJson(filename) {
   return JSON.parse(fs.readFileSync(filename, "utf8"));
@@ -15,6 +16,11 @@ function readJson(filename) {
 function normalizeCommit(value) {
   const commit = String(value || "").trim();
   return COMMIT_PATTERN.test(commit) ? commit.toLowerCase() : null;
+}
+
+function normalizeWorkflowRun(value) {
+  const workflowRun = String(value || "").trim();
+  return WORKFLOW_RUN_PATTERN.test(workflowRun) ? workflowRun : null;
 }
 
 function sha256File(filename) {
@@ -27,7 +33,7 @@ function fail(reason) {
   throw new Error(reason);
 }
 
-function verifyReleaseEvidence({ build, signature, manual, expectedCommit }) {
+function verifyReleaseEvidence({ build, signature, manual, expectedCommit, expectedWorkflowRun = null }) {
   const commit = normalizeCommit(expectedCommit);
   if (!commit) fail("alpha_release_expected_commit_invalid");
 
@@ -49,6 +55,12 @@ function verifyReleaseEvidence({ build, signature, manual, expectedCommit }) {
     if (value !== commit) fail(`alpha_release_${name}_commit_mismatch`);
   }
 
+  const workflowRun = normalizeWorkflowRun(manual?.workflowRun);
+  if (!workflowRun) fail("alpha_release_workflow_run_invalid");
+  const normalizedExpectedRun = expectedWorkflowRun == null ? null : normalizeWorkflowRun(expectedWorkflowRun);
+  if (expectedWorkflowRun != null && !normalizedExpectedRun) fail("alpha_release_expected_workflow_run_invalid");
+  if (normalizedExpectedRun && workflowRun !== normalizedExpectedRun) fail("alpha_release_workflow_run_mismatch");
+
   if (signature?.requireSignature !== true) fail("alpha_release_signature_evidence_not_strict");
   const signatures = Array.isArray(signature?.signatures) ? signature.signatures : [];
   if (signatures.length < 2) fail("alpha_release_signature_evidence_incomplete");
@@ -64,7 +76,7 @@ function verifyReleaseEvidence({ build, signature, manual, expectedCommit }) {
     if (normalizeCommit(item?.evidence?.buildCommit) !== commit) fail(`alpha_release_manual_scenario_commit_mismatch:${item?.scenarioId || "unknown"}`);
   }
 
-  return { commit, signatures, scenarios };
+  return { commit, workflowRun, signatures, scenarios };
 }
 
 function findInstaller(desktopDir) {
@@ -79,6 +91,7 @@ function prepareReleaseAssets({
   desktopDir = path.resolve("dist", "desktop"),
   extensionZip = path.resolve("dist", "desktop", "chatgpt-orchestra-alpha20-extension.zip"),
   expectedCommit = process.env.ALPHA_EXPECTED_COMMIT || process.env.GITHUB_SHA,
+  expectedWorkflowRun = process.env.GITHUB_RUN_ID || null,
   outputDir = desktopDir
 } = {}) {
   const buildPath = path.join(desktopDir, "alpha-build-evidence.json");
@@ -91,7 +104,7 @@ function prepareReleaseAssets({
   const build = readJson(buildPath);
   const signature = readJson(signaturePath);
   const manual = readJson(manualPath);
-  const verified = verifyReleaseEvidence({ build, signature, manual, expectedCommit });
+  const verified = verifyReleaseEvidence({ build, signature, manual, expectedCommit, expectedWorkflowRun });
   const installer = findInstaller(desktopDir);
 
   const assets = [installer, extensionZip, buildPath, signaturePath, manualPath].map((filename) => ({
@@ -106,6 +119,7 @@ function prepareReleaseAssets({
     version: ALPHA_VERSION,
     tag: ALPHA_TAG,
     commit: verified.commit,
+    workflowRun: verified.workflowRun,
     installer: path.basename(installer),
     signerSubjects: [...new Set(verified.signatures.map((item) => String(item.signerSubject)))],
     manualEvidence: verified.scenarios.map((item) => ({
@@ -143,6 +157,7 @@ function prepareReleaseAssets({
     "Desktop-first alpha for Windows.",
     "",
     `Source commit: \`${verified.commit}\``,
+    `Workflow run: ${verified.workflowRun}`,
     "",
     "Release gates passed before publication:",
     "- automated Phase 20 acceptance contract (A01–A17);",
@@ -167,7 +182,7 @@ function prepareReleaseAssets({
 
 function main() {
   const result = prepareReleaseAssets();
-  console.log(`alpha release assets ready: tag=${result.manifest.tag}; commit=${result.manifest.commit}; assets=${result.assets.length}`);
+  console.log(`alpha release assets ready: tag=${result.manifest.tag}; commit=${result.manifest.commit}; workflowRun=${result.manifest.workflowRun}; assets=${result.assets.length}`);
 }
 
 if (require.main === module) {
@@ -181,6 +196,7 @@ module.exports = {
   ALPHA_VERSION,
   ALPHA_TAG,
   normalizeCommit,
+  normalizeWorkflowRun,
   sha256File,
   verifyReleaseEvidence,
   findInstaller,
