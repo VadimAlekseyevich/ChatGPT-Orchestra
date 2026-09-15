@@ -20,6 +20,12 @@
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
     isConnected(agent) { return Boolean(agent && this.registry?.isAgentConnected?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
+    isRetryableLeadDeliveryFailure(project) {
+      return Boolean(project
+        && project.status === "NEEDS_USER"
+        && project.currentRunId
+        && project.lastError?.reason === "lead_prompt_failed");
+    }
 
     async init() {
       if (this.initialized) return this.getPublicState();
@@ -59,12 +65,17 @@
     }
 
     async resumeCurrentStage({ reason = "fresh_lead_replacement" } = {}) {
-      const project = this.projectStore.getActiveProject();
+      let project = this.projectStore.getActiveProject();
       const lead = this.getLead();
-      if (!project || project.status !== "PLANNING" || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
+      const retryableDeliveryFailure = this.isRetryableLeadDeliveryFailure(project);
+      if (!project || (!retryableDeliveryFailure && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
       if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
+      if (retryableDeliveryFailure) {
+        await this.projectStore.fail(project.projectId, "lead_prompt_failed", project.lastError?.details || null, "PLANNING");
+        project = this.projectStore.getActiveProject();
+      }
       const taskId = `planning:${stage.toLowerCase()}`;
       const runId = project.currentRunId;
       await this.registry.setProtocolContext(lead.agentId, { projectId: project.projectId, taskId, runId });
@@ -78,6 +89,7 @@
       const sent = await this.sendPrompt(lead.agentId, prompt);
       if (!sent?.ok) {
         await this.registry.clearProtocolContext?.(lead.agentId);
+        await this.projectStore.fail(project.projectId, "lead_prompt_failed", sent || null, "PLANNING");
         return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState() };
       }
       return {
@@ -107,8 +119,9 @@
       const prompt = root.PlanningPrompts.buildPlanningPrompt({ stage, project: current, agentId: lead.agentId, runId });
       const result = await this.sendPrompt(lead.agentId, prompt);
       if (!result?.ok) {
-        await this.projectStore.fail(projectId, "lead_prompt_failed", result || null);
-        return { ok: false, reason: "lead_prompt_failed", details: result || null };
+        await this.registry.clearProtocolContext?.(lead.agentId);
+        await this.projectStore.fail(projectId, "lead_prompt_failed", result || null, "PLANNING");
+        return { ok: false, reason: "lead_prompt_failed", retryable: true, details: result || null };
       }
       return { ok: true, project: this.getPublicState() };
     }
