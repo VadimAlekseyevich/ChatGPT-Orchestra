@@ -26,6 +26,29 @@ test("parses JSON envelope from final protocol line", () => {
   assert.equal(result.event.payload.commit, "abc123");
 });
 
+test("accepts protocolVersion as a JSON compatibility alias and normalizes to canonical v", () => {
+  const { v: _v, ...withoutV } = validEvent();
+  const line = `@@ORCH ${JSON.stringify({ protocolVersion: 1, ...withoutV })}`;
+  const result = Protocol.parseLine(line);
+  assert.equal(result.ok, true);
+  assert.equal(result.event.v, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.event, "protocolVersion"), false);
+});
+
+test("accepts protocolVersion as a compact compatibility alias", () => {
+  const line = "@@ORCH|protocolVersion=1|event=DONE|projectId=P1|taskId=T1|runId=R1|agentId=A1|eventId=E1|sequence=1";
+  const result = Protocol.parseLine(line);
+  assert.equal(result.ok, true);
+  assert.equal(result.event.v, 1);
+});
+
+test("rejects conflicting canonical and compatibility version fields", () => {
+  const result = Protocol.validateEnvelope(validEvent({ protocolVersion: 2 }));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "conflicting_version_fields");
+  assert.deepEqual(result.received, { v: 1, protocolVersion: 2 });
+});
+
 test("parses compact fallback syntax", () => {
   const line = "@@ORCH|v=1|event=DONE|projectId=P1|taskId=T1|runId=R1|agentId=A1|eventId=E1|sequence=1";
   const result = Protocol.parseLine(line);
