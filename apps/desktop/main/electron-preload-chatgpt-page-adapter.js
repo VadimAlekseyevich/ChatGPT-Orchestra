@@ -96,7 +96,9 @@ class ElectronPreloadChatGPTPageAdapter {
     while (Date.now() - startedAt < timeoutMs) {
       latest = await this.request(webContents, "status");
       if (!latest?.ok) return latest;
-      if (latest.generating === true || latest.availability === "generating" || latest.composerOccupied === false) {
+      const generating = latest.generating === true || latest.availability === "generating";
+      const readyAndCleared = latest.availability === "ready" && latest.composerOccupied === false;
+      if (generating || readyAndCleared) {
         return { ...latest, ok: true, accepted: true, confirmed: true, method: "trusted-enter" };
       }
       await Utils.sleep(100);
@@ -122,8 +124,8 @@ class ElectronPreloadChatGPTPageAdapter {
     try {
       // A BrowserWindow-level keyboard event is trusted by Chromium, unlike a
       // synthetic DOM click/KeyboardEvent created inside the remote page.
-      webContents.sendInputEvent({ type: "keyDown", keyCode: "ENTER" });
-      webContents.sendInputEvent({ type: "keyUp", keyCode: "ENTER" });
+      webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+      webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
     } catch (error) {
       return {
         ...result,
