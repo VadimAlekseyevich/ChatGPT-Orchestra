@@ -4,7 +4,7 @@ const ALPHA_VERSION = "2.0.0-alpha.20";
 const ALPHA_ARTIFACT_NAME = "chatgpt-orchestra-alpha20-windows";
 
 const ALPHA_SCENARIOS = Object.freeze([
-  { id: "A01", title: "Fresh install + ChatGPT login onboarding", evidence: ["tests/managed-browser-onboarding.test.js", "tests/managed-browser-readiness-policy.test.js", "tests/alpha-build-identity.test.js"], manualRequired: true },
+  { id: "A01", title: "Fresh install + ChatGPT login onboarding", evidence: ["tests/managed-browser-onboarding.test.js", "tests/managed-browser-readiness-policy.test.js", "tests/alpha-build-identity.test.js", "tests/alpha-manual-evidence-preflight.test.js"], manualRequired: true },
   { id: "A02", title: "Open local repository", evidence: ["tests/repository-api.test.js", "tests/project-repository-binding.test.js"], manualRequired: false },
   { id: "A03", title: "Clone repository", evidence: ["tests/git-cli-workspace.test.js", "tests/system-git-workspace.test.js"], manualRequired: false },
   { id: "A04", title: "4-task parallel happy path", evidence: ["tests/scheduler-engine.test.js"], manualRequired: false },
@@ -14,7 +14,7 @@ const ALPHA_SCENARIOS = Object.freeze([
   { id: "A08", title: "Semantic conflict", evidence: ["tests/integration-engine.test.js"], manualRequired: false },
   { id: "A09", title: "Task/browser death", evidence: ["tests/managed-browser-recovery-registry.test.js", "tests/local-worker-recovery.test.js"], manualRequired: false },
   { id: "A10", title: "App process kill/restart", evidence: ["tests/recovery-controller.test.js", "tests/local-integration-recovery.test.js"], manualRequired: false },
-  { id: "A11", title: "OS restart / project resume", evidence: ["tests/recovery-controller.test.js", "tests/project-bundle.test.js", "tests/desktop-app-data.test.js", "tests/desktop-runtime-evidence.test.js", "tests/alpha-build-identity.test.js"], manualRequired: true },
+  { id: "A11", title: "OS restart / project resume", evidence: ["tests/recovery-controller.test.js", "tests/project-bundle.test.js", "tests/desktop-app-data.test.js", "tests/desktop-runtime-evidence.test.js", "tests/alpha-build-identity.test.js", "tests/alpha-manual-evidence-preflight.test.js"], manualRequired: true },
   { id: "A12", title: "Pause/Resume", evidence: ["tests/recovery-controller.test.js"], manualRequired: false },
   { id: "A13", title: "Stop Now + late event protection", evidence: ["tests/recovery-stop-guards.test.js", "tests/desktop-stop-hardening.test.js"], manualRequired: false },
   { id: "A14", title: "Local worktree salvage", evidence: ["tests/workspace-lifecycle-hardening.test.js"], manualRequired: false },
