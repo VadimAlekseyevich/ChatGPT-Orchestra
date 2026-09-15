@@ -6,6 +6,7 @@ const {
   ALPHA_VERSION,
   ALPHA_TAG,
   normalizeCommit,
+  normalizeWorkflowRun,
   sha256File,
   verifyReleaseEvidence,
   findInstaller
@@ -40,10 +41,13 @@ function sameStringSet(left, right) {
 
 function verifyReleaseBundle({
   desktopDir = path.resolve("dist", "desktop"),
-  expectedCommit = process.env.ALPHA_EXPECTED_COMMIT || process.env.GITHUB_SHA
+  expectedCommit = process.env.ALPHA_EXPECTED_COMMIT || process.env.GITHUB_SHA,
+  expectedWorkflowRun = process.env.GITHUB_RUN_ID || null
 } = {}) {
   const commit = normalizeCommit(expectedCommit);
   if (!commit) fail("alpha_release_expected_commit_invalid");
+  const workflowRun = expectedWorkflowRun == null ? null : normalizeWorkflowRun(expectedWorkflowRun);
+  if (expectedWorkflowRun != null && !workflowRun) fail("alpha_release_expected_workflow_run_invalid");
 
   const paths = {
     build: path.join(desktopDir, "alpha-build-evidence.json"),
@@ -61,7 +65,7 @@ function verifyReleaseBundle({
   const build = readJson(paths.build);
   const signature = readJson(paths.signature);
   const manual = readJson(paths.manual);
-  const verified = verifyReleaseEvidence({ build, signature, manual, expectedCommit: commit });
+  const verified = verifyReleaseEvidence({ build, signature, manual, expectedCommit: commit, expectedWorkflowRun: workflowRun });
   const installer = findInstaller(desktopDir);
   const installerName = path.basename(installer);
 
@@ -70,6 +74,7 @@ function verifyReleaseBundle({
   if (String(manifest?.version || "") !== ALPHA_VERSION) fail("alpha_release_manifest_version_mismatch");
   if (String(manifest?.tag || "") !== ALPHA_TAG) fail("alpha_release_manifest_tag_mismatch");
   if (normalizeCommit(manifest?.commit) !== commit) fail("alpha_release_manifest_commit_mismatch");
+  if (normalizeWorkflowRun(manifest?.workflowRun) !== verified.workflowRun) fail("alpha_release_manifest_workflow_run_mismatch");
   if (String(manifest?.installer || "") !== installerName) fail("alpha_release_manifest_installer_mismatch");
 
   const expectedSigners = verified.signatures.map((item) => String(item.signerSubject));
@@ -115,7 +120,12 @@ function verifyReleaseBundle({
   }
 
   const notes = fs.readFileSync(paths.notes, "utf8");
-  if (!notes.includes(ALPHA_VERSION) || !notes.includes(commit) || !notes.includes("Authenticode=Valid")) {
+  if (
+    !notes.includes(ALPHA_VERSION) ||
+    !notes.includes(commit) ||
+    !notes.includes(`Workflow run: ${verified.workflowRun}`) ||
+    !notes.includes("Authenticode=Valid")
+  ) {
     fail("alpha_release_notes_identity_mismatch");
   }
 
@@ -123,6 +133,7 @@ function verifyReleaseBundle({
     version: ALPHA_VERSION,
     tag: ALPHA_TAG,
     commit,
+    workflowRun: verified.workflowRun,
     installer: installerName,
     assetNames: checksumNames
   };
@@ -130,7 +141,7 @@ function verifyReleaseBundle({
 
 function main() {
   const result = verifyReleaseBundle();
-  console.log(`alpha release bundle verified: tag=${result.tag}; commit=${result.commit}; assets=${result.assetNames.length}`);
+  console.log(`alpha release bundle verified: tag=${result.tag}; commit=${result.commit}; workflowRun=${result.workflowRun}; assets=${result.assetNames.length}`);
 }
 
 if (require.main === module) {
