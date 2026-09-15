@@ -64,7 +64,7 @@ if (registrationRequest) {
     .then(() => runNativeHostRegistration(registrationRequest))
     .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
     .catch((error) => {
-      process.stderr.write(`${error?.stack || error?.message || error}\n`))
+      process.stderr.write(`${error?.stack || error?.message || error}\n`);
       process.exitCode = 1;
     });
 } else if (nativeMessagingRequested()) {
