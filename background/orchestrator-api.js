@@ -61,11 +61,13 @@
       else if (command === "startExecution") result = await this.orchestrator?.startExecution?.(payload);
       else if (command === "registerActiveLead") {
         const beforeLead = this.orchestrator?.getPublicState?.()?.lead || null; const projectBefore = this.planningEngine?.getPublicState?.() || null;
-        const expectedContext = projectBefore?.status === "PLANNING" && projectBefore.currentRunId ? { projectId: projectBefore.projectId, taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`, runId: projectBefore.currentRunId } : null;
+        const planningRunPresent = Boolean(projectBefore?.currentRunId && ["PLANNING", "NEEDS_USER"].includes(String(projectBefore?.status || "")));
+        const expectedContext = planningRunPresent ? { projectId: projectBefore.projectId, taskId: `planning:${String(projectBefore.stage || "").toLowerCase()}`, runId: projectBefore.currentRunId } : null;
         const bound = beforeLead?.protocolContext || null; const missingExpectedContext = Boolean(expectedContext && (!bound || bound.projectId !== expectedContext.projectId || bound.taskId !== expectedContext.taskId || bound.runId !== expectedContext.runId));
-        const replacementCandidate = !beforeLead || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || "")) || missingExpectedContext;
+        const interruptedPlanningDelivery = Boolean(projectBefore?.status === "NEEDS_USER" && projectBefore.currentRunId);
+        const replacementCandidate = interruptedPlanningDelivery || !beforeLead || ["OFFLINE", "ERROR"].includes(String(beforeLead.status || "")) || missingExpectedContext;
         result = await this.orchestrator?.registerActiveLead?.(); const project = this.planningEngine?.getPublicState?.();
-        if (result?.ok && replacementCandidate && project?.status === "PLANNING") { const planningResume = await this.planningEngine?.resumeCurrentStage?.({ reason: "fresh_lead_registered" }); result = { ...result, planningResume: planningResume || null }; }
+        if (result?.ok && replacementCandidate && project?.currentRunId && ["PLANNING", "NEEDS_USER"].includes(String(project?.status || ""))) { const planningResume = await this.planningEngine?.resumeCurrentStage?.({ reason: "fresh_lead_registered" }); result = { ...result, planningResume: planningResume || null }; }
       }
       else if (command === "createWorkers") result = await this.orchestrator?.createWorkers?.(payload.count);
       else if (command === "bindProtocolContext") result = await this.orchestrator?.bindProtocolContext?.(payload.agentId, payload.context);

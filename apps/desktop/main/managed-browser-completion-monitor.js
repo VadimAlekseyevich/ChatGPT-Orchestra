@@ -1,5 +1,7 @@
 "use strict";
 
+const RETRYABLE_PREPARE_REASONS = new Set(["agent_preload_timeout", "agent_preload_send_failed"]);
+
 class ManagedBrowserCompletionMonitor {
   constructor({
     driver,
@@ -8,6 +10,8 @@ class ManagedBrowserCompletionMonitor {
     quietMs = 1200,
     timeoutMs = 30 * 60 * 1000,
     maxSnapshotErrors = 3,
+    prepareAttempts = 2,
+    prepareRetryMs = 250,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     logger = console
   } = {}) {
@@ -21,6 +25,8 @@ class ManagedBrowserCompletionMonitor {
     this.quietMs = Math.max(this.pollMs, Number(quietMs) || 1200);
     this.timeoutMs = Math.max(this.quietMs + this.pollMs, Number(timeoutMs) || (30 * 60 * 1000));
     this.maxSnapshotErrors = Math.max(1, Math.min(10, Number(maxSnapshotErrors) || 3));
+    this.prepareAttempts = Math.max(1, Math.min(4, Number(prepareAttempts) || 2));
+    this.prepareRetryMs = Math.max(0, Math.min(2000, Number(prepareRetryMs) || 250));
     this.sleep = sleep;
     this.logger = logger;
     this.active = new Map();
@@ -34,20 +40,33 @@ class ManagedBrowserCompletionMonitor {
     if (!agent) return { ok: false, reason: "completion_monitor_agent_missing", agentId: String(agentId || "") };
     const sessionId = runtime?.sessionIdForAgent?.(agent);
     if (!sessionId) return { ok: false, reason: "completion_monitor_agent_offline", agentId: agent.agentId };
-    const baseline = await this.driver.readAssistantSnapshot(sessionId);
+
+    let baseline = null;
+    let attempts = 0;
+    while (attempts < this.prepareAttempts) {
+      attempts += 1;
+      baseline = await this.driver.readAssistantSnapshot(sessionId);
+      if (baseline?.ok) break;
+      const reason = String(baseline?.reason || "");
+      if (!RETRYABLE_PREPARE_REASONS.has(reason) || attempts >= this.prepareAttempts) break;
+      if (this.prepareRetryMs > 0) await this.sleep(this.prepareRetryMs);
+    }
+
     if (!baseline?.ok) {
       return {
         ok: false,
         reason: baseline?.reason || "completion_monitor_baseline_unavailable",
         agentId: agent.agentId,
-        sessionId
+        sessionId,
+        attempts
       };
     }
     return {
       ok: true,
       agentId: agent.agentId,
       sessionId: String(sessionId),
-      baseline: this.normalizeSnapshot(baseline)
+      baseline: this.normalizeSnapshot(baseline),
+      attempts
     };
   }
 
@@ -206,4 +225,4 @@ class ManagedBrowserCompletionMonitor {
   }
 }
 
-module.exports = { ManagedBrowserCompletionMonitor };
+module.exports = { ManagedBrowserCompletionMonitor, RETRYABLE_PREPARE_REASONS };
