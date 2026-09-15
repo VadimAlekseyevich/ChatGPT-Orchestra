@@ -10,13 +10,14 @@ const {
 
 class FakeIpcMain extends EventEmitter {}
 
-function webContents(id, onSend) {
+function webContents(id, onSend, onInput = null) {
   return {
     id,
     send(channel, message) {
       assert.equal(channel, COMMAND_CHANNEL);
       onSend?.(message);
-    }
+    },
+    ...(onInput ? { sendInputEvent(event) { onInput(event); } } : {})
   };
 }
 
@@ -30,7 +31,7 @@ test("preload page adapter sends only allowlisted structured commands with share
   const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
   const contents = webContents(41, (message) => {
     seen.push(message);
-    queueMicrotask(() => respond(ipcMain, 41, message.requestId, { ok: true, availability: "ready", generating: false, url: "https://chatgpt.com/" }));
+    queueMicrotask(() => respond(ipcMain, 41, message.requestId, { ok: true, availability: "ready", generating: false, composerOccupied: false, url: "https://chatgpt.com/" }));
   });
   const ping = await adapter.ping(contents);
   assert.equal(ping.ok, true);
@@ -64,7 +65,7 @@ test("send and stop operations cross the preload boundary without exposing IPC t
   const contents = webContents(55, (message) => {
     calls.push(message);
     const result = message.name === "send-prompt"
-      ? { ok: true, accepted: true, url: "https://chatgpt.com/c/1" }
+      ? { ok: true, accepted: true, confirmed: true, method: "button-click", url: "https://chatgpt.com/c/1" }
       : { ok: true, stopped: true, url: "https://chatgpt.com/c/1" };
     queueMicrotask(() => respond(ipcMain, 55, message.requestId, result));
   });
@@ -73,6 +74,45 @@ test("send and stop operations cross the preload boundary without exposing IPC t
   assert.equal(calls[0].name, "send-prompt");
   assert.equal(calls[0].payload.prompt, "hello");
   assert.equal(calls[1].name, "stop-generation");
+  adapter.close();
+});
+
+test("staged prompt falls back to trusted Enter and must be confirmed before success", async () => {
+  const ipcMain = new FakeIpcMain();
+  const calls = [];
+  const inputs = [];
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(56, (message) => {
+    calls.push(message.name);
+    const result = message.name === "send-prompt"
+      ? { ok: false, reason: "send_not_confirmed", promptStaged: true, url: "https://chatgpt.com/c/1" }
+      : { ok: true, availability: "generating", generating: true, composerOccupied: false, url: "https://chatgpt.com/c/1" };
+    queueMicrotask(() => respond(ipcMain, 56, message.requestId, result));
+  }, (event) => inputs.push(event));
+
+  const result = await adapter.sendPrompt(contents, "planning prompt");
+  assert.equal(result.ok, true);
+  assert.equal(result.accepted, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "trusted-enter");
+  assert.deepEqual(inputs, [
+    { type: "keyDown", keyCode: "ENTER" },
+    { type: "keyUp", keyCode: "ENTER" }
+  ]);
+  assert.deepEqual(calls, ["send-prompt", "status"]);
+  adapter.close();
+});
+
+test("staged prompt remains failed when no trusted input fallback is available", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(57, (message) => {
+    queueMicrotask(() => respond(ipcMain, 57, message.requestId, { ok: false, reason: "send_not_confirmed", promptStaged: true }));
+  });
+  const result = await adapter.sendPrompt(contents, "planning prompt");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "send_not_confirmed");
+  assert.equal(result.promptStaged, true);
   adapter.close();
 });
 
