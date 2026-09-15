@@ -9,6 +9,7 @@ const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
 const validation = read("docs/alpha-20-validation.md");
+const evidencePreflightDoc = read("docs/manual-alpha-evidence-preflight.md");
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
 const windowsBuildWrapper = read("scripts/build-windows-alpha.js");
@@ -58,11 +59,22 @@ for (const marker of [
   "A01 and A11 require real manual evidence",
   "GitHub issue-comment permalink",
   "Build commit",
-  "npm run alpha:evidence",
   "WINDOWS_CSC_LINK",
   "Authenticode=Valid",
   "final `v2.0.0-alpha.20` prerelease"
 ]) assert.ok(validation.includes(marker), `alpha_validation_marker_missing:${marker}`);
+
+for (const marker of [
+  "Manual Alpha Evidence Preflight",
+  "npm run alpha:evidence",
+  "--confirm-install-launch",
+  "--confirm-interactive-login",
+  "--confirm-real-reboot",
+  "--confirm-resume",
+  "--confirm-no-duplicates",
+  "--confirm-worktree-preservation",
+  "does not replace the real manual actions"
+]) assert.ok(evidencePreflightDoc.includes(marker), `alpha_manual_evidence_preflight_doc_marker_missing:${marker}`);
 
 for (const marker of [
   "desktop-alpha:",
