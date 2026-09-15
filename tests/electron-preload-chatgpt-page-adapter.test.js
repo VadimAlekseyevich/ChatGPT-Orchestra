@@ -96,8 +96,8 @@ test("staged prompt falls back to trusted Enter and must be confirmed before suc
   assert.equal(result.confirmed, true);
   assert.equal(result.method, "trusted-enter");
   assert.deepEqual(inputs, [
-    { type: "keyDown", keyCode: "ENTER" },
-    { type: "keyUp", keyCode: "ENTER" }
+    { type: "keyDown", keyCode: "Enter" },
+    { type: "keyUp", keyCode: "Enter" }
   ]);
   assert.deepEqual(calls, ["send-prompt", "status"]);
   adapter.close();
