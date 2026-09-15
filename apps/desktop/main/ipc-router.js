@@ -8,6 +8,16 @@ function portableClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function portableErrorReason(error, fallback, command = "") {
+  const message = String(error?.message || error || "").trim();
+  if (/^[a-z][a-z0-9_:-]{2,160}$/i.test(message)) return message;
+  if (["openLocalRepository", "cloneRepository"].includes(String(command || ""))
+    && /(?:rev-parse[^\r\n]*HEAD|unknown revision[^\r\n]*HEAD|ambiguous argument ['"]?HEAD)/i.test(message)) {
+    return "git_repository_has_no_commits";
+  }
+  return fallback;
+}
+
 class DesktopIpcRouter {
   constructor({ host } = {}) {
     if (!host?.query || !host?.execute) throw new TypeError("desktop_host_api_required");
@@ -15,18 +25,30 @@ class DesktopIpcRouter {
   }
 
   async query(request = {}) {
+    const name = String(request.name || "");
     try {
-      return portableClone(await this.host.query(String(request.name || ""), portableClone(request.payload || {})));
+      return portableClone(await this.host.query(name, portableClone(request.payload || {})));
     } catch (error) {
-      return { apiVersion: 4, ok: false, reason: "desktop_ipc_query_failed", message: error?.message || String(error) };
+      return {
+        apiVersion: 4,
+        ok: false,
+        reason: portableErrorReason(error, "desktop_ipc_query_failed", name),
+        message: error?.message || String(error)
+      };
     }
   }
 
   async execute(request = {}) {
+    const name = String(request.name || "");
     try {
-      return portableClone(await this.host.execute(String(request.name || ""), portableClone(request.payload || {})));
+      return portableClone(await this.host.execute(name, portableClone(request.payload || {})));
     } catch (error) {
-      return { apiVersion: 4, ok: false, reason: "desktop_ipc_command_failed", message: error?.message || String(error) };
+      return {
+        apiVersion: 4,
+        ok: false,
+        reason: portableErrorReason(error, "desktop_ipc_command_failed", name),
+        message: error?.message || String(error)
+      };
     }
   }
 }
@@ -43,4 +65,11 @@ function registerElectronIpc({ ipcMain, router } = {}) {
   };
 }
 
-module.exports = { IPC_QUERY_CHANNEL, IPC_EXECUTE_CHANNEL, DesktopIpcRouter, registerElectronIpc, portableClone };
+module.exports = {
+  IPC_QUERY_CHANNEL,
+  IPC_EXECUTE_CHANNEL,
+  DesktopIpcRouter,
+  registerElectronIpc,
+  portableClone,
+  portableErrorReason
+};
