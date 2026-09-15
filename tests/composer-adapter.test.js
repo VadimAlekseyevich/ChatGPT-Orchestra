@@ -57,3 +57,65 @@ test("reports generation in progress before trying to type", async () => {
   const result = await adapter.sendPrompt("hello");
   assert.deepEqual(result, { ok: false, reason: "generation_in_progress" });
 });
+
+test("does not report success until the composer actually clears", async () => {
+  const composer = { value: "", dispatchEvent() {}, focus() {} };
+  const sendButton = {
+    disabled: false,
+    click() { composer.value = ""; }
+  };
+  const adapter = new ComposerAdapter({
+    documentRef: fakeDocument({ composer, sendButton }),
+    windowRef: {},
+    sendTimeoutMs: 250,
+    submissionTimeoutMs: 250
+  });
+
+  const result = await adapter.sendPrompt("automatic follow-up");
+  assert.equal(result.ok, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "button-click");
+});
+
+test("falls back to requestSubmit when click leaves the prompt staged", async () => {
+  const composer = { value: "", dispatchEvent() {}, focus() {} };
+  const form = {
+    requestSubmit() { composer.value = ""; }
+  };
+  const sendButton = {
+    disabled: false,
+    form,
+    click() {}
+  };
+  const adapter = new ComposerAdapter({
+    documentRef: fakeDocument({ composer, sendButton }),
+    windowRef: {},
+    sendTimeoutMs: 250,
+    submissionTimeoutMs: 250
+  });
+
+  const result = await adapter.sendPrompt("automatic follow-up");
+  assert.equal(result.ok, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "form-request-submit");
+});
+
+test("returns send_not_confirmed instead of a false success when ChatGPT ignores submission", async () => {
+  const composer = { value: "", dispatchEvent() {}, focus() {} };
+  const sendButton = {
+    disabled: false,
+    click() {}
+  };
+  const adapter = new ComposerAdapter({
+    documentRef: fakeDocument({ composer, sendButton }),
+    windowRef: {},
+    sendTimeoutMs: 250,
+    submissionTimeoutMs: 250
+  });
+
+  const result = await adapter.sendPrompt("automatic follow-up");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "send_not_confirmed");
+  assert.equal(result.promptStaged, true);
+  assert.equal(composer.value, "automatic follow-up");
+});
