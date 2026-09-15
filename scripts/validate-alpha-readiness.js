@@ -10,6 +10,7 @@ const pkg = JSON.parse(read("package.json"));
 const manifest = JSON.parse(read("manifest.json"));
 const validation = read("docs/alpha-20-validation.md");
 const evidencePreflightDoc = read("docs/manual-alpha-evidence-preflight.md");
+const updatePolicy = read("docs/desktop-update-policy.md");
 const ci = read(".github/workflows/ci.yml");
 const releaseWorkflow = read(".github/workflows/alpha-release.yml");
 const windowsBuildWrapper = read("scripts/build-windows-alpha.js");
@@ -35,14 +36,17 @@ assert.ok(pkg.scripts["test:alpha"].includes("test:phase20"), "alpha_gate_must_r
 assert.equal(pkg.scripts["alpha:evidence"], "node scripts/prepare-alpha-manual-evidence.js", "alpha_manual_evidence_helper_drift");
 assert.equal(pkg.scripts["desktop:dist:win"], "node scripts/build-windows-alpha.js", "alpha_windows_build_must_embed_identity");
 
+const phase19Gate = String(pkg.scripts["test:phase19"] || "");
 const phase20Gate = String(pkg.scripts["test:phase20"] || "");
+assert.ok(phase19Gate.includes("tests/desktop-update-policy.test.js"), "desktop_update_policy_not_in_phase19_gate");
 for (const requiredTest of [
   "tests/alpha-manual-evidence.test.js",
   "tests/alpha-evidence-comments.test.js",
   "tests/alpha-manual-evidence-preflight.test.js",
   "tests/alpha-build-identity.test.js",
   "tests/alpha-release-assets.test.js",
-  "tests/desktop-runtime-evidence.test.js"
+  "tests/desktop-runtime-evidence.test.js",
+  "tests/desktop-update-policy.test.js"
 ]) assert.ok(phase20Gate.includes(requiredTest), `alpha_phase20_required_test_not_gated:${requiredTest}`);
 
 for (const scenario of ALPHA_SCENARIOS) {
@@ -75,6 +79,15 @@ for (const marker of [
   "--confirm-worktree-preservation",
   "does not replace the real manual actions"
 ]) assert.ok(evidencePreflightDoc.includes(marker), `alpha_manual_evidence_preflight_doc_marker_missing:${marker}`);
+
+for (const marker of [
+  "Desktop Alpha Update Policy",
+  "manual, signed-only update strategy",
+  "does not include an automatic updater",
+  "Only a published prerelease created by the strict signed-release workflow",
+  "Automatic updating is explicitly post-alpha work",
+  "untrusted or unsigned payload is rejected fail-closed"
+]) assert.ok(updatePolicy.includes(marker), `desktop_update_policy_marker_missing:${marker}`);
 
 for (const marker of [
   "desktop-alpha:",
@@ -147,4 +160,4 @@ for (const marker of [
 
 assert.ok(/needs:\s*\[[^\]]*desktop-alpha[^\]]*alpha-package[^\]]*\]/s.test(ci), "alpha_jobs_must_gate_aggregate");
 
-console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; manual evidence preflight=fail-closed; signed release workflow=strict; build identity=commit-bound; publish=prerelease-after-strict-gates`);
+console.log(`desktop alpha candidate readiness ok: ${ALPHA_VERSION}; automated scenarios=${ALPHA_SCENARIOS.length}; manual release evidence pending=${MANUAL_SCENARIO_IDS.join(",")}; manual evidence preflight=fail-closed; update strategy=manual-signed-only; signed release workflow=strict; build identity=commit-bound; publish=prerelease-after-strict-gates`);
