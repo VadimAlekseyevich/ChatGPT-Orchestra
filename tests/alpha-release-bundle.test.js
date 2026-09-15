@@ -10,6 +10,7 @@ const { ALPHA_VERSION, prepareReleaseAssets } = require("../scripts/prepare-alph
 const { parseChecksums, verifyReleaseBundle } = require("../scripts/verify-alpha-release-bundle.js");
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const WORKFLOW_RUN = "123456789";
 
 function evidenceFixtures() {
   return {
@@ -28,6 +29,7 @@ function evidenceFixtures() {
       schemaVersion: 4,
       version: ALPHA_VERSION,
       commit: COMMIT,
+      workflowRun: WORKFLOW_RUN,
       validation: {
         schemaVersion: 2,
         alphaVersion: ALPHA_VERSION,
@@ -66,15 +68,16 @@ function createBundle() {
   fs.writeFileSync(path.join(desktopDir, `ChatGPT Orchestra Setup ${ALPHA_VERSION}.exe`), "signed-installer-fixture", "utf8");
   const extensionZip = path.join(desktopDir, "chatgpt-orchestra-alpha20-extension.zip");
   fs.writeFileSync(extensionZip, "extension-zip-fixture", "utf8");
-  prepareReleaseAssets({ desktopDir, extensionZip, expectedCommit: COMMIT, outputDir: desktopDir });
+  prepareReleaseAssets({ desktopDir, extensionZip, expectedCommit: COMMIT, expectedWorkflowRun: WORKFLOW_RUN, outputDir: desktopDir });
   return { root, desktopDir };
 }
 
 test("downloaded alpha bundle is revalidated before publication", () => {
   const bundle = createBundle();
   try {
-    const result = verifyReleaseBundle({ desktopDir: bundle.desktopDir, expectedCommit: COMMIT });
+    const result = verifyReleaseBundle({ desktopDir: bundle.desktopDir, expectedCommit: COMMIT, expectedWorkflowRun: WORKFLOW_RUN });
     assert.equal(result.commit, COMMIT);
+    assert.equal(result.workflowRun, WORKFLOW_RUN);
     assert.equal(result.assetNames.length, 6);
     assert.match(result.installer, /^ChatGPT Orchestra Setup /);
   } finally {
@@ -82,17 +85,27 @@ test("downloaded alpha bundle is revalidated before publication", () => {
   }
 });
 
-test("post-transfer bundle verification fails closed on asset tampering", () => {
+test("post-transfer bundle verification fails closed on asset or workflow-run tampering", () => {
   const bundle = createBundle();
   try {
     const installer = path.join(bundle.desktopDir, `ChatGPT Orchestra Setup ${ALPHA_VERSION}.exe`);
     fs.appendFileSync(installer, "tampered", "utf8");
     assert.throws(
-      () => verifyReleaseBundle({ desktopDir: bundle.desktopDir, expectedCommit: COMMIT }),
+      () => verifyReleaseBundle({ desktopDir: bundle.desktopDir, expectedCommit: COMMIT, expectedWorkflowRun: WORKFLOW_RUN }),
       /alpha_release_manifest_asset_(size|hash)_mismatch/
     );
   } finally {
     fs.rmSync(bundle.root, { recursive: true, force: true });
+  }
+
+  const otherBundle = createBundle();
+  try {
+    assert.throws(
+      () => verifyReleaseBundle({ desktopDir: otherBundle.desktopDir, expectedCommit: COMMIT, expectedWorkflowRun: "987654321" }),
+      /alpha_release_workflow_run_mismatch/
+    );
+  } finally {
+    fs.rmSync(otherBundle.root, { recursive: true, force: true });
   }
 });
 
@@ -118,6 +131,7 @@ test("release workflow isolates write permission and signing secrets from instal
   assert.doesNotMatch(publishJob, /npm install|WINDOWS_CSC_LINK|WINDOWS_CSC_KEY_PASSWORD/);
   assert.match(publishJob, /verify-alpha-release-bundle\.js/);
   assert.match(publishJob, /actions\/download-artifact@v4/);
+  assert.match(publishJob, /persist-credentials: false/);
 
   const installStep = signedJob.slice(signedJob.indexOf("Install packaging dependencies"), signedJob.indexOf("Run full alpha acceptance gate"));
   assert.doesNotMatch(installStep, /CSC_LINK|CSC_KEY_PASSWORD|GITHUB_TOKEN|GH_TOKEN/);
@@ -127,7 +141,7 @@ test("release workflow isolates write permission and signing secrets from instal
   assert.match(buildStep, /CSC_KEY_PASSWORD: \$\{\{ secrets\.WINDOWS_CSC_KEY_PASSWORD \}\}/);
 });
 
-test("release publication verifies a draft before making it visible and cleans failed staging", () => {
+test("release publication verifies an owned draft before making it visible and cleans only the current run", () => {
   const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "alpha-release.yml"), "utf8");
   const publishJob = workflow.slice(workflow.indexOf("  publish-alpha:"));
 
@@ -139,10 +153,11 @@ test("release publication verifies a draft before making it visible and cleans f
   assert.ok(stage >= 0 && verifyDraft > stage && publish > verifyDraft && verifyPublished > publish && cleanup > verifyPublished);
 
   assert.match(publishJob, /gh release create[\s\S]*--prerelease[\s\S]*--draft/);
-  assert.match(publishJob, /--json tagName,targetCommitish,isDraft,isPrerelease,assets/);
+  assert.match(publishJob, /--json tagName,targetCommitish,isDraft,isPrerelease,assets,body/);
   assert.match(publishJob, /targetCommitish[\s\S]*GITHUB_SHA/);
+  assert.match(publishJob, /Workflow run: \$env:GITHUB_RUN_ID/);
   assert.match(publishJob, /isDraft -ne \$true/);
   assert.match(publishJob, /gh release edit \$tag[\s\S]*--draft=false --prerelease/);
   assert.match(publishJob, /if: \$\{\{ failure\(\) \}\}/);
-  assert.match(publishJob, /gh release delete \$tag[\s\S]*--yes --cleanup-tag/);
+  assert.match(publishJob, /body[\s\S]*Workflow run: \$env:GITHUB_RUN_ID[\s\S]*gh release delete \$tag[\s\S]*--yes --cleanup-tag/);
 });
