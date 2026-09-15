@@ -126,3 +126,23 @@ test("release workflow isolates write permission and signing secrets from instal
   assert.match(buildStep, /CSC_LINK: \$\{\{ secrets\.WINDOWS_CSC_LINK \}\}/);
   assert.match(buildStep, /CSC_KEY_PASSWORD: \$\{\{ secrets\.WINDOWS_CSC_KEY_PASSWORD \}\}/);
 });
+
+test("release publication verifies a draft before making it visible and cleans failed staging", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "alpha-release.yml"), "utf8");
+  const publishJob = workflow.slice(workflow.indexOf("  publish-alpha:"));
+
+  const stage = publishJob.indexOf("Stage final alpha as draft prerelease");
+  const verifyDraft = publishJob.indexOf("Verify staged draft before publication");
+  const publish = publishJob.indexOf("Publish verified alpha prerelease");
+  const verifyPublished = publishJob.indexOf("Verify published prerelease tag and assets");
+  const cleanup = publishJob.indexOf("Cleanup failed staged release");
+  assert.ok(stage >= 0 && verifyDraft > stage && publish > verifyDraft && verifyPublished > publish && cleanup > verifyPublished);
+
+  assert.match(publishJob, /gh release create[\s\S]*--prerelease[\s\S]*--draft/);
+  assert.match(publishJob, /--json tagName,targetCommitish,isDraft,isPrerelease,assets/);
+  assert.match(publishJob, /targetCommitish[\s\S]*GITHUB_SHA/);
+  assert.match(publishJob, /isDraft -ne \$true/);
+  assert.match(publishJob, /gh release edit \$tag[\s\S]*--draft=false --prerelease/);
+  assert.match(publishJob, /if: \$\{\{ failure\(\) \}\}/);
+  assert.match(publishJob, /gh release delete \$tag[\s\S]*--yes --cleanup-tag/);
+});
