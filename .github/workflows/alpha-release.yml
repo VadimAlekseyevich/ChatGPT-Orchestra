@@ -27,12 +27,9 @@ jobs:
     env:
       A01_EVIDENCE: ${{ inputs.a01_evidence }}
       A11_EVIDENCE: ${{ inputs.a11_evidence }}
-      GITHUB_TOKEN: ${{ github.token }}
       ALPHA_EXPECTED_COMMIT: ${{ github.sha }}
       ORCHESTRA_BUILD_COMMIT: ${{ github.sha }}
       ALPHA_EVIDENCE_VALIDATION_OUTPUT: .alpha-release/manual-evidence-validation.json
-      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,14 +39,30 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_REF -ne "refs/heads/main") { throw "alpha_release_validation_must_run_from_main" }
+      - name: Require unused alpha tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if (-not [string]::IsNullOrWhiteSpace([string]$remoteTag)) { throw "alpha_release_tag_already_exists:$tag" }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "alpha_release_already_exists:$tag" }
+          $global:LASTEXITCODE = 0
       - name: Require auditable manual evidence references
         shell: pwsh
         run: node scripts/validate-alpha-evidence-reference.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Validate manual evidence comment contents and build identity
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/validate-alpha-evidence-comments.js A01 "$env:A01_EVIDENCE" A11 "$env:A11_EVIDENCE"
       - name: Require Windows signing credentials
         shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CSC_LINK)) { throw "windows_signing_certificate_missing" }
           if ([string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) { throw "windows_signing_password_missing" }
@@ -58,6 +71,9 @@ jobs:
       - name: Run full alpha acceptance gate
         run: npm run test:alpha
       - name: Build signed Windows alpha installer
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npm run desktop:dist:win
       - name: Stage fallback extension
         run: npm run extension:stage-alpha
@@ -79,6 +95,13 @@ jobs:
             workflowRun = [string]$env:GITHUB_RUN_ID
           }
           $evidence | ConvertTo-Json -Depth 8 | Set-Content -Path "dist/desktop/alpha-manual-evidence.json" -Encoding utf8
+      - name: Prepare auditable prerelease assets
+        shell: pwsh
+        run: |
+          $extensionZip = "dist/desktop/chatgpt-orchestra-alpha20-extension.zip"
+          if (Test-Path $extensionZip) { Remove-Item $extensionZip -Force }
+          Compress-Archive -Path "dist/alpha-extension/*" -DestinationPath $extensionZip -CompressionLevel Optimal
+          node scripts/prepare-alpha-release-assets.js
       - name: Upload signed alpha release candidate
         uses: actions/upload-artifact@v4
         with:
@@ -87,8 +110,155 @@ jobs:
           retention-days: 30
           path: |
             dist/desktop/*.exe
+            dist/desktop/chatgpt-orchestra-alpha20-extension.zip
             dist/desktop/alpha-build-evidence.json
             dist/desktop/alpha-signature-evidence.json
             dist/desktop/alpha-manual-evidence.json
+            dist/desktop/alpha-release-manifest.json
+            dist/desktop/SHA256SUMS.txt
+            dist/desktop/alpha-release-notes.md
             dist/desktop/win-unpacked
             dist/alpha-extension
+
+  publish-alpha:
+    name: Publish validated alpha prerelease
+    needs: signed-alpha
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      ALPHA_EXPECTED_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Download validated signed alpha candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: chatgpt-orchestra-alpha20-signed-windows
+          path: dist
+      - name: Require main branch publication
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne "refs/heads/main") { throw "alpha_release_publication_must_run_from_main" }
+      - name: Re-verify downloaded release bundle
+        run: node scripts/verify-alpha-release-bundle.js
+      - name: Require unused alpha tag immediately before staging
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if (-not [string]::IsNullOrWhiteSpace([string]$remoteTag)) { throw "alpha_release_tag_already_exists:$tag" }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "alpha_release_already_exists:$tag" }
+          $global:LASTEXITCODE = 0
+      - name: Stage final alpha as draft prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          $installer = Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1
+          if (!$installer) { throw "alpha_release_installer_missing_before_stage" }
+
+          gh release create $tag `
+            "$($installer.FullName)" `
+            "dist/desktop/chatgpt-orchestra-alpha20-extension.zip" `
+            "dist/desktop/alpha-build-evidence.json" `
+            "dist/desktop/alpha-signature-evidence.json" `
+            "dist/desktop/alpha-manual-evidence.json" `
+            "dist/desktop/alpha-release-manifest.json" `
+            "dist/desktop/SHA256SUMS.txt" `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "ChatGPT Orchestra 2.0.0-alpha.20" `
+            --notes-file "dist/desktop/alpha-release-notes.md" `
+            --prerelease `
+            --draft
+          if ($LASTEXITCODE -ne 0) { throw "alpha_release_draft_stage_failed" }
+      - name: Verify staged draft before publication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets,body | ConvertFrom-Json
+          if ([string]$release.tagName -ne $tag) { throw "alpha_release_draft_tag_name_mismatch" }
+          if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { throw "alpha_release_draft_target_mismatch:$($release.targetCommitish)" }
+          if ($release.isDraft -ne $true) { throw "alpha_release_stage_not_draft" }
+          if ($release.isPrerelease -ne $true) { throw "alpha_release_stage_not_prerelease" }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { throw "alpha_release_draft_workflow_run_mismatch" }
+
+          $installer = (Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1).Name
+          $required = @(
+            $installer,
+            "chatgpt-orchestra-alpha20-extension.zip",
+            "alpha-build-evidence.json",
+            "alpha-signature-evidence.json",
+            "alpha-manual-evidence.json",
+            "alpha-release-manifest.json",
+            "SHA256SUMS.txt"
+          ) | Sort-Object
+          $assetNames = @($release.assets | ForEach-Object { [string]$_.name }) | Sort-Object
+          if (($assetNames -join "`n") -ne ($required -join "`n")) { throw "alpha_release_draft_assets_mismatch" }
+      - name: Publish verified alpha prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "alpha_release_publish_failed" }
+      - name: Verify published prerelease tag and assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          if ($tagCommit -ne $env:GITHUB_SHA) { throw "alpha_release_tag_commit_mismatch:$tagCommit" }
+
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,assets,body | ConvertFrom-Json
+          if ([string]$release.tagName -ne $tag) { throw "alpha_release_tag_name_mismatch" }
+          if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { throw "alpha_release_target_mismatch:$($release.targetCommitish)" }
+          if ($release.isDraft -ne $false) { throw "alpha_release_still_draft" }
+          if ($release.isPrerelease -ne $true) { throw "alpha_release_not_prerelease" }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { throw "alpha_release_workflow_run_mismatch_after_publish" }
+
+          $installer = (Get-ChildItem "dist/desktop" -Filter "ChatGPT Orchestra Setup *.exe" -File | Select-Object -First 1).Name
+          $required = @(
+            $installer,
+            "chatgpt-orchestra-alpha20-extension.zip",
+            "alpha-build-evidence.json",
+            "alpha-signature-evidence.json",
+            "alpha-manual-evidence.json",
+            "alpha-release-manifest.json",
+            "SHA256SUMS.txt"
+          ) | Sort-Object
+          $assetNames = @($release.assets | ForEach-Object { [string]$_.name }) | Sort-Object
+          if (($assetNames -join "`n") -ne ($required -join "`n")) { throw "alpha_release_assets_mismatch_after_publish" }
+      - name: Cleanup failed staged release
+        if: ${{ failure() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v2.0.0-alpha.20"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,body *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $global:LASTEXITCODE = 0
+            exit 0
+          }
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,body | ConvertFrom-Json
+          if ([string]$release.tagName -ne $tag) { exit 0 }
+          if ([string]$release.targetCommitish -ne [string]$env:GITHUB_SHA) { exit 0 }
+          if (-not ([string]$release.body).Contains("Workflow run: $env:GITHUB_RUN_ID")) { exit 0 }
+          gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag
