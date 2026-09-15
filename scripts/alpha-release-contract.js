@@ -5,8 +5,8 @@ const ALPHA_ARTIFACT_NAME = "chatgpt-orchestra-alpha20-windows";
 
 const ALPHA_SCENARIOS = Object.freeze([
   { id: "A01", title: "Fresh install + ChatGPT login onboarding", evidence: ["tests/managed-browser-onboarding.test.js", "tests/managed-browser-readiness-policy.test.js", "tests/alpha-build-identity.test.js", "tests/alpha-manual-evidence-preflight.test.js"], manualRequired: true },
-  { id: "A02", title: "Open local repository", evidence: ["tests/repository-api.test.js", "tests/project-repository-binding.test.js"], manualRequired: false },
-  { id: "A03", title: "Clone repository", evidence: ["tests/git-cli-workspace.test.js", "tests/system-git-workspace.test.js"], manualRequired: false },
+  { id: "A02", title: "Open local repository", evidence: ["tests/desktop-project-onboarding.test.js", "tests/repository-origin-url.test.js", "tests/repository-api.test.js", "tests/project-repository-binding.test.js"], manualRequired: false },
+  { id: "A03", title: "Clone repository", evidence: ["tests/desktop-project-onboarding.test.js", "tests/git-cli-workspace.test.js", "tests/system-git-workspace.test.js"], manualRequired: false },
   { id: "A04", title: "4-task parallel happy path", evidence: ["tests/scheduler-engine.test.js"], manualRequired: false },
   { id: "A05", title: "Dependency path", evidence: ["tests/scheduler-engine.test.js"], manualRequired: false },
   { id: "A06", title: "Review rework", evidence: ["tests/review-engine.test.js", "tests/scheduler-engine.test.js"], manualRequired: false },
