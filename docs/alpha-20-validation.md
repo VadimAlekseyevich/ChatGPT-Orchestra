@@ -132,7 +132,9 @@ node scripts/validate-alpha-evidence-comments.js A01 <A01-comment-permalink> A11
 
 The second validator reads the exact GitHub comments through the workflow's read-only `issues: read` permission. For both scenarios it requires `Build commit` to equal the workflow commit. For A01 it also requires the clean-profile/install/login/Lead/privacy fields to pass. For A11 it requires the reboot/recovery fields to pass and requires `Post-restart systemBootTimeUtc` to be later than `Pre-restart systemBootTimeUtc`.
 
-The workflow then reruns `npm run test:alpha`, builds the Windows NSIS installer with the same commit embedded in `alpha-build-evidence.json` and packaged runtime evidence, stages the fallback extension, and executes:
+The build/validation job has only `contents: read`; release write permission is not available while dependencies, tests or untrusted package scripts run. Windows signing credentials are scoped only to the signing credential check and signed installer build, not to `npm install`, ordinary tests, artifact staging, or the publication job.
+
+The workflow reruns `npm run test:alpha`, builds the Windows NSIS installer with the same commit embedded in `alpha-build-evidence.json` and packaged runtime evidence, stages the fallback extension, and executes:
 
 ```text
 ./scripts/verify-windows-alpha.ps1 -RequireSignature
@@ -148,14 +150,16 @@ SHA256SUMS.txt
 alpha-release-notes.md
 ```
 
-The signed candidate plus these audit files are retained as the `chatgpt-orchestra-alpha20-signed-windows` Actions artifact. Only after that artifact is successfully prepared does the workflow use its `contents: write` permission to create the `v2.0.0-alpha.20` GitHub **prerelease** targeted at the exact `github.sha`. It attaches the signed NSIS installer, fallback-extension ZIP, build/signature/manual evidence JSON files, release manifest and `SHA256SUMS.txt`. The workflow refuses to overwrite an existing alpha tag/release and verifies after publication that the tag resolves to the same commit, the release is marked prerelease, and all required assets exist.
+The signed candidate plus these audit files are retained as the `chatgpt-orchestra-alpha20-signed-windows` Actions artifact. A separate publication job is the only job granted `contents: write`. It downloads the signed artifact, runs `scripts/verify-alpha-release-bundle.js`, and independently rechecks the exact build commit, version, A01/A11 evidence, strict signatures, manifest contents, file sizes, and SHA-256 checksums before any release is staged.
 
-Release publication is therefore fail-closed: no manual A01/A11 evidence, stale evidence, a changed source commit, missing signing credentials, a non-Valid Authenticode result, malformed release evidence, an existing tag, or a tag/asset verification failure prevents a final alpha prerelease from being created.
+Immediately before staging, the publication job again requires that neither tag nor release `v2.0.0-alpha.20` already exists. It then creates the release as a **draft prerelease** targeted at the exact `github.sha`, attaches only the signed NSIS installer, fallback-extension ZIP, build/signature/manual evidence JSON files, release manifest and `SHA256SUMS.txt`, and verifies the draft's `targetCommitish`, draft/prerelease flags, and exact asset set. Only that verified draft is published. The final step fetches the created tag, requires it to resolve to the exact workflow commit, and rechecks the published release flags and exact asset set.
+
+If the publication job fails after a release has been staged for the current exact commit, its failure cleanup removes that staged/published release and associated tag. This makes publication fail-closed across artifact transfer, draft staging, and final verification rather than publishing first and discovering a bad release afterward.
 
 Do not enable `PUBLISH_FOR_PULL_REQUEST=true` to expose release credentials to PR builds. Release signing and GitHub release publication stay isolated in the manually dispatched release workflow on `main`.
 
 ## Release decision
 
-The automated CI candidate gate must be green. A01 and A11 must each have real PASS evidence from the same exact commit, and the strict signed release workflow must complete for that commit with Authenticode=Valid before the final `v2.0.0-alpha.20` prerelease exists. The workflow itself creates and verifies that prerelease only after every gate passes. A failure in either manual scenario, commit binding, artifact identity, signing validation, release-asset preparation, or post-publication verification blocks final alpha and returns to Phase 20 fix/verify work.
+The automated CI candidate gate must be green. A01 and A11 must each have real PASS evidence from the same exact commit, and the strict signed release workflow must complete for that commit with Authenticode=Valid before the final `v2.0.0-alpha.20` prerelease exists. The workflow itself validates the transferred signed bundle, verifies a draft release, publishes it, and verifies the resulting tag/release. A failure in either manual scenario, commit binding, artifact identity, signing validation, release-bundle verification, draft verification, or final publication verification blocks final alpha and returns to Phase 20 fix/verify work.
 
 The alpha keeps final target-branch merge/push manual by default. Local command execution remains repository-trust gated, extension companion remains optional fallback, and unknown recovery state remains fail-closed.
