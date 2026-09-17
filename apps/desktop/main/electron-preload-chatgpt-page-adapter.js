@@ -7,6 +7,10 @@ const COMMAND_CHANNEL = "orchestra:agent:command";
 const RESPONSE_CHANNEL = "orchestra:agent:response";
 const DEFAULT_MAX_ASSISTANT_BYTES = 384 * 1024;
 
+function currentUrl(webContents) {
+  try { return String(webContents?.getURL?.() || ""); } catch (_) { return ""; }
+}
+
 class ElectronPreloadChatGPTPageAdapter {
   constructor({
     ipcMain = null,
@@ -59,17 +63,21 @@ class ElectronPreloadChatGPTPageAdapter {
       : { ok: false, reason: "agent_preload_invalid_response" });
   }
 
-  request(webContents, name, payload = {}) {
+  request(webContents, name, payload = {}, options = {}) {
     this.start();
     if (typeof webContents?.send !== "function") return Promise.resolve({ ok: false, reason: "agent_web_contents_unavailable" });
     const senderId = String(webContents.id ?? "");
     if (!senderId) return Promise.resolve({ ok: false, reason: "agent_web_contents_id_missing" });
     const requestId = `agent-page-${this.nextRequest++}`;
+    const requestedTimeout = Number(options.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeout)
+      ? Math.max(250, Math.min(this.requestTimeoutMs, requestedTimeout))
+      : this.requestTimeoutMs;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         resolve({ ok: false, reason: "agent_preload_timeout" });
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(requestId, { resolve, timer, senderId });
       try {
         webContents.send(COMMAND_CHANNEL, {
@@ -90,16 +98,55 @@ class ElectronPreloadChatGPTPageAdapter {
     return this.request(webContents, "status");
   }
 
-  async waitForNativeSubmission(webContents, timeoutMs = 1800) {
+  navigationSignal(webContents, initialUrl) {
+    if (typeof webContents?.on !== "function" || typeof webContents?.removeListener !== "function") {
+      return { promise: new Promise(() => {}), close() {} };
+    }
+    let closed = false;
+    let resolveSignal;
+    const promise = new Promise((resolve) => { resolveSignal = resolve; });
+    const onNavigation = (_event, url) => {
+      if (closed) return;
+      const nextUrl = String(url || currentUrl(webContents) || "");
+      if (!nextUrl || !initialUrl || nextUrl === initialUrl) return;
+      closed = true;
+      cleanup();
+      resolveSignal({ ok: true, accepted: true, confirmed: true, method: "navigation", url: nextUrl });
+    };
+    const cleanup = () => {
+      try { webContents.removeListener("did-navigate", onNavigation); } catch (_) {}
+      try { webContents.removeListener("did-navigate-in-page", onNavigation); } catch (_) {}
+    };
+    webContents.on("did-navigate", onNavigation);
+    webContents.on("did-navigate-in-page", onNavigation);
+    return {
+      promise,
+      close() {
+        if (closed) return;
+        closed = true;
+        cleanup();
+      }
+    };
+  }
+
+  async waitForNativeSubmission(webContents, timeoutMs = 1800, initialUrl = "") {
     const startedAt = Date.now();
     let latest = null;
     while (Date.now() - startedAt < timeoutMs) {
-      latest = await this.request(webContents, "status");
+      latest = await this.request(webContents, "status", {}, { timeoutMs: Math.min(1000, timeoutMs) });
       if (!latest?.ok) return latest;
+      const latestUrl = String(latest.url || currentUrl(webContents) || "");
+      const navigated = Boolean(initialUrl && latestUrl && latestUrl !== initialUrl);
       const generating = latest.generating === true || latest.availability === "generating";
       const readyAndCleared = latest.availability === "ready" && latest.composerOccupied === false;
-      if (generating || readyAndCleared) {
-        return { ...latest, ok: true, accepted: true, confirmed: true, method: "trusted-enter" };
+      if (navigated || generating || readyAndCleared) {
+        return {
+          ...latest,
+          ok: true,
+          accepted: true,
+          confirmed: true,
+          method: navigated ? "navigation-reconciled" : "trusted-enter"
+        };
       }
       await Utils.sleep(100);
     }
@@ -111,13 +158,60 @@ class ElectronPreloadChatGPTPageAdapter {
     };
   }
 
+  async recoverTimedOutSubmission(webContents, initialUrl, originalResult) {
+    const latest = await this.request(webContents, "status", {}, { timeoutMs: 1200 });
+    if (!latest?.ok) return originalResult;
+    const latestUrl = String(latest.url || currentUrl(webContents) || "");
+    const navigated = Boolean(initialUrl && latestUrl && latestUrl !== initialUrl);
+    const generating = latest.generating === true || latest.availability === "generating";
+    if (navigated || generating) {
+      return {
+        ...latest,
+        ok: true,
+        accepted: true,
+        confirmed: true,
+        method: navigated ? "navigation-reconciled" : "status-reconciled",
+        recoveredFrom: originalResult?.reason || "agent_preload_timeout"
+      };
+    }
+    if (latest.composerOccupied === true && typeof webContents?.sendInputEvent === "function") {
+      try {
+        webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+        webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+      } catch (error) {
+        return {
+          ...originalResult,
+          ok: false,
+          message: String(error?.message || error)
+        };
+      }
+      return this.waitForNativeSubmission(webContents, 1800, initialUrl);
+    }
+    return originalResult;
+  }
+
   async sendPrompt(webContents, prompt) {
-    const result = await this.request(webContents, "send-prompt", {
-      prompt: String(prompt || ""),
-      timeoutMs: Math.min(this.requestTimeoutMs - 250, 15000),
-      confirmationMs: 900
-    });
+    const initialUrl = currentUrl(webContents);
+    const navigation = this.navigationSignal(webContents, initialUrl);
+    let result;
+    try {
+      result = await Promise.race([
+        this.request(webContents, "send-prompt", {
+          prompt: String(prompt || ""),
+          timeoutMs: Math.min(this.requestTimeoutMs - 250, 15000),
+          confirmationMs: 900
+        }),
+        navigation.promise
+      ]);
+    } finally {
+      navigation.close();
+    }
     if (result?.ok) return result;
+    if (result?.reason === "agent_preload_timeout") {
+      const recovered = await this.recoverTimedOutSubmission(webContents, initialUrl, result);
+      if (recovered?.ok) return recovered;
+      result = recovered || result;
+    }
     if (result?.reason !== "send_not_confirmed" || result?.promptStaged !== true) return result;
     if (typeof webContents?.sendInputEvent !== "function") return result;
 
@@ -136,7 +230,7 @@ class ElectronPreloadChatGPTPageAdapter {
       };
     }
 
-    return this.waitForNativeSubmission(webContents);
+    return this.waitForNativeSubmission(webContents, 1800, initialUrl);
   }
 
   async stopGeneration(webContents) {

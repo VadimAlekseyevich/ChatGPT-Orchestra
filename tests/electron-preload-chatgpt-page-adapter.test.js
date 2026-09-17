@@ -103,6 +103,65 @@ test("staged prompt falls back to trusted Enter and must be confirmed before suc
   adapter.close();
 });
 
+test("first-message navigation confirms submission even when the old preload response is lost", async () => {
+  const ipcMain = new FakeIpcMain();
+  const page = new EventEmitter();
+  let url = "https://chatgpt.com/";
+  page.id = 58;
+  page.getURL = () => url;
+  page.send = (channel, message) => {
+    assert.equal(channel, COMMAND_CHANNEL);
+    assert.equal(message.name, "send-prompt");
+    queueMicrotask(() => {
+      url = "https://chatgpt.com/c/first-message";
+      page.emit("did-navigate-in-page", {}, url);
+    });
+    // Intentionally do not answer over RESPONSE_CHANNEL: the old page/preload
+    // can disappear during ChatGPT's first-message navigation.
+  };
+
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 500 });
+  const result = await adapter.sendPrompt(page, "planning prompt");
+  assert.equal(result.ok, true);
+  assert.equal(result.accepted, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "navigation");
+  assert.equal(result.url, "https://chatgpt.com/c/first-message");
+  adapter.close();
+});
+
+test("timed-out first-message send reconciles against the replacement preload after navigation", async () => {
+  const ipcMain = new FakeIpcMain();
+  const page = new EventEmitter();
+  let url = "https://chatgpt.com/";
+  page.id = 59;
+  page.getURL = () => url;
+  page.send = (channel, message) => {
+    assert.equal(channel, COMMAND_CHANNEL);
+    if (message.name === "send-prompt") {
+      setTimeout(() => { url = "https://chatgpt.com/c/reconciled"; }, 25);
+      return;
+    }
+    assert.equal(message.name, "status");
+    queueMicrotask(() => respond(ipcMain, 59, message.requestId, {
+      ok: true,
+      availability: "generating",
+      generating: true,
+      composerOccupied: false,
+      url
+    }));
+  };
+
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 500 });
+  const result = await adapter.sendPrompt(page, "planning prompt");
+  assert.equal(result.ok, true);
+  assert.equal(result.accepted, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "navigation-reconciled");
+  assert.equal(result.recoveredFrom, "agent_preload_timeout");
+  adapter.close();
+});
+
 test("staged prompt remains failed when no trusted input fallback is available", async () => {
   const ipcMain = new FakeIpcMain();
   const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
