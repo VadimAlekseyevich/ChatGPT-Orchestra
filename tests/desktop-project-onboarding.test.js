@@ -214,7 +214,7 @@ test("READY project exposes Start Execution and forwards selected Worker concurr
   const result = await app.startExecution();
   assert.equal(result.ok, true);
   assert.deepEqual(calls[0], { name: "startExecution", payload: { maxWorkers: 2 } });
-  assert.equal(root.innerHTML, "");
+  assert.match(root.innerHTML, /desktop-project-manager/);
 });
 
 test("terminal project exposes Start another project and resets repository form without deleting history", async () => {
@@ -328,4 +328,86 @@ test("retryable planning delivery failure is visible and retries the same planni
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ["retryPlanning"]);
   assert.doesNotMatch(app.rootElement.innerHTML, /agent_preload_timeout/);
+});
+
+
+test("project manager lists archived projects and restores the selected project", async () => {
+  const calls = [];
+  let restarted = 0;
+  const project = { projectId: "P2", status: "PLANNING", stage: "PLAN_V1", goal: "Current project", repository: { fullName: "acme/current" } };
+  const transport = {
+    async query(name) {
+      if (name === "dashboard") return { ok: true, dashboard: { project, agents: readyLead(), recovery: { status: "STOPPED" } } };
+      if (name === "projectCatalog") return {
+        ok: true,
+        activeProjectId: "P2",
+        recoveryStatus: "STOPPED",
+        projects: [
+          { projectId: "P2", status: "PLANNING", stage: "PLAN_V1", goal: "Current project", repository: { fullName: "acme/current" }, active: true },
+          { projectId: "P1", status: "STOPPED", stage: "EXECUTION", goal: "Older project", repository: { fullName: "acme/old" }, active: false }
+        ]
+      };
+      return { ok: false, reason: "unknown_query" };
+    },
+    async execute(name, payload) {
+      calls.push([name, structuredClone(payload)]);
+      if (name === "switchProject") return { ok: true, projectId: payload.projectId, reloadRequired: true };
+      return { ok: false, reason: "unexpected_command" };
+    },
+    async restartApplication() { restarted += 1; return { ok: true }; }
+  };
+  const root = fakeRoot();
+  const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+  await app.refresh();
+
+  assert.match(root.innerHTML, /Projects/);
+  assert.match(root.innerHTML, /acme\/current/);
+  assert.match(root.innerHTML, /acme\/old/);
+  assert.match(root.innerHTML, /New project/);
+
+  app.handleChange(changeEvent({ projectSelect: "" }, "P1"));
+  const result = await app.switchProject();
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [["switchProject", { projectId: "P1" }]]);
+  assert.equal(restarted, 1);
+});
+
+test("creating a new project explicitly stops active work before archiving and restarting", async () => {
+  const calls = [];
+  let restarted = 0;
+  const project = { projectId: "P2", status: "RUNNING", stage: "EXECUTION", goal: "Current project", repository: { fullName: "acme/current" } };
+  const transport = {
+    async query(name) {
+      if (name === "dashboard") return { ok: true, dashboard: { project, agents: readyLead(), recovery: { status: "RUNNING" } } };
+      if (name === "projectCatalog") return {
+        ok: true,
+        activeProjectId: "P2",
+        recoveryStatus: "RUNNING",
+        projects: [{ projectId: "P2", status: "RUNNING", stage: "EXECUTION", goal: "Current project", repository: { fullName: "acme/current" }, active: true }]
+      };
+      return { ok: false, reason: "unknown_query" };
+    },
+    async execute(name, payload) {
+      calls.push([name, structuredClone(payload)]);
+      if (name === "stopNow") return { ok: true, recovery: { status: "STOPPED" } };
+      if (name === "prepareNewProject") return { ok: true, reloadRequired: true, archivedProjectId: "P2" };
+      return { ok: false, reason: "unexpected_command" };
+    },
+    async restartApplication() { restarted += 1; return { ok: true }; }
+  };
+
+  const app = new DesktopProjectOnboarding({
+    rootElement: fakeRoot(),
+    transport,
+    confirmAction: () => true
+  });
+  await app.refresh();
+  const result = await app.startNewProject();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    ["stopNow", {}],
+    ["prepareNewProject", {}]
+  ]);
+  assert.equal(restarted, 1);
 });
