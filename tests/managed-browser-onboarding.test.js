@@ -133,3 +133,21 @@ test("managed-browser onboarding fails closed when companion preparation is unav
   assert.equal(result.ok, false);
   assert.match(root.innerHTML, /packaged Windows candidate/);
 });
+
+
+test("diagnostics disclosure remains open across polling renders", () => {
+  const root = rootElement();
+  root.querySelector = (selector) => selector === ".managed-browser-validation" ? { open: true } : null;
+  const onboarding = new ManagedBrowserOnboarding({
+    rootElement: root,
+    transport: {
+      async query() { return { ok: true }; },
+      async execute() { return { ok: true }; }
+    }
+  });
+  onboarding.status = { availability: "ready", loginRequired: false, leadRegistered: true, leadStatus: "IDLE" };
+  onboarding.validation = { complete: false, checks: {} };
+  onboarding.render();
+  assert.equal(onboarding.validationOpen, true);
+  assert.match(root.innerHTML, /managed-browser-validation" open/);
+});
