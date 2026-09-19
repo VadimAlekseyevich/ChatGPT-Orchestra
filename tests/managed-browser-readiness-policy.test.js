@@ -28,15 +28,19 @@ function harness() {
   return { driver, runtime: new ManagedBrowserAgentRuntime({ driver, profileDirectory }) };
 }
 
-test("unavailable browser health never promotes a CONNECTING agent to IDLE", async () => {
+test("unavailable browser health demotes stale readiness and records chat state", async () => {
   const { runtime } = harness();
   await runtime.load();
   const session = await runtime.createSession({ url: "https://chatgpt.com/" });
-  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "CONNECTING" });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
   const ping = await runtime.pingAgent(agent.agentId);
   assert.equal(ping.ok, true);
   assert.equal(ping.availability, "unavailable");
-  assert.equal(runtime.getAgent(agent.agentId).status, "CONNECTING");
+  const refreshed = runtime.getAgent(agent.agentId);
+  assert.equal(refreshed.status, "ERROR");
+  assert.equal(refreshed.lastError, "unavailable");
+  assert.equal(refreshed.chatState.availability, "unavailable");
+  assert.equal(refreshed.chatState.generating, false);
   await runtime.close();
 });
 
