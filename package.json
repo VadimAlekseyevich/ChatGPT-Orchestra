@@ -51,6 +51,7 @@
     "productName": "ChatGPT Orchestra",
     "directories": {"output":"dist/desktop"},
     "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","content/protocol-parser.js","content/planning-artifact-parser.js","content/worker-artifact-parser.js","content/utils.js","content/selectors.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"],
+    "extraResources": [{"from":"dist/alpha-extension","to":"alpha-extension"}],
     "win": {"target":["nsis"]},
     "nsis": {"oneClick":false,"allowToChangeInstallationDirectory":true}
   },
