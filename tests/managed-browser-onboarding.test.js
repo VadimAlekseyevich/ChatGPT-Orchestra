@@ -67,8 +67,9 @@ test("onboarding offers Lead registration only after ChatGPT composer becomes re
   };
   const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
   await onboarding.refresh();
-  assert.match(root.innerHTML, /ChatGPT ready/);
+  assert.match(root.innerHTML, /ChatGPT is ready/);
   assert.match(root.innerHTML, /Register this ChatGPT page as Lead/);
+  assert.match(root.innerHTML, /Step 2 of 4/);
 
   const result = await onboarding.handleAction("register");
   assert.equal(result.ok, true);
