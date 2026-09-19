@@ -101,3 +101,28 @@ test("managed browser status reports only a sanitized unsupported auth provider 
     await host.close();
   }
 });
+
+
+test("managed browser status refresh demotes a previously ready Lead when the composer disappears", async () => {
+  const { host, runtime, driver } = await harness();
+  try {
+    driver.availability = "ready";
+    const registered = await host.execute("registerManagedBrowserLead");
+    assert.equal(registered.ok, true);
+    const leadId = registered.managedBrowser.leadAgentId;
+    assert.equal(runtime.getAgent(leadId).status, "IDLE");
+
+    driver.availability = "unavailable";
+    const status = await host.query("managedBrowserStatus");
+    assert.equal(status.ok, true);
+    assert.equal(status.managedBrowser.leadRegistered, true);
+    assert.equal(status.managedBrowser.leadReady, false);
+    assert.equal(status.managedBrowser.loginRequired, true);
+    assert.equal(status.managedBrowser.availability, "unavailable");
+    assert.equal(status.managedBrowser.leadStatus, "ERROR");
+    assert.equal(runtime.getAgent(leadId).status, "ERROR");
+    assert.equal(runtime.getAgent(leadId).chatState.availability, "unavailable");
+  } finally {
+    await host.close();
+  }
+});
