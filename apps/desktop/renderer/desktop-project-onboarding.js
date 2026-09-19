@@ -141,7 +141,7 @@
       const heading = this.newProjectRequested ? this.tr("project.another", "Start another project") : this.tr("project.step3", "Step 3 of 4 — Choose the project");
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-onboarding">
         <div class="dashboard-section-head"><h3>${escapeHtml(heading)}</h3><span>${escapeHtml(this.tr("project.ready", "READY"))}</span></div>
-        <p><strong>${escapeHtml(this.tr("project.first", "Start your first project"))}</strong></p><p class="dashboard-muted">${escapeHtml(this.tr("project.chooseHint", "Choose a repository and describe the finished result. The Lead will inspect the repository and build a task plan before any Worker starts."))}</p>
+        <p><strong>${escapeHtml(this.newProjectRequested ? this.tr("project.another", "Start another project") : this.tr("project.first", "Start your first project"))}</strong></p><p class="dashboard-muted">${escapeHtml(this.tr("project.chooseHint", "Choose a repository and describe the finished result. The Lead will inspect the repository and build a task plan before any Worker starts."))}</p>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         <div class="dashboard-task-controls">
           <label><input type="radio" name="desktop-project-mode" value="local" data-project-mode="local" ${local ? "checked" : ""} ${this.busy ? "disabled" : ""}> ${escapeHtml(this.tr("project.openLocal", "Open local repository"))}</label>
