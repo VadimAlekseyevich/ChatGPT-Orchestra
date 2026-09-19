@@ -206,3 +206,24 @@ test("closing the page adapter resolves pending commands fail-closed", async () 
   assert.equal(result.ok, false);
   assert.equal(result.reason, "agent_preload_adapter_closed");
 });
+
+
+test("send prompt has an explicit outer IPC budget longer than the base status timeout", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 500 });
+  const contents = webContents(88, (message) => {
+    assert.equal(message.name, "send-prompt");
+    setTimeout(() => respond(ipcMain, 88, message.requestId, {
+      ok: true,
+      accepted: true,
+      confirmed: true,
+      method: "button-click",
+      url: "https://chatgpt.com/c/slow-confirmation"
+    }), 650);
+  });
+
+  const result = await adapter.sendPrompt(contents, "next planning stage");
+  assert.equal(result.ok, true);
+  assert.equal(result.confirmed, true);
+  adapter.close();
+});
