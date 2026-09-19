@@ -73,7 +73,7 @@
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
       if (retryableDeliveryFailure) {
-        await this.projectStore.clearError?.(project.projectId);
+        await this.projectStore.clearError?.(project.projectId, "PLANNING");
         project = this.projectStore.getActiveProject();
       }
       const taskId = `planning:${stage.toLowerCase()}`;
