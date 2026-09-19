@@ -55,3 +55,21 @@ test("explicit ready health promotes CONNECTING to IDLE and generating promotes 
   assert.equal(runtime.getAgent(agent.agentId).status, "BUSY");
   await runtime.close();
 });
+
+
+test("failed browser health ping cannot leave a stale IDLE Lead", async () => {
+  const { runtime, driver } = harness();
+  await runtime.load();
+  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
+  driver.pingSession = async () => ({ ok: false, reason: "agent_preload_timeout" });
+
+  const ping = await runtime.pingAgent(agent.agentId);
+  assert.equal(ping.ok, false);
+  assert.equal(ping.reason, "agent_preload_timeout");
+  const refreshed = runtime.getAgent(agent.agentId);
+  assert.equal(refreshed.status, "ERROR");
+  assert.equal(refreshed.lastError, "agent_preload_timeout");
+  assert.equal(refreshed.chatState.availability, "unavailable");
+  await runtime.close();
+});
