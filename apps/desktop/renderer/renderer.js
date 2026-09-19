@@ -47,6 +47,9 @@
     ? new root.DesktopProjectOnboarding({ rootElement: projectRoot, transport, pollMs: 3000, t })
     : null;
   projectOnboarding?.start();
+  transport.runtimeMode?.().then((response) => {
+    if (response?.ok) projectOnboarding?.setRuntimeMode?.(response.mode);
+  }).catch(() => {});
 
   const bundleRoot = document.querySelector("#desktopProjectBundleImport");
   const bundleImport = bundleRoot && root.DesktopProjectBundleImport
