@@ -305,11 +305,24 @@ class ManagedBrowserAgentRuntime {
     const agent = this.getAgentBySessionId(sessionId);
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
-    if (payload.generating === true || payload.availability === "generating") mutable.status = "BUSY";
-    else if (payload.availability === "ready") mutable.status = "IDLE";
+    const availability = String(payload.availability || "unknown");
+    if (payload.generating === true || availability === "generating") mutable.status = "BUSY";
+    else if (availability === "ready") mutable.status = "IDLE";
+    else if (availability === "error" || availability === "unavailable") mutable.status = "ERROR";
+    else if (mutable.status !== "OFFLINE") mutable.status = "CONNECTING";
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
-    mutable.lastError = null;
+    mutable.lastError = mutable.status === "ERROR"
+      ? String(payload.reason || payload.error || availability || "chat_unavailable")
+      : null;
+    mutable.chatState = {
+      generating: Boolean(payload.generating),
+      availability,
+      composerOccupied: payload.composerOccupied === null || payload.composerOccupied === undefined
+        ? null
+        : Boolean(payload.composerOccupied),
+      pathname: String(payload.pathname || "")
+    };
     if (url) mutable.chatUrl = String(url);
     this.updatedAt = mutable.updatedAt;
     return this.getAgent(agent.agentId);
