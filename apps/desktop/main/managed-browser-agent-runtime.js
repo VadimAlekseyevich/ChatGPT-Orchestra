@@ -340,7 +340,6 @@ class ManagedBrowserAgentRuntime {
       const now = this.clock();
       mutable.status = "ERROR";
       mutable.lastError = String(reason || "agent_unreachable");
-      mutable.lastSeenAt = now;
       mutable.updatedAt = now;
       mutable.chatState = {
         generating: false,
