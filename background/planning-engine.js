@@ -148,6 +148,7 @@
         if (!readiness.ok) {
           const failedRunId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
           await this.projectStore.beginStage(projectId, { stage, runId: failedRunId });
+          if (lead?.agentId) await this.registry.clearProtocolContext?.(lead.agentId);
           await this.projectStore.fail(projectId, "lead_prompt_failed", readiness, "PLANNING");
           return { ok: false, reason: "lead_prompt_failed", retryable: true, details: readiness };
         }
