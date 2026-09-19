@@ -143,15 +143,17 @@
         return;
       }
       const availability = String(status.availability || "unavailable");
-      const title = status.leadRegistered
-        ? this.tr("managed.connected", "ChatGPT connected")
-        : status.loginRequired
-          ? this.tr("managed.step1", "Step 1 of 4 — Connect ChatGPT")
+      const title = status.loginRequired
+        ? this.tr("managed.step1", "Step 1 of 4 — Connect ChatGPT")
+        : status.leadRegistered
+          ? this.tr("managed.connected", "ChatGPT connected")
           : this.tr("managed.step2", "Step 2 of 4 — Create the Lead");
-      const lead = status.leadRegistered
-        ? `<strong>${escapeHtml(this.tr("managed.leadConnected", "Lead connected"))}</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
-        : status.loginRequired
-          ? `<strong>${escapeHtml(this.tr("managed.loginRequired", "Login required"))}</strong> · ${escapeHtml(availability)}`
+      const lead = status.loginRequired
+        ? status.leadRegistered
+          ? `<strong>${escapeHtml(this.tr("managed.leadNotReady", "Lead registered, but ChatGPT is not ready"))}</strong> · ${escapeHtml(availability)}`
+          : `<strong>${escapeHtml(this.tr("managed.loginRequired", "Login required"))}</strong> · ${escapeHtml(availability)}`
+        : status.leadRegistered
+          ? `<strong>${escapeHtml(this.tr("managed.leadConnected", "Lead connected"))}</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
           : `<strong>${escapeHtml(this.tr("managed.readyNoLead", "ChatGPT is ready. Register this page as the Lead."))}</strong>`;
       const action = status.loginRequired
         ? `<button data-managed-browser-action="open">${escapeHtml(this.tr("managed.openLogin", "Open / Login to ChatGPT"))}</button>`
