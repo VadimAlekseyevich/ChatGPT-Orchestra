@@ -133,7 +133,7 @@ class ElectronManagedBrowserDriver {
       const entry = this.entry(id);
       if (entry) entry.unsupportedAuthProvider = provider;
       window.hide?.();
-      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(String(rawUrl || ""))).catch((error) => {
+      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(DEFAULT_CHATGPT_URL)).catch((error) => {
         this.emit({ type: "navigation-blocked", sessionId: id, reason: `external_auth_open_failed:${asError(error)}` });
       });
       this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
