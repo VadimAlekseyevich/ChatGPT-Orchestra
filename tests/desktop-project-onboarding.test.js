@@ -201,7 +201,7 @@ test("READY project exposes Start Execution and forwards selected Worker concurr
   const app = new DesktopProjectOnboarding({ rootElement: root, transport });
   await app.refresh();
   assert.match(root.innerHTML, /Step 4 of 4/);
-  assert.match(root.innerHTML, /Start Execution/);
+  assert.match(root.innerHTML, /Start execution/);
 
   app.handleChange(changeEvent({ projectWorkers: "" }, "2"));
   assert.equal(app.form.maxWorkers, 2);
@@ -232,7 +232,7 @@ test("terminal project exposes Start another project and resets repository form 
     assert.equal(app.form.goal, "");
     assert.equal(app.preparedRepository, null);
     assert.match(root.innerHTML, /Start another project/);
-    assert.match(root.innerHTML, /Start Project/);
+    assert.match(root.innerHTML, /Start planning/);
   }
 });
 
