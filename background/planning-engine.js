@@ -22,7 +22,7 @@
     getPublicState() { return this.projectStore.summary(); }
     isRetryableLeadDeliveryFailure(project) {
       return Boolean(project
-        && project.status === "NEEDS_USER"
+        && ["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))
         && project.currentRunId
         && project.lastError?.reason === "lead_prompt_failed");
     }
@@ -73,7 +73,7 @@
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
       if (retryableDeliveryFailure) {
-        await this.projectStore.fail(project.projectId, "lead_prompt_failed", project.lastError?.details || null, "PLANNING");
+        await this.projectStore.clearError?.(project.projectId);
         project = this.projectStore.getActiveProject();
       }
       const taskId = `planning:${stage.toLowerCase()}`;
@@ -92,6 +92,7 @@
         await this.projectStore.fail(project.projectId, "lead_prompt_failed", sent || null, "PLANNING");
         return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState() };
       }
+      await this.projectStore.clearError?.(project.projectId);
       return {
         ok: true,
         resumed: true,
