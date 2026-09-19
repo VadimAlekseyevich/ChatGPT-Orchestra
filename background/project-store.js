@@ -53,7 +53,7 @@
     summary() {
       const project = this.getActiveProject();
       if (!project) return null;
-      return { projectId: project.projectId, status: project.status, stage: project.stage, repository: project.repository, repositoryRuntime: project.repositoryRuntime || null, goal: project.initialGoal, currentRunId: project.currentRunId || null, taskCount: project.taskGraph?.tasks?.length || 0, validation: project.validation || null, execution: project.execution || null, updatedAt: project.updatedAt };
+      return { projectId: project.projectId, status: project.status, stage: project.stage, repository: project.repository, repositoryRuntime: project.repositoryRuntime || null, goal: project.initialGoal, currentRunId: project.currentRunId || null, taskCount: project.taskGraph?.tasks?.length || 0, validation: project.validation || null, execution: project.execution || null, lastError: project.lastError ? clone(project.lastError) : null, updatedAt: project.updatedAt };
     }
     async persist() {
       this.state.updatedAt = this.clock();
@@ -98,7 +98,7 @@
     }
     async beginStage(projectId, { stage, runId }) {
       const project = this.state.projects[projectId]; if (!project) return null;
-      project.status = "PLANNING"; project.stage = stage; project.currentRunId = runId; project.stageHistory.push({ stage, runId, status: "started", at: this.clock() }); project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
+      project.status = "PLANNING"; project.stage = stage; project.currentRunId = runId; delete project.lastError; project.stageHistory.push({ stage, runId, status: "started", at: this.clock() }); project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
     async completeStage(projectId, { stage, artifact }) {
       const project = this.state.projects[projectId]; if (!project) return null;
@@ -115,6 +115,11 @@
       const now = this.clock(); project.status = String(status || "RUNNING");
       const stageByStatus = { COMPLETED_UNVERIFIED: "REVIEW_REQUIRED", READY_FOR_INTEGRATION: "REVIEW_COMPLETE", INTEGRATING: "INTEGRATION", INTEGRATION_REPAIRING: "INTEGRATION_REPAIR", INTEGRATION_VERIFIED: "INTEGRATION_COMPLETE", NEEDS_USER: "EXECUTION_BLOCKED" };
       project.stage = stageByStatus[project.status] || "EXECUTION"; project.currentRunId = null; project.execution = { status: project.status, details: details && typeof details === "object" ? clone(details) : null, updatedAt: now }; project.updatedAt = now; await this.persist(); return this.getProject(projectId);
+    }
+    async clearError(projectId) {
+      const project = this.state.projects[projectId]; if (!project) return null;
+      if (!project.lastError) return this.getProject(projectId);
+      delete project.lastError; project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
     async fail(projectId, reason, details = null, status = "NEEDS_USER") {
       const project = this.state.projects[projectId]; if (!project) return null;
