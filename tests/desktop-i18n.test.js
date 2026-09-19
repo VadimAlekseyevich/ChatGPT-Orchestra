@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { ManagedBrowserOnboarding } = require("../apps/desktop/renderer/managed-browser-onboarding.js");
 
 const {
   DesktopI18n,
