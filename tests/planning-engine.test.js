@@ -218,3 +218,92 @@ test("recovers an already accepted stage artifact after service-worker restart",
   assert.match(prompts[0], /planning stage PLAN_V1/);
   assert.equal(bus.listeners.get("completion").length, 1);
 });
+
+test("Start Project refuses stale IDLE Lead when a fresh readiness check reports no composer", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-stale" });
+  const lead = { agentId: "A-stale", role: "lead", tabId: 9, status: "IDLE", chatState: null };
+  const registry = {
+    listAgents() { return [{ ...lead, chatState: lead.chatState ? { ...lead.chatState } : null }]; },
+    isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    async pingAgent(agentId) {
+      assert.equal(agentId, "A-stale");
+      lead.status = "ERROR";
+      lead.chatState = { availability: "unavailable", generating: false, composerOccupied: null };
+      lead.lastError = "unavailable";
+      return {
+        ok: true,
+        availability: "unavailable",
+        generating: false,
+        composerOccupied: null,
+        agent: { ...lead, chatState: { ...lead.chatState } }
+      };
+    },
+    async setProtocolContext() { throw new Error("must_not_bind_context"); }
+  };
+  const prompts = [];
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: new FakeEventBus(),
+    idFactory: () => "R-stale",
+    sendPrompt: async (...args) => { prompts.push(args); return { ok: true }; }
+  });
+  await engine.init();
+
+  const result = await engine.startProject({
+    goal: "Do not create a project until the Lead composer is freshly available.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "lead_not_ready");
+  assert.equal(result.status, "ERROR");
+  assert.equal(result.availability, "unavailable");
+  assert.equal(store.getActiveProject(), null);
+  assert.equal(prompts.length, 0);
+});
+
+test("planning retry preserves the persisted failed run until Lead readiness returns", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-retry-ready" });
+  await store.load();
+  await store.createProject({
+    goal: "Keep the current planning run intact while the Lead composer is unavailable.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+  await store.beginStage("P-retry-ready", { stage: "DISCOVERY", runId: "planning-discovery-existing" });
+  await store.fail("P-retry-ready", "lead_prompt_failed", { reason: "composer_unavailable" }, "PLANNING");
+
+  const lead = { agentId: "A-retry", role: "lead", tabId: 10, status: "IDLE" };
+  const registry = {
+    listAgents() { return [{ ...lead }]; },
+    isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    async pingAgent() {
+      return {
+        ok: true,
+        availability: "unavailable",
+        generating: false,
+        agent: { ...lead, status: "ERROR", chatState: { availability: "unavailable", generating: false } }
+      };
+    },
+    async setProtocolContext() { throw new Error("must_not_rebind_while_unready"); },
+    async clearProtocolContext() {}
+  };
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: new FakeEventBus(),
+    sendPrompt: async () => { throw new Error("must_not_send_while_unready"); }
+  });
+
+  const result = await engine.resumeCurrentStage({ reason: "manual_retry" });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "lead_not_ready");
+  assert.equal(result.retryable, true);
+
+  const persisted = store.getActiveProject();
+  assert.equal(persisted.status, "PLANNING");
+  assert.equal(persisted.stage, "DISCOVERY");
+  assert.equal(persisted.currentRunId, "planning-discovery-existing");
+  assert.equal(persisted.lastError.reason, "lead_prompt_failed");
+  assert.equal(persisted.lastError.details.reason, "composer_unavailable");
+});
