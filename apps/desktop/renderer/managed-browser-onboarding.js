@@ -51,7 +51,12 @@
       this.onClick = (event) => this.handleClick(event);
     }
 
-    tr(key, fallback, params = {}) { return this.t(key, fallback, params); }
+    tr(key, fallback, params = {}) {
+      const value = this.t(key, fallback, params);
+      return String(value ?? "").replace(/\\{([A-Za-z0-9_]+)\\}/g, (_match, name) =>
+        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : ""
+      );
+    }
 
     start() {
       this.rootElement.addEventListener?.("click", this.onClick);
@@ -129,7 +134,7 @@
         ? `<strong>${escapeHtml(this.tr("managed.leadConnected", "Lead connected"))}</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
         : status.loginRequired
           ? `<strong>${escapeHtml(this.tr("managed.loginRequired", "Login required"))}</strong> · ${escapeHtml(availability)}`
-          : `<strong>${escapeHtml(this.tr("managed.readyNoLead", "ChatGPT ready. Register this page as the Lead."))}</strong>`;
+          : `<strong>${escapeHtml(this.tr("managed.readyNoLead", "ChatGPT is ready. Register this page as the Lead."))}</strong>`;
       const action = status.loginRequired
         ? `<button data-managed-browser-action="open">${escapeHtml(this.tr("managed.openLogin", "Open / Login to ChatGPT"))}</button>`
         : status.leadRegistered
