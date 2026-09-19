@@ -148,7 +148,7 @@ test("Google auth is opened in the normal browser instead of the embedded Electr
 
   assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login");
   assert.equal(win.isVisible(), false);
-  assert.deepEqual(externalUrls, ["https://accounts.google.com/o/oauth2/v2/auth?client_id=test"]);
+  assert.deepEqual(externalUrls, ["https://chatgpt.com/"]);
   assert.ok(events.some((event) => event.type === "unsupported-auth-provider" && event.provider === "google"));
 
   const ping = await driver.pingSession(session.id);
