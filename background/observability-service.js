@@ -272,7 +272,7 @@
         observabilityVersion: OBSERVABILITY_VERSION,
         revision,
         generatedAt: this.clock(),
-        project: project ? sanitize({ projectId: project.projectId, status: project.status, stage: project.stage, goal: text(project.initialGoal || "", 12000), repository: clone(project.repository || null), validation: clone(project.validation || null), execution: clone(project.execution || null), createdAt: number(project.createdAt), updatedAt: number(project.updatedAt) }) : null,
+        project: project ? sanitize({ projectId: project.projectId, status: project.status, stage: project.stage, goal: text(project.initialGoal || "", 12000), repository: clone(project.repository || null), validation: clone(project.validation || null), execution: clone(project.execution || null), lastError: project.lastError ? clone(project.lastError) : null, createdAt: number(project.createdAt), updatedAt: number(project.updatedAt) }) : null,
         scheduler: sanitize(scheduler),
         tasks,
         activeRuns: tasks.map((item) => item.activeRun).filter(Boolean),
