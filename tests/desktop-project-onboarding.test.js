@@ -56,7 +56,7 @@ test("desktop project onboarding waits for a connected IDLE Lead before showing 
   agents = readyLead();
   await app.refresh();
   assert.match(root.innerHTML, /Start your first project/);
-  assert.match(root.innerHTML, /Start Project/);
+  assert.match(root.innerHTML, /Start planning/);
 });
 
 test("desktop first-project onboarding opens a local repository, auto-detects GitHub origin, trusts it and starts planning", async () => {
@@ -200,7 +200,7 @@ test("READY project exposes Start Execution and forwards selected Worker concurr
   const root = fakeRoot();
   const app = new DesktopProjectOnboarding({ rootElement: root, transport });
   await app.refresh();
-  assert.match(root.innerHTML, /Planning complete/);
+  assert.match(root.innerHTML, /Step 4 of 4/);
   assert.match(root.innerHTML, /Start Execution/);
 
   app.handleChange(changeEvent({ projectWorkers: "" }, "2"));
