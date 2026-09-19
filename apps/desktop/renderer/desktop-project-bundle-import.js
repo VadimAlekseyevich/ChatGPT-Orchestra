@@ -10,12 +10,13 @@
   }
 
   class DesktopProjectBundleImport {
-    constructor({ rootElement, transport, pollMs = 3000, confirmAction = null } = {}) {
+    constructor({ rootElement, transport, pollMs = 3000, confirmAction = null, t = null } = {}) {
       if (!rootElement) throw new TypeError("desktop_project_bundle_import_root_required");
       if (!transport?.query || !transport?.execute) throw new TypeError("desktop_project_bundle_import_transport_invalid");
       this.rootElement = rootElement;
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 3000);
+      this.t = typeof t === "function" ? t : (_key, fallback) => fallback;
       this.confirmAction = confirmAction || ((message) => typeof globalThis.confirm === "function" ? globalThis.confirm(message) : false);
       this.project = null;
       this.recoveryStatus = "IDLE";
@@ -27,6 +28,8 @@
       this.onClick = (event) => this.handleClick(event);
       this.onChange = (event) => this.handleChange(event);
     }
+
+    tr(key, fallback, params = {}) { return this.t(key, fallback, params); }
 
     start() {
       this.rootElement.addEventListener?.("click", this.onClick);
@@ -66,15 +69,17 @@
 
     render() {
       const allowed = this.canImport();
-      const projectLabel = this.project?.projectId ? `Current project: ${this.project.projectId}` : "No active project";
+      const projectLabel = this.project?.projectId
+        ? this.tr("bundle.current", "Current project: {projectId}", { projectId: this.project.projectId })
+        : this.tr("bundle.none", "No active project");
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-bundle-import">
-        <div class="dashboard-section-head"><h3>Project Bundle</h3><span>${escapeHtml(this.recoveryStatus)}</span></div>
-        <p class="dashboard-muted">Import a portable Orchestra Project Bundle. The bundle is validated before mutation; browser/runtime identities and secrets are not restored.</p>
+        <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("bundle.title", "Project Bundle"))}</h3><span>${escapeHtml(this.recoveryStatus)}</span></div>
+        <p class="dashboard-muted">${escapeHtml(this.tr("bundle.description", "Import a portable Orchestra Project Bundle. The bundle is validated before mutation; browser/runtime identities and secrets are not restored."))}</p>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         ${this.notice ? `<div class="dashboard-evidence"><strong>${escapeHtml(this.notice)}</strong></div>` : ""}
         <div class="dashboard-task-controls">
-          <button class="secondary" data-project-bundle-action="import" ${this.busy || !allowed ? "disabled" : ""}>${this.busy ? "Importing…" : "Import Project Bundle"}</button>
-          <small>${escapeHtml(projectLabel)} · import ${allowed ? "allowed" : "blocked until Pause/Stop/recovery safe point"}</small>
+          <button class="secondary" data-project-bundle-action="import" ${this.busy || !allowed ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("bundle.importing", "Importing…") : this.tr("bundle.import", "Import Project Bundle"))}</button>
+          <small>${escapeHtml(projectLabel)} · ${escapeHtml(allowed ? this.tr("bundle.allowed", "import allowed") : this.tr("bundle.blocked", "import blocked until Pause/Stop/recovery safe point"))}</small>
         </div>
         <input type="file" accept="application/json,.json" data-project-bundle-file hidden>
       </section>`;
@@ -89,10 +94,10 @@
 
     async importFile(file) {
       if (!file) return { ok: false, cancelled: true };
-      if (!this.canImport()) return this.setError(`Project Bundle import is not allowed while recovery is ${this.recoveryStatus}. Pause or Stop the project first.`);
-      if (Number(file.size) > MAX_BUNDLE_BYTES) return this.setError("Project Bundle is larger than 8 MiB.");
+      if (!this.canImport()) return this.setError(this.tr("bundle.error.state", "Project Bundle import is not allowed while recovery is {status}. Pause or Stop the project first.", { status: this.recoveryStatus }));
+      if (Number(file.size) > MAX_BUNDLE_BYTES) return this.setError(this.tr("bundle.error.large", "Project Bundle is larger than 8 MiB."));
       if (this.project) {
-        const confirmed = this.confirmAction("Importing this Project Bundle will replace the current portable project state after Orchestra creates a backup. Continue?");
+        const confirmed = this.confirmAction(this.tr("bundle.confirmReplace", "Importing this Project Bundle will replace the current portable project state after Orchestra creates a backup. Continue?"));
         if (!confirmed) return { ok: false, cancelled: true };
       }
 
@@ -103,21 +108,21 @@
       try {
         let serialized;
         try { serialized = await file.text(); }
-        catch (_) { return this.setError("Unable to read the selected Project Bundle."); }
-        if (new TextEncoder().encode(String(serialized || "")).length > MAX_BUNDLE_BYTES) return this.setError("Project Bundle is larger than 8 MiB.");
+        catch (_) { return this.setError(this.tr("bundle.error.read", "Unable to read the selected Project Bundle.")); }
+        if (new TextEncoder().encode(String(serialized || "")).length > MAX_BUNDLE_BYTES) return this.setError(this.tr("bundle.error.large", "Project Bundle is larger than 8 MiB."));
 
         const response = await this.transport.execute("importProjectBundle", {
           bundle: String(serialized || ""),
           replace: Boolean(this.project)
         });
-        if (!response?.ok) return this.setError(`Import failed: ${response?.reason || "unknown_error"}`);
+        if (!response?.ok) return this.setError(this.tr("bundle.error.import", "Import failed: {reason}", { reason: response?.reason || "unknown_error" }));
 
-        this.notice = `Imported ${response.projectId || "project"}. Restarting Orchestra for reconciliation…`;
+        this.notice = this.tr("bundle.imported", "Imported {projectId}. Restarting Orchestra for reconciliation…", { projectId: response.projectId || "project" });
         this.render();
         if (response.reloadRequired) {
-          if (typeof this.transport.restartApplication !== "function") return this.setError("Import succeeded but desktop restart capability is unavailable. Restart Orchestra manually before continuing.");
+          if (typeof this.transport.restartApplication !== "function") return this.setError(this.tr("bundle.error.restartUnavailable", "Import succeeded but desktop restart capability is unavailable. Restart Orchestra manually before continuing."));
           const restarted = await this.transport.restartApplication();
-          if (!restarted?.ok) return this.setError(`Import succeeded but restart failed: ${restarted?.reason || "desktop_restart_failed"}. Restart Orchestra manually before continuing.`);
+          if (!restarted?.ok) return this.setError(this.tr("bundle.error.restart", "Import succeeded but restart failed: {reason}. Restart Orchestra manually before continuing.", { reason: restarted?.reason || "desktop_restart_failed" }));
         }
         return response;
       } catch (error) {
