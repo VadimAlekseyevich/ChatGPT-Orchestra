@@ -20,6 +20,38 @@
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
     isConnected(agent) { return Boolean(agent && this.registry?.isAgentConnected?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
+
+    async ensureLeadPromptReady() {
+      let lead = this.getLead();
+      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+
+      let ping = null;
+      if (typeof this.registry?.pingAgent === "function") {
+        try { ping = await this.registry.pingAgent(lead.agentId); }
+        catch (error) {
+          ping = { ok: false, reason: "lead_readiness_check_failed", message: String(error?.message || error) };
+        }
+        if (!ping?.ok) return { ok: false, reason: "lead_not_ready", details: ping || null };
+        lead = ping.agent || this.getLead() || lead;
+      }
+
+      const status = String(lead?.status || "");
+      const availability = String(ping?.availability || lead?.chatState?.availability || "");
+      const composerOccupied = ping?.composerOccupied === true || lead?.chatState?.composerOccupied === true;
+      const generating = ping?.generating === true || status === "BUSY";
+      if (status !== "IDLE" || generating || composerOccupied || (availability && availability !== "ready")) {
+        return {
+          ok: false,
+          reason: "lead_not_ready",
+          status: status || null,
+          availability: availability || null,
+          composerOccupied,
+          generating,
+          details: ping || null
+        };
+      }
+      return { ok: true, lead, details: ping || null };
+    }
     isRetryableLeadDeliveryFailure(project) {
       return Boolean(project
         && ["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))
@@ -57,19 +89,20 @@
     }
 
     async startProject({ goal, repositoryUrl }) {
-      const lead = this.getLead();
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      const readiness = await this.ensureLeadPromptReady();
+      if (!readiness.ok) return readiness;
       const created = await this.projectStore.createProject({ goal, repositoryUrl });
       if (!created.ok) return created;
-      return this.dispatchStage(created.project.projectId, "DISCOVERY");
+      return this.dispatchStage(created.project.projectId, "DISCOVERY", { lead: readiness.lead, readinessChecked: true });
     }
 
     async resumeCurrentStage({ reason = "fresh_lead_replacement" } = {}) {
       let project = this.projectStore.getActiveProject();
-      const lead = this.getLead();
       const retryableDeliveryFailure = this.isRetryableLeadDeliveryFailure(project);
       if (!project || (!retryableDeliveryFailure && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      const readiness = await this.ensureLeadPromptReady();
+      if (!readiness.ok) return { ...readiness, retryable: true, project: this.getPublicState() };
+      const lead = readiness.lead;
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
       if (retryableDeliveryFailure) {
@@ -106,10 +139,20 @@
       };
     }
 
-    async dispatchStage(projectId, stage) {
+    async dispatchStage(projectId, stage, { lead: readyLead = null, readinessChecked = false } = {}) {
       const project = this.projectStore.getProject(projectId);
-      const lead = this.getLead();
       if (!project) return { ok: false, reason: "unknown_project" };
+      let lead = readyLead || this.getLead();
+      if (!readinessChecked) {
+        const readiness = await this.ensureLeadPromptReady();
+        if (!readiness.ok) {
+          const failedRunId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
+          await this.projectStore.beginStage(projectId, { stage, runId: failedRunId });
+          await this.projectStore.fail(projectId, "lead_prompt_failed", readiness, "PLANNING");
+          return { ok: false, reason: "lead_prompt_failed", retryable: true, details: readiness };
+        }
+        lead = readiness.lead;
+      }
       if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
 
       const runId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
