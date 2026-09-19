@@ -63,7 +63,7 @@ test("fresh Lead resumes the same persisted planning role without creating a new
 
 test("failed fresh Lead dispatch clears protocol binding so registration can retry safely", async () => {
   const project = activeProject();
-  const lead = { agentId: "LEAD-NEW", role: "lead", status: "CONNECTING" };
+  const lead = { agentId: "LEAD-NEW", role: "lead", status: "IDLE" };
   const operations = [];
   const registry = {
     listAgents: () => [clone(lead)],
