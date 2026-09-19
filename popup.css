@@ -379,6 +379,28 @@ button.danger { opacity: 0.72; }
 }
 .managed-browser-validation-body button { justify-self: start; }
 
+.managed-auth-fallback {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+}
+.managed-auth-fallback p { margin: 0; }
+
+.desktop-companion-onboarding { margin-bottom: 10px; }
+.desktop-companion-steps {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  padding-left: 22px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.desktop-companion-onboarding code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .desktop-header { flex-direction: column; }
   .desktop-language-control { width: 100%; }
