@@ -45,12 +45,13 @@
   }
 
   class DesktopProjectOnboarding {
-    constructor({ rootElement, transport, pollMs = 3000 } = {}) {
+    constructor({ rootElement, transport, pollMs = 3000, t = null } = {}) {
       if (!rootElement) throw new TypeError("desktop_project_onboarding_root_required");
       if (!transport?.query || !transport?.execute) throw new TypeError("desktop_project_onboarding_transport_invalid");
       this.rootElement = rootElement;
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 3000);
+      this.t = typeof t === "function" ? t : (_key, fallback) => fallback;
       this.project = null;
       this.agents = [];
       this.newProjectRequested = false;
@@ -64,6 +65,8 @@
       this.onInput = (event) => this.handleInput(event);
       this.onChange = (event) => this.handleChange(event);
     }
+
+    tr(key, fallback, params = {}) { return this.t(key, fallback, params); }
 
     start() {
       this.rootElement.addEventListener?.("click", this.onClick);
@@ -115,9 +118,9 @@
         const planning = this.project.status === "PLANNING";
         this.rootElement.innerHTML = planning
           ? `<section class="dashboard-section desktop-project-onboarding">
-              <div class="dashboard-section-head"><h3>Project startup</h3><span>${escapeHtml(this.project.stage || "PLANNING")}</span></div>
-              <p><strong>Lead is planning the project.</strong></p>
-              <p class="dashboard-muted">Orchestra is inspecting the repository, refining the plan and building the task DAG. Execution controls will appear when planning reaches READY.</p>
+              <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.planningTitle", "Planning in progress"))}</h3><span>${escapeHtml(this.project.stage || "PLANNING")}</span></div>
+              <p><strong>${escapeHtml(this.tr("project.planning", "The Lead is planning the project."))}</strong></p>
+              <p class="dashboard-muted">${escapeHtml(this.tr("project.planningHint", "Orchestra is inspecting the repository, refining the goal and building a dependency graph. You can follow progress here; execution stays closed until the plan is ready."))}</p>
               ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
             </section>`
           : "";
@@ -126,61 +129,61 @@
 
       if (!this.leadReady()) {
         this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-onboarding">
-          <div class="dashboard-section-head"><h3>Project setup</h3><span>WAITING FOR LEAD</span></div>
+          <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.waitingTitle", "Step 2 of 4 — Create the Lead"))}</h3><span>${escapeHtml(this.tr("project.waitingStatus", "WAITING FOR LEAD"))}</span></div>
           ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
-          <p><strong>Connect the Lead before starting a project.</strong></p>
-          <p class="dashboard-muted">Finish ChatGPT sign-in above, wait for the page to become ready, then choose “Register this ChatGPT page as Lead”. The project form will appear automatically when the Lead is connected and IDLE.</p>
+          <p><strong>${escapeHtml(this.tr("project.connectLead", "Connect the Lead before starting a project."))}</strong></p>
+          <p class="dashboard-muted">${escapeHtml(this.tr("project.connectLeadHint", "Finish ChatGPT sign-in above, wait for the page to become ready, then choose “Register this ChatGPT page as Lead”. The project form will appear automatically when the Lead is connected and IDLE."))}</p>
         </section>`;
         return;
       }
 
       const local = this.form.mode === MODE_LOCAL;
-      const heading = this.newProjectRequested ? "Start another project" : "Start your first project";
+      const heading = this.newProjectRequested ? this.tr("project.another", "Start another project") : this.tr("project.step3", "Step 3 of 4 — Choose the project");
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-project-onboarding">
-        <div class="dashboard-section-head"><h3>${heading}</h3><span>READY</span></div>
-        <p class="dashboard-muted">Choose a repository, describe the outcome you want, then Orchestra will ask the registered Lead to plan the work.</p>
+        <div class="dashboard-section-head"><h3>${escapeHtml(heading)}</h3><span>${escapeHtml(this.tr("project.ready", "READY"))}</span></div>
+        <p><strong>${escapeHtml(this.tr("project.first", "Start your first project"))}</strong></p><p class="dashboard-muted">${escapeHtml(this.tr("project.chooseHint", "Choose a repository and describe the finished result. The Lead will inspect the repository and build a task plan before any Worker starts."))}</p>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         <div class="dashboard-task-controls">
-          <label><input type="radio" name="desktop-project-mode" value="local" data-project-mode="local" ${local ? "checked" : ""} ${this.busy ? "disabled" : ""}> Open local repository</label>
-          <label><input type="radio" name="desktop-project-mode" value="clone" data-project-mode="clone" ${!local ? "checked" : ""} ${this.busy ? "disabled" : ""}> Clone repository from URL</label>
+          <label><input type="radio" name="desktop-project-mode" value="local" data-project-mode="local" ${local ? "checked" : ""} ${this.busy ? "disabled" : ""}> ${escapeHtml(this.tr("project.openLocal", "Open local repository"))}</label>
+          <label><input type="radio" name="desktop-project-mode" value="clone" data-project-mode="clone" ${!local ? "checked" : ""} ${this.busy ? "disabled" : ""}> ${escapeHtml(this.tr("project.clone", "Clone repository from URL"))}</label>
         </div>
         <div class="dashboard-evidence">
           ${local ? `
-            <label><strong>Local Git repository</strong><br>
+            <label><strong>${escapeHtml(this.tr("project.localRepo", "Local Git repository"))}</strong><br>
               <input type="text" data-project-field="repositoryPath" value="${escapeHtml(this.form.repositoryPath)}" placeholder="C:\\Projects\\MyApp" ${this.busy ? "disabled" : ""}>
             </label>
-            <div class="dashboard-task-controls"><button class="secondary" data-project-action="browse" ${this.busy ? "disabled" : ""}>Browse…</button></div>
-            <p class="dashboard-muted">The filesystem path stays in the desktop repository registry; portable project state stores only a logical repository id.</p>
+            <div class="dashboard-task-controls"><button class="secondary" data-project-action="browse" ${this.busy ? "disabled" : ""}>${escapeHtml(this.tr("project.browse", "Browse…"))}</button></div>
+            <p class="dashboard-muted">${escapeHtml(this.tr("project.localPrivacy", "The filesystem path stays in the desktop repository registry; portable project state stores only a logical repository id."))}</p>
           ` : ""}
-          <label><strong>${local ? "GitHub repository URL (auto-detected from origin when possible)" : "GitHub repository URL"}</strong><br>
+          <label><strong>${escapeHtml(local ? this.tr("project.githubAuto", "GitHub repository URL (auto-detected from origin when possible)") : this.tr("project.github", "GitHub repository URL"))}</strong><br>
             <input type="url" data-project-field="repositoryUrl" value="${escapeHtml(this.form.repositoryUrl)}" placeholder="https://github.com/owner/repository" ${this.busy ? "disabled" : ""}>
           </label>
-          ${local ? `<p class="dashboard-muted">You can leave this blank. Orchestra reads only Git remote <code>origin</code> and accepts a GitHub HTTPS/SSH origin. Enter the canonical URL manually only when the repository has no usable GitHub origin.</p>` : ""}
-          <label><strong>Goal</strong><br>
-            <textarea rows="5" data-project-field="goal" placeholder="Describe the finished result, constraints and important acceptance criteria…" ${this.busy ? "disabled" : ""}>${escapeHtml(this.form.goal)}</textarea>
+          ${local ? `<p class="dashboard-muted">${escapeHtml(this.tr("project.githubOptional", "You can leave this blank. Orchestra reads only Git remote origin and accepts a GitHub HTTPS/SSH origin. Enter the canonical URL manually only when the repository has no usable GitHub origin."))}</p>` : ""}
+          <label><strong>${escapeHtml(this.tr("project.goal", "What should Orchestra accomplish?"))}</strong><br>
+            <textarea rows="5" data-project-field="goal" placeholder="${escapeHtml(this.tr("project.goalPlaceholder", "Describe the finished result, constraints and important acceptance criteria…"))}" ${this.busy ? "disabled" : ""}>${escapeHtml(this.form.goal)}</textarea>
           </label>
-          <label><input type="checkbox" data-project-trust ${this.form.trust ? "checked" : ""} ${this.busy ? "disabled" : ""}> I trust this repository and allow its structured local verification commands inside isolated Orchestra worktrees.</label>
+          <label><input type="checkbox" data-project-trust ${this.form.trust ? "checked" : ""} ${this.busy ? "disabled" : ""}> ${escapeHtml(this.tr("project.trust", "I trust this repository and allow its structured local verification commands inside isolated Orchestra worktrees."))}</label>
         </div>
         <div class="dashboard-task-controls">
-          <button data-project-action="start" ${this.busy ? "disabled" : ""}>${this.busy ? "Starting…" : "Start Project"}</button>
+          <button data-project-action="start" ${this.busy ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("project.starting", "Starting…") : this.tr("project.start", "Start planning"))}</button>
         </div>
       </section>`;
     }
 
     renderExecutionStart() {
       return `<section class="dashboard-section desktop-project-onboarding">
-        <div class="dashboard-section-head"><h3>Planning complete</h3><span>READY</span></div>
+        <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.step4", "Step 4 of 4 — Start execution"))}</h3><span>${escapeHtml(this.tr("project.ready", "READY"))}</span></div>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
-        <p><strong>The task DAG is ready.</strong> Choose the maximum Worker concurrency and start execution.</p>
+        <p><strong>${escapeHtml(this.tr("project.taskDagReady", "The task plan is ready."))}</strong></p><p class="dashboard-muted">${escapeHtml(this.tr("project.executeHint", "Choose how many Workers may run simultaneously. Workers use isolated Git worktrees; completed changes still require independent review before integration."))}</p>
         <div class="dashboard-task-controls">
-          <label>Workers
+          <label>${escapeHtml(this.tr("project.workers", "Workers"))}
             <select data-project-workers ${this.busy ? "disabled" : ""}>
               ${[1, 2, 3, 4].map((count) => `<option value="${count}" ${Number(this.form.maxWorkers) === count ? "selected" : ""}>${count}</option>`).join("")}
             </select>
           </label>
-          <button data-project-action="execute" ${this.busy ? "disabled" : ""}>${this.busy ? "Starting…" : "Start Execution"}</button>
+          <button data-project-action="execute" ${this.busy ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("project.starting", "Starting…") : this.tr("project.execute", "Start execution"))}</button>
         </div>
-        <p class="dashboard-muted">Workers run in isolated Git worktrees. Mutating tasks still require independent review before dependencies unlock and before integration.</p>
+        
       </section>`;
     }
 
@@ -188,11 +191,11 @@
       const status = String(this.project?.status || "COMPLETE");
       const verified = status === "INTEGRATION_VERIFIED";
       return `<section class="dashboard-section desktop-project-onboarding">
-        <div class="dashboard-section-head"><h3>${verified ? "Project complete" : "Project ended"}</h3><span>${escapeHtml(status)}</span></div>
+        <div class="dashboard-section-head"><h3>${escapeHtml(verified ? this.tr("project.complete", "Project complete") : this.tr("project.ended", "Project ended"))}</h3><span>${escapeHtml(status)}</span></div>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
-        <p><strong>${verified ? "Integration is verified." : "This project is no longer running."}</strong></p>
-        <p class="dashboard-muted">The previous project remains persisted for audit/export. Starting another project only changes which project is active.</p>
-        <div class="dashboard-task-controls"><button data-project-action="new-project">Start another project</button></div>
+        <p><strong>${escapeHtml(verified ? this.tr("project.integrationVerified", "Integration is verified.") : this.tr("project.noLongerRunning", "This project is no longer running."))}</strong></p>
+        <p class="dashboard-muted">${escapeHtml(this.tr("project.historyHint", "The previous project remains persisted for audit/export. Starting another project only changes which project is active."))}</p>
+        <div class="dashboard-task-controls"><button data-project-action="new-project">${escapeHtml(this.tr("project.another", "Start another project"))}</button></div>
       </section>`;
     }
 
@@ -227,10 +230,10 @@
       const goal = String(this.form.goal || "").trim();
       const repositoryUrl = String(this.form.repositoryUrl || "").trim();
       const repositoryPath = String(this.form.repositoryPath || "").trim();
-      if (goal.length < 10) return { ok: false, reason: "Goal must be at least 10 characters." };
-      if (this.form.mode === MODE_LOCAL && !repositoryPath) return { ok: false, reason: "Choose a local Git repository first." };
-      if (repositoryUrl && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: "Use a GitHub repository URL like https://github.com/owner/repository." };
-      if (this.form.mode === MODE_CLONE && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: "Use a GitHub repository URL like https://github.com/owner/repository." };
+      if (goal.length < 10) return { ok: false, reason: this.tr("project.error.goal", "Goal must be at least 10 characters.") };
+      if (this.form.mode === MODE_LOCAL && !repositoryPath) return { ok: false, reason: this.tr("project.error.path", "Choose a local Git repository first.") };
+      if (repositoryUrl && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: this.tr("project.error.github", "Use a GitHub repository URL like https://github.com/owner/repository.") };
+      if (this.form.mode === MODE_CLONE && !normalizeGitHubUrl(repositoryUrl)) return { ok: false, reason: this.tr("project.error.github", "Use a GitHub repository URL like https://github.com/owner/repository.") };
       return { ok: true, goal, repositoryUrl, repositoryPath };
     }
 
@@ -249,7 +252,7 @@
     }
 
     async startProject() {
-      if (!this.leadReady()) return this.setError("Connect the Lead and wait for it to become IDLE before starting a project.");
+      if (!this.leadReady()) return this.setError(this.tr("project.error.lead", "Connect the Lead and wait for it to become IDLE before starting a project."));
       const validated = this.validateForm();
       if (!validated.ok) return this.setError(validated.reason);
       this.busy = true;
@@ -260,7 +263,7 @@
         if (!prepared?.ok) return this.setError(prepared?.reason || "repository_prepare_failed");
         const repositoryUrl = normalizeGitHubUrl(validated.repositoryUrl) || normalizeGitHubUrl(prepared.repositoryUrl) || null;
         if (!repositoryUrl) {
-          return this.setError("No GitHub origin was detected. Enter the repository GitHub URL and press Start Project again.");
+          return this.setError(this.tr("project.error.noOrigin", "No GitHub origin was detected. Enter the repository GitHub URL and press Start planning again."));
         }
         if (this.form.trust) {
           const trusted = await this.transport.execute("setRepositoryTrust", { repositoryId: prepared.repositoryId, trust: "TRUSTED" });
