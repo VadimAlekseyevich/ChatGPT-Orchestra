@@ -45,13 +45,14 @@
   }
 
   class DesktopProjectOnboarding {
-    constructor({ rootElement, transport, pollMs = 3000, t = null } = {}) {
+    constructor({ rootElement, transport, pollMs = 3000, t = null, runtimeMode = "managed-browser" } = {}) {
       if (!rootElement) throw new TypeError("desktop_project_onboarding_root_required");
       if (!transport?.query || !transport?.execute) throw new TypeError("desktop_project_onboarding_transport_invalid");
       this.rootElement = rootElement;
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 3000);
       this.t = typeof t === "function" ? t : (_key, fallback) => fallback;
+      this.runtimeMode = String(runtimeMode || "managed-browser");
       this.project = null;
       this.agents = [];
       this.newProjectRequested = false;
@@ -71,6 +72,12 @@
       return String(value ?? "").replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name) =>
         Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : ""
       );
+    }
+
+    setRuntimeMode(mode) {
+      this.runtimeMode = String(mode || "managed-browser");
+      this.render();
+      return this.runtimeMode;
     }
 
     start() {
@@ -137,7 +144,9 @@
           <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.waitingTitle", "Step 2 of 4 — Create the Lead"))}</h3><span>${escapeHtml(this.tr("project.waitingStatus", "WAITING FOR LEAD"))}</span></div>
           ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
           <p><strong>${escapeHtml(this.tr("project.connectLead", "Connect the Lead before starting a project."))}</strong></p>
-          <p class="dashboard-muted">${escapeHtml(this.tr("project.connectLeadHint", "Finish ChatGPT sign-in above, wait for the page to become ready, then choose “Register this ChatGPT page as Lead”. The project form will appear automatically when the Lead is connected and IDLE."))}</p>
+          <p class="dashboard-muted">${escapeHtml(this.runtimeMode === "companion"
+            ? this.tr("project.connectLeadCompanionHint", "In Chrome or Edge, open the Orchestra extension, enable Desktop Companion, then register the signed-in ChatGPT tab as Lead. The project form will appear when the Lead is connected and IDLE.")
+            : this.tr("project.connectLeadHint", "Finish ChatGPT sign-in above, wait for the page to become ready, then choose “Register this ChatGPT page as Lead”. The project form will appear automatically when the Lead is connected and IDLE."))}</p>
         </section>`;
         return;
       }
