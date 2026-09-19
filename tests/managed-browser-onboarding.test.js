@@ -151,3 +151,26 @@ test("diagnostics disclosure remains open across polling renders", () => {
   assert.equal(onboarding.validationOpen, true);
   assert.match(root.innerHTML, /managed-browser-validation" open/);
 });
+
+
+test("registered Lead is not presented as connected when current ChatGPT composer is unavailable", () => {
+  const root = rootElement();
+  const onboarding = new ManagedBrowserOnboarding({
+    rootElement: root,
+    transport: {
+      async query() { return { ok: true }; },
+      async execute() { return { ok: true }; }
+    }
+  });
+  onboarding.status = {
+    availability: "unavailable",
+    loginRequired: true,
+    leadRegistered: true,
+    leadReady: false,
+    leadStatus: "ERROR"
+  };
+  onboarding.render();
+  assert.match(root.innerHTML, /Lead registered, but ChatGPT is not ready/);
+  assert.match(root.innerHTML, /Open \/ Login to ChatGPT/);
+  assert.doesNotMatch(root.innerHTML, /<strong>Lead connected<\/strong>/);
+});
