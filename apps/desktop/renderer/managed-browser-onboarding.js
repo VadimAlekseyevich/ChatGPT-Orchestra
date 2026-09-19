@@ -48,6 +48,7 @@
       this.validation = null;
       this.timer = null;
       this.refreshing = false;
+      this.fallbackError = null;
       this.onClick = (event) => this.handleClick(event);
     }
 
@@ -118,6 +119,20 @@
       </details>`;
     }
 
+    renderUnsupportedAuth(status) {
+      if (status?.unsupportedAuthProvider !== "google") return "";
+      return `<div class="dashboard-error managed-auth-fallback">
+        <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in must continue in Chrome or Edge"))}</strong>
+        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Orchestra opened the provider in your normal browser and can switch to its extension/companion fallback without copying credentials or cookies."))}</p>
+        ${this.fallbackError ? `<p><code>${escapeHtml(this.fallbackError)}</code></p>` : ""}
+        <div class="dashboard-task-controls">
+          <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Prepare and use Chrome / Edge fallback"))}</button>
+          <button class="secondary" data-managed-browser-action="open-external">${escapeHtml(this.tr("managed.openExternal", "Open ChatGPT in normal browser"))}</button>
+          <button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
+        </div>
+      </div>`;
+    }
+
     render() {
       const status = this.status;
       if (!status) {
@@ -143,7 +158,8 @@
       this.rootElement.innerHTML = `<section class="dashboard-section managed-browser-onboarding">
         <div class="dashboard-section-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(availability)}</span></div>
         <p>${lead}</p>
-        <p class="dashboard-muted">${escapeHtml(this.tr("managed.loginHint", "Sign in only inside Orchestra's isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state."))}</p>
+        <p class="dashboard-muted">${escapeHtml(this.tr("managed.loginHint", "Sign in only inside Orchestra\'s isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state."))}</p>
+        ${this.renderUnsupportedAuth(status)}
         <div class="dashboard-task-controls">
           ${action}
           <button class="secondary" data-managed-browser-action="refresh">${escapeHtml(this.tr("managed.refresh", "Refresh status"))}</button>
@@ -155,6 +171,17 @@
     async handleAction(action) {
       const normalized = String(action || "");
       if (normalized === "refresh") return this.refresh();
+      if (normalized === "open-external") return this.transport.openChatGPTExternal?.();
+      if (normalized === "use-companion") {
+        this.fallbackError = null;
+        const prepared = await this.transport.prepareCompanionFallback?.();
+        if (!prepared?.ok) {
+          this.fallbackError = prepared?.reason || "companion_fallback_prepare_failed";
+          this.render();
+          return prepared;
+        }
+        return this.transport.switchRuntime?.("companion");
+      }
       if (normalized === "open") {
         await this.transport.execute("openManagedBrowser", {});
         return this.refresh();
