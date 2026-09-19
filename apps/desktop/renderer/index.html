@@ -9,10 +9,20 @@
 </head>
 <body class="dashboard-standalone-body">
   <main class="panel dashboard-standalone-panel">
-    <header>
-      <h1>ChatGPT Orchestra · Desktop</h1>
-      <p>Portable Dashboard over the local Orchestrator API IPC boundary.</p>
+    <header class="desktop-header">
+      <div>
+        <h1 data-i18n="app.title">ChatGPT Orchestra · Desktop</h1>
+        <p data-i18n="app.subtitle">Orchestrate coding work through Lead, Workers, Review and Integration.</p>
+      </div>
+      <label class="desktop-language-control">
+        <span data-i18n="language.label">Language</span>
+        <select id="desktopLocaleSelect" aria-label="Language">
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </label>
     </header>
+    <div id="desktopWorkflowGuide"></div>
     <div id="managedBrowserOnboarding"></div>
     <div id="desktopProjectOnboarding"></div>
     <div id="desktopProjectBundleImport"></div>
@@ -20,6 +30,7 @@
   </main>
   <script src="../../../dashboard/dashboard-app.js"></script>
   <script src="desktop-transport.js"></script>
+  <script src="i18n.js"></script>
   <script src="managed-browser-onboarding.js"></script>
   <script src="desktop-project-onboarding.js"></script>
   <script src="desktop-project-bundle-import.js"></script>
