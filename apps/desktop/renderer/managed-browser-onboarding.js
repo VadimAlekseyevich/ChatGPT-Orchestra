@@ -124,7 +124,7 @@
       return `<div class="dashboard-error managed-auth-fallback">
         <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in must continue in Chrome or Edge"))}</strong>
         <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Orchestra opened the provider in your normal browser and can switch to its extension/companion fallback without copying credentials or cookies."))}</p>
-        ${this.fallbackError ? `<p><code>${escapeHtml(this.fallbackError)}</code></p>` : ""}
+        ${this.fallbackError ? `<p>${escapeHtml(this.fallbackError === "companion_fallback_requires_packaged_runtime" ? this.tr("managed.packagedFallbackRequired", "This fallback must be prepared from the packaged Windows candidate. Build it, launch the packaged executable, then try again.") : this.fallbackError)}</p>` : ""}
         <div class="dashboard-task-controls">
           <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Prepare and use Chrome / Edge fallback"))}</button>
           <button class="secondary" data-managed-browser-action="open-external">${escapeHtml(this.tr("managed.openExternal", "Open ChatGPT in normal browser"))}</button>
