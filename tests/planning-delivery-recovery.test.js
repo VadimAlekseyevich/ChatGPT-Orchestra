@@ -28,6 +28,11 @@ function makeProjectStore(initial) {
       goal: state.initialGoal,
       lastError: state.lastError || null
     }),
+    async clearError(projectId) {
+      assert.equal(projectId, state.projectId);
+      delete state.lastError;
+      return clone(state);
+    },
     async beginStage(projectId, { stage, runId }) {
       assert.equal(projectId, state.projectId);
       state.status = "PLANNING";
@@ -178,4 +183,56 @@ test("Lead registration attempts recovery for an interrupted NEEDS_USER planning
   assert.equal(result.ok, true);
   assert.equal(result.planningResume.resumed, true);
   assert.deepEqual(calls, [["register"], ["resume", { reason: "fresh_lead_registered" }]]);
+});
+
+
+test("retryable PLANNING delivery failure resumes the same run and clears stale error", async () => {
+  const projectStore = makeProjectStore({
+    projectId: "P1",
+    status: "PLANNING",
+    stage: "PLAN_V1",
+    currentRunId: "planning-plan_v1-existing",
+    initialGoal: "Create a simple counter page",
+    repository: { url: "https://github.com/acme/demo" },
+    lastError: { reason: "lead_prompt_failed", details: { reason: "agent_preload_timeout" } }
+  });
+  const registry = makeRegistry();
+  const prompts = [];
+  const engine = new PlanningEngine({
+    projectStore,
+    registry,
+    eventBus: {},
+    sendPrompt: async (agentId, prompt) => {
+      prompts.push({ agentId, prompt });
+      return { ok: true, accepted: true };
+    }
+  });
+
+  const result = await engine.resumeCurrentStage({ reason: "manual_retry" });
+  assert.equal(result.ok, true);
+  assert.equal(result.runId, "planning-plan_v1-existing");
+  assert.equal(projectStore.state.lastError, undefined);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0].prompt, /replacement:PLAN_V1:planning-plan_v1-existing/);
+});
+
+test("retryPlanning API is gated to a persisted lead delivery failure", async () => {
+  const calls = [];
+  const planningEngine = {
+    getPublicState: () => ({
+      projectId: "P1",
+      status: "PLANNING",
+      stage: "PLAN_V1",
+      currentRunId: "R1",
+      lastError: { reason: "lead_prompt_failed", details: { reason: "agent_preload_timeout" } }
+    }),
+    async resumeCurrentStage(payload) {
+      calls.push(payload);
+      return { ok: true, resumed: true, runId: "R1" };
+    }
+  };
+  const api = new OrchestratorApi({ orchestrator: {}, planningEngine });
+  const result = await api.execute("retryPlanning");
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{ reason: "manual_retry" }]);
 });
