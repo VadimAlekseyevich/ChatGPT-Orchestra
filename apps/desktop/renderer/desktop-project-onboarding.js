@@ -60,11 +60,18 @@
       this.lastError = null;
       this.timer = null;
       this.refreshing = false;
+      this.formEditing = false;
+      this.composing = false;
+      this.renderDeferred = false;
       this.preparedRepository = null;
       this.form = defaultForm();
       this.onClick = (event) => this.handleClick(event);
       this.onInput = (event) => this.handleInput(event);
       this.onChange = (event) => this.handleChange(event);
+      this.onFocusIn = (event) => this.handleFocusIn(event);
+      this.onFocusOut = (event) => this.handleFocusOut(event);
+      this.onCompositionStart = (event) => this.handleCompositionStart(event);
+      this.onCompositionEnd = (event) => this.handleCompositionEnd(event);
     }
 
     tr(key, fallback, params = {}) {
@@ -84,6 +91,10 @@
       this.rootElement.addEventListener?.("click", this.onClick);
       this.rootElement.addEventListener?.("input", this.onInput);
       this.rootElement.addEventListener?.("change", this.onChange);
+      this.rootElement.addEventListener?.("focusin", this.onFocusIn);
+      this.rootElement.addEventListener?.("focusout", this.onFocusOut);
+      this.rootElement.addEventListener?.("compositionstart", this.onCompositionStart);
+      this.rootElement.addEventListener?.("compositionend", this.onCompositionEnd);
       this.refresh();
       this.timer = setInterval(() => this.refresh(), this.pollMs);
       return this;
@@ -95,6 +106,24 @@
       this.rootElement.removeEventListener?.("click", this.onClick);
       this.rootElement.removeEventListener?.("input", this.onInput);
       this.rootElement.removeEventListener?.("change", this.onChange);
+      this.rootElement.removeEventListener?.("focusin", this.onFocusIn);
+      this.rootElement.removeEventListener?.("focusout", this.onFocusOut);
+      this.rootElement.removeEventListener?.("compositionstart", this.onCompositionStart);
+      this.rootElement.removeEventListener?.("compositionend", this.onCompositionEnd);
+    }
+
+    isEditableField(target) {
+      return Boolean(target?.dataset?.projectField);
+    }
+
+    requestRender() {
+      if (this.formEditing || this.composing) {
+        this.renderDeferred = true;
+        return false;
+      }
+      this.renderDeferred = false;
+      this.render();
+      return true;
     }
 
     async refresh() {
@@ -109,7 +138,7 @@
         this.lastError = String(error?.message || error || "project_onboarding_refresh_failed");
       } finally {
         this.refreshing = false;
-        this.render();
+        this.requestRender();
       }
     }
 
@@ -128,11 +157,17 @@
       }
       if (this.project && !this.newProjectRequested) {
         const planning = this.project.status === "PLANNING";
+        const retryableDelivery = this.project?.lastError?.reason === "lead_prompt_failed";
+        const deliveryReason = String(this.project?.lastError?.details?.reason || this.project?.lastError?.reason || "");
         this.rootElement.innerHTML = planning
           ? `<section class="dashboard-section desktop-project-onboarding">
               <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.planningTitle", "Planning in progress"))}</h3><span>${escapeHtml(this.project.stage || "PLANNING")}</span></div>
-              <p><strong>${escapeHtml(this.tr("project.planning", "The Lead is planning the project."))}</strong></p>
-              <p class="dashboard-muted">${escapeHtml(this.tr("project.planningHint", "Orchestra is inspecting the repository, refining the goal and building a dependency graph. You can follow progress here; execution stays closed until the plan is ready."))}</p>
+              <p><strong>${escapeHtml(retryableDelivery ? this.tr("project.planningPaused", "Planning prompt delivery paused.") : this.tr("project.planning", "The Lead is planning the project."))}</strong></p>
+              <p class="dashboard-muted">${escapeHtml(retryableDelivery
+                ? this.tr("project.planningRetryHint", "The current planning stage was not delivered to the Lead. Retry the same stage and run; completed discovery data will not be discarded.")
+                : this.tr("project.planningHint", "Orchestra is inspecting the repository, refining the goal and building a dependency graph. You can follow progress here; execution stays closed until the plan is ready."))}</p>
+              ${retryableDelivery ? `<div class="dashboard-error">${escapeHtml(deliveryReason)}</div>
+                <div class="dashboard-task-controls"><button data-project-action="retry-planning" ${this.busy ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("project.retrying", "Retrying…") : this.tr("project.retryPlanning", "Retry current planning stage"))}</button></div>` : ""}
               ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
             </section>`
           : "";
@@ -176,7 +211,7 @@
           <label><strong>${escapeHtml(this.tr("project.goal", "What should Orchestra accomplish?"))}</strong><br>
             <textarea rows="5" data-project-field="goal" placeholder="${escapeHtml(this.tr("project.goalPlaceholder", "Describe the finished result, constraints and important acceptance criteria…"))}" ${this.busy ? "disabled" : ""}>${escapeHtml(this.form.goal)}</textarea>
           </label>
-          <label><input type="checkbox" data-project-trust ${this.form.trust ? "checked" : ""} ${this.busy ? "disabled" : ""}> ${escapeHtml(this.tr("project.trust", "I trust this repository and allow its structured local verification commands inside isolated Orchestra worktrees."))}</label>
+          <label class="desktop-project-trust"><input type="checkbox" data-project-trust ${this.form.trust ? "checked" : ""} ${this.busy ? "disabled" : ""}><span>${escapeHtml(this.tr("project.trust", "I trust this repository and allow its structured local verification commands inside isolated Orchestra worktrees."))}</span></label>
         </div>
         <div class="dashboard-task-controls">
           <button data-project-action="start" ${this.busy ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("project.starting", "Starting…") : this.tr("project.start", "Start planning"))}</button>
@@ -301,6 +336,23 @@
       }
     }
 
+    async retryPlanning() {
+      this.busy = true;
+      this.lastError = null;
+      this.render();
+      try {
+        const response = await this.transport.execute("retryPlanning", {});
+        if (!response?.ok) return this.setError(response?.reason || "planning_retry_failed");
+        await this.refresh();
+        return response;
+      } catch (error) {
+        return this.setError(error?.message || error || "planning_retry_failed");
+      } finally {
+        this.busy = false;
+        this.render();
+      }
+    }
+
     async startExecution() {
       this.busy = true;
       this.lastError = null;
@@ -316,6 +368,28 @@
         this.busy = false;
         this.render();
       }
+    }
+
+    handleFocusIn(event) {
+      if (!this.isEditableField(event.target)) return;
+      this.formEditing = true;
+    }
+
+    handleFocusOut(event) {
+      if (!this.isEditableField(event.target)) return;
+      this.formEditing = false;
+      if (this.renderDeferred && !this.composing) this.requestRender();
+    }
+
+    handleCompositionStart(event) {
+      if (!this.isEditableField(event.target)) return;
+      this.composing = true;
+      this.formEditing = true;
+    }
+
+    handleCompositionEnd(event) {
+      if (!this.isEditableField(event.target)) return;
+      this.composing = false;
     }
 
     handleInput(event) {
@@ -349,6 +423,7 @@
       const action = button.dataset.projectAction;
       if (action === "browse") return this.browse();
       if (action === "start") return this.startProject();
+      if (action === "retry-planning") return this.retryPlanning();
       if (action === "execute") return this.startExecution();
       if (action === "new-project") return this.resetForNewProject();
     }
