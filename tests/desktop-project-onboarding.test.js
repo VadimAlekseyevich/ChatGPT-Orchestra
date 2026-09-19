@@ -14,11 +14,17 @@ const {
 } = require("../apps/desktop/renderer/desktop-project-onboarding.js");
 
 function fakeRoot() {
-  return {
-    innerHTML: "",
+  let html = "";
+  const root = {
+    renderCount: 0,
     addEventListener() {},
     removeEventListener() {}
   };
+  Object.defineProperty(root, "innerHTML", {
+    get() { return html; },
+    set(value) { html = String(value || ""); root.renderCount += 1; }
+  });
+  return root;
 }
 
 function readyLead() {
@@ -250,4 +256,76 @@ test("desktop shell wires the project onboarding script and a narrow native dire
   assert.match(main, /showOpenDialog/);
   assert.match(main, /properties: \["openDirectory"\]/);
   assert.doesNotMatch(preload, /require\("node:fs"\)/);
+});
+
+
+test("project polling does not replace the form while the user is typing", async () => {
+  const root = fakeRoot();
+  const transport = {
+    async query() { return { ok: true, dashboard: { project: null, agents: readyLead() } }; },
+    async execute() { return { ok: true }; }
+  };
+  const app = new DesktopProjectOnboarding({ rootElement: root, transport });
+  await app.refresh();
+  const initialRenders = root.renderCount;
+  const target = { dataset: { projectField: "goal" }, value: "я хочу получить хоррор игру" };
+  app.handleFocusIn({ target });
+  app.handleInput({ target });
+  await app.refresh();
+
+  assert.equal(app.form.goal, target.value);
+  assert.equal(root.renderCount, initialRenders);
+  assert.equal(app.renderDeferred, true);
+
+  app.handleFocusOut({ target });
+  assert.equal(root.renderCount, initialRenders + 1);
+  assert.match(root.innerHTML, /я хочу получить хоррор игру/);
+});
+
+test("project trust consent uses dedicated aligned checkbox markup", async () => {
+  const root = fakeRoot();
+  const app = new DesktopProjectOnboarding({
+    rootElement: root,
+    transport: {
+      async query() { return { ok: true, dashboard: { project: null, agents: readyLead() } }; },
+      async execute() { return { ok: true }; }
+    }
+  });
+  await app.refresh();
+  assert.match(root.innerHTML, /class="desktop-project-trust"/);
+  assert.match(root.innerHTML, /data-project-trust/);
+  assert.match(root.innerHTML, /<span>.*trust this repository/s);
+});
+
+test("retryable planning delivery failure is visible and retries the same planning role", async () => {
+  let project = {
+    projectId: "P-retry",
+    status: "PLANNING",
+    stage: "PLAN_V1",
+    lastError: { reason: "lead_prompt_failed", details: { reason: "agent_preload_timeout" } }
+  };
+  const calls = [];
+  const app = new DesktopProjectOnboarding({
+    rootElement: fakeRoot(),
+    transport: {
+      async query() { return { ok: true, dashboard: { project, agents: readyLead() } }; },
+      async execute(name) {
+        calls.push(name);
+        if (name === "retryPlanning") {
+          project = { ...project, lastError: null };
+          return { ok: true, resumed: true, runId: "planning-plan_v1-existing" };
+        }
+        return { ok: false, reason: "unexpected_command" };
+      }
+    }
+  });
+
+  await app.refresh();
+  assert.match(app.rootElement.innerHTML, /agent_preload_timeout/);
+  assert.match(app.rootElement.innerHTML, /Retry current planning stage/);
+
+  const result = await app.retryPlanning();
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["retryPlanning"]);
+  assert.doesNotMatch(app.rootElement.innerHTML, /agent_preload_timeout/);
 });
