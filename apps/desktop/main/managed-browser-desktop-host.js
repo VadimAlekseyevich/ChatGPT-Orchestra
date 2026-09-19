@@ -106,6 +106,7 @@ class ManagedBrowserDesktopHost extends DesktopHost {
         url: String(page?.url || session?.url || ""),
         availability,
         generating: Boolean(page?.generating),
+        unsupportedAuthProvider: page?.unsupportedAuthProvider || null,
         loginRequired: !loginReady,
         leadRegistered: Boolean(lead?.agentId),
         leadAgentId: lead?.agentId || null,
