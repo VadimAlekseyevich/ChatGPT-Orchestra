@@ -49,6 +49,7 @@
       this.timer = null;
       this.refreshing = false;
       this.fallbackError = null;
+      this.validationOpen = false;
       this.onClick = (event) => this.handleClick(event);
     }
 
@@ -108,7 +109,7 @@
       const state = validation.complete
         ? this.tr("managed.complete", "COMPLETE")
         : this.tr("managed.inProgress", "IN PROGRESS");
-      return `<details class="dashboard-evidence managed-browser-validation">
+      return `<details class="dashboard-evidence managed-browser-validation" ${this.validationOpen ? "open" : ""}>
         <summary><strong>${escapeHtml(this.tr("managed.diagnostics", "Diagnostics / alpha validation"))}</strong> · ${escapeHtml(state)}</summary>
         <div class="managed-browser-validation-body">
           <div class="dashboard-section-head"><strong>${escapeHtml(this.tr("managed.validation", "Live validation evidence"))}</strong><span>${escapeHtml(state)}</span></div>
@@ -134,6 +135,8 @@
     }
 
     render() {
+      const existingValidation = this.rootElement.querySelector?.(".managed-browser-validation");
+      if (existingValidation) this.validationOpen = Boolean(existingValidation.open);
       const status = this.status;
       if (!status) {
         this.rootElement.innerHTML = "";
