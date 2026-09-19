@@ -53,7 +53,7 @@
 
     tr(key, fallback, params = {}) {
       const value = this.t(key, fallback, params);
-      return String(value ?? "").replace(/\\{([A-Za-z0-9_]+)\\}/g, (_match, name) =>
+      return String(value ?? "").replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name) =>
         Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : ""
       );
     }
