@@ -79,6 +79,7 @@ if (registrationRequest) {
   const { createNativeCompanionDesktopHost } = require("./companion-desktop-host.js");
   const { createManagedBrowserDesktopHost } = require("./managed-browser-desktop-host.js");
   const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
+  const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
 
   let host = null;
   let unregisterIpc = null;
@@ -126,6 +127,7 @@ if (registrationRequest) {
         : "ChatGPT Orchestra";
 
     mainWindow = new BrowserWindow({
+      show: false,
       width: 1280,
       height: 860,
       minWidth: 900,
@@ -147,6 +149,7 @@ if (registrationRequest) {
       if (!url.startsWith("file://")) event.preventDefault();
     });
     await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    revealDesktopMainWindow(mainWindow, { preserveExistingFocus: runtimeMode === RUNTIME_MODES.MANAGED_BROWSER });
     mainWindow.on("closed", () => { mainWindow = null; });
   }
 
