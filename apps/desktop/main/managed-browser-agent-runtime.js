@@ -333,13 +333,36 @@ class ManagedBrowserAgentRuntime {
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
+
+    const markUnready = (reason) => {
+      const mutable = this.agents.get(agent.agentId);
+      if (!mutable) return null;
+      const now = this.clock();
+      mutable.status = "ERROR";
+      mutable.lastError = String(reason || "agent_unreachable");
+      mutable.lastSeenAt = now;
+      mutable.updatedAt = now;
+      mutable.chatState = {
+        generating: false,
+        availability: "unavailable",
+        composerOccupied: null,
+        pathname: ""
+      };
+      this.updatedAt = now;
+      return this.getAgent(agent.agentId);
+    };
+
     try {
       const result = await this.driver.pingSession(sessionId);
-      if (!result?.ok) return { ...result, agentId: agent.agentId };
+      if (!result?.ok) {
+        const updated = markUnready(result?.reason || "agent_unreachable");
+        return { ...(result || {}), ok: false, agent: updated, agentId: agent.agentId };
+      }
       const updated = await this.updateHeartbeat(sessionId, result, result.url || agent.chatUrl || "");
       return { ...result, ok: true, agent: updated || this.getAgent(agent.agentId), agentId: agent.agentId };
     } catch (error) {
-      return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
+      const updated = markUnready("agent_unreachable");
+      return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agent: updated, agentId: agent.agentId };
     }
   }
 
