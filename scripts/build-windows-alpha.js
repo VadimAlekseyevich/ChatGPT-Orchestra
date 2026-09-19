@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { main: stageAlphaExtension } = require("./stage-alpha-extension.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const PACKAGE_PATH = path.join(ROOT, "package.json");
@@ -72,6 +73,7 @@ function main() {
   const identity = buildIdentity({ commit: resolveBuildCommit(), version: pkg.version });
   writeBuildMetadata(identity);
   console.log(`Windows alpha build identity: version=${identity.version} commit=${identity.commit}`);
+  stageAlphaExtension();
 
   try {
     const result = spawnSync(process.execPath, [electronBuilderCli(), "--win", "nsis", "--publish", "never"], {
