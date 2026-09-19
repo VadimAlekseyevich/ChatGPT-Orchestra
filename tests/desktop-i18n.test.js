@@ -52,3 +52,20 @@ test("desktop translator interpolates localized values and never exposes unknown
   assert.equal(i18n.t("missing.key", {}, "Fallback"), "Fallback");
   assert.equal(i18n.t("missing.key"), "");
 });
+
+
+test("Russian locale renders the managed-browser first-run action in Russian", () => {
+  const storage = memoryStorage({ [STORAGE_KEY]: "ru" });
+  const i18n = new DesktopI18n({ storage, systemLocale: "en-US" });
+  const root = { innerHTML: "", addEventListener() {}, removeEventListener() {} };
+  const transport = { async query() { return { ok: true }; }, async execute() { return { ok: true }; } };
+  const onboarding = new ManagedBrowserOnboarding({
+    rootElement: root,
+    transport,
+    t: (key, fallback, params) => i18n.t(key, params, fallback)
+  });
+  onboarding.status = { availability: "unavailable", loginRequired: true, leadRegistered: false };
+  onboarding.render();
+  assert.match(root.innerHTML, /Шаг 1 из 4/);
+  assert.match(root.innerHTML, /Открыть \/ войти в ChatGPT/);
+});
