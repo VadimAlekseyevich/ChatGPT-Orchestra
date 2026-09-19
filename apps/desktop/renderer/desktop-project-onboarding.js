@@ -66,7 +66,12 @@
       this.onChange = (event) => this.handleChange(event);
     }
 
-    tr(key, fallback, params = {}) { return this.t(key, fallback, params); }
+    tr(key, fallback, params = {}) {
+      const value = this.t(key, fallback, params);
+      return String(value ?? "").replace(/\\{([A-Za-z0-9_]+)\\}/g, (_match, name) =>
+        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : ""
+      );
+    }
 
     start() {
       this.rootElement.addEventListener?.("click", this.onClick);
