@@ -36,18 +36,28 @@
   });
 
   class ManagedBrowserOnboarding {
-    constructor({ rootElement, transport, pollMs = 2500, download = downloadJson } = {}) {
+    constructor({ rootElement, transport, pollMs = 2500, download = downloadJson, t = null } = {}) {
       if (!rootElement) throw new TypeError("managed_browser_onboarding_root_required");
       if (!transport?.query || !transport?.execute) throw new TypeError("managed_browser_onboarding_transport_invalid");
       this.rootElement = rootElement;
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 2500);
       this.download = download;
+      this.t = typeof t === "function" ? t : (_key, fallback) => fallback;
       this.status = null;
       this.validation = null;
       this.timer = null;
       this.refreshing = false;
+      this.fallbackError = null;
+      this.validationOpen = false;
       this.onClick = (event) => this.handleClick(event);
+    }
+
+    tr(key, fallback, params = {}) {
+      const value = this.t(key, fallback, params);
+      return String(value ?? "").replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name) =>
+        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : ""
+      );
     }
 
     start() {
@@ -93,41 +103,71 @@
       const validation = this.validation;
       if (!validation) return "";
       const checks = validation.checks || {};
-      const rows = Object.entries(VALIDATION_LABELS).map(([key, label]) => (
-        `<li><strong>${checks[key] ? "✓" : "○"}</strong> ${escapeHtml(label)}</li>`
+      const rows = Object.entries(VALIDATION_LABELS).map(([key, fallback]) => (
+        `<li><strong>${checks[key] ? "✓" : "○"}</strong> ${escapeHtml(this.tr(`managed.check.${key}`, fallback))}</li>`
       )).join("");
-      return `<div class="dashboard-evidence managed-browser-validation">
-        <div class="dashboard-section-head"><strong>Live validation evidence</strong><span>${validation.complete ? "COMPLETE" : "IN PROGRESS"}</span></div>
-        <ul>${rows}</ul>
-        <p class="dashboard-muted">This evidence contains only aggregate state and counters; browser URLs, session/page identifiers, prompts, responses and credentials are excluded.</p>
-        <button class="secondary" data-managed-browser-action="export-validation">Export validation evidence</button>
+      const state = validation.complete
+        ? this.tr("managed.complete", "COMPLETE")
+        : this.tr("managed.inProgress", "IN PROGRESS");
+      return `<details class="dashboard-evidence managed-browser-validation" ${this.validationOpen ? "open" : ""}>
+        <summary><strong>${escapeHtml(this.tr("managed.diagnostics", "Diagnostics / alpha validation"))}</strong> · ${escapeHtml(state)}</summary>
+        <div class="managed-browser-validation-body">
+          <div class="dashboard-section-head"><strong>${escapeHtml(this.tr("managed.validation", "Live validation evidence"))}</strong><span>${escapeHtml(state)}</span></div>
+          <ul>${rows}</ul>
+          <p class="dashboard-muted">${escapeHtml(this.tr("managed.validationPrivacy", "This evidence contains only aggregate state and counters; browser URLs, session/page identifiers, prompts, responses and credentials are excluded."))}</p>
+          <button class="secondary" data-managed-browser-action="export-validation">${escapeHtml(this.tr("managed.exportValidation", "Export validation evidence"))}</button>
+        </div>
+      </details>`;
+    }
+
+    renderUnsupportedAuth(status) {
+      if (status?.unsupportedAuthProvider !== "google") return "";
+      return `<div class="dashboard-error managed-auth-fallback">
+        <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in must continue in Chrome or Edge"))}</strong>
+        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Orchestra opened the provider in your normal browser and can switch to its extension/companion fallback without copying credentials or cookies."))}</p>
+        ${this.fallbackError ? `<p>${escapeHtml(this.fallbackError === "companion_fallback_requires_packaged_runtime" ? this.tr("managed.packagedFallbackRequired", "This fallback must be prepared from the packaged Windows candidate. Build it, launch the packaged executable, then try again.") : this.fallbackError)}</p>` : ""}
+        <div class="dashboard-task-controls">
+          <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Prepare and use Chrome / Edge fallback"))}</button>
+          <button class="secondary" data-managed-browser-action="open-external">${escapeHtml(this.tr("managed.openExternal", "Open ChatGPT in normal browser"))}</button>
+          <button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
+        </div>
       </div>`;
     }
 
     render() {
+      const existingValidation = this.rootElement.querySelector?.(".managed-browser-validation");
+      if (existingValidation) this.validationOpen = Boolean(existingValidation.open);
       const status = this.status;
       if (!status) {
         this.rootElement.innerHTML = "";
         return;
       }
       const availability = String(status.availability || "unavailable");
-      const lead = status.leadRegistered
-        ? `<strong>Lead connected</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
-        : status.loginRequired
-          ? `<strong>Login required</strong> · ${escapeHtml(availability)}`
-          : `<strong>ChatGPT ready</strong> · Lead not registered`;
-      const action = status.loginRequired
-        ? `<button data-managed-browser-action="open">Open / Login to ChatGPT</button>`
+      const title = status.loginRequired
+        ? this.tr("managed.step1", "Step 1 of 4 — Connect ChatGPT")
         : status.leadRegistered
-          ? `<button class="secondary" data-managed-browser-action="open">Open ChatGPT</button>`
-          : `<button data-managed-browser-action="register">Register this ChatGPT page as Lead</button>`;
+          ? this.tr("managed.connected", "ChatGPT connected")
+          : this.tr("managed.step2", "Step 2 of 4 — Create the Lead");
+      const lead = status.loginRequired
+        ? status.leadRegistered
+          ? `<strong>${escapeHtml(this.tr("managed.leadNotReady", "Lead registered, but ChatGPT is not ready"))}</strong> · ${escapeHtml(availability)}`
+          : `<strong>${escapeHtml(this.tr("managed.loginRequired", "Login required"))}</strong> · ${escapeHtml(availability)}`
+        : status.leadRegistered
+          ? `<strong>${escapeHtml(this.tr("managed.leadConnected", "Lead connected"))}</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
+          : `<strong>${escapeHtml(this.tr("managed.readyNoLead", "ChatGPT is ready. Register this page as the Lead."))}</strong>`;
+      const action = status.loginRequired
+        ? `<button data-managed-browser-action="open">${escapeHtml(this.tr("managed.openLogin", "Open / Login to ChatGPT"))}</button>`
+        : status.leadRegistered
+          ? `<button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.open", "Open ChatGPT"))}</button>`
+          : `<button data-managed-browser-action="register">${escapeHtml(this.tr("managed.register", "Register this ChatGPT page as Lead"))}</button>`;
       this.rootElement.innerHTML = `<section class="dashboard-section managed-browser-onboarding">
-        <div class="dashboard-section-head"><h3>Direct Desktop ChatGPT</h3><span>${escapeHtml(availability)}</span></div>
+        <div class="dashboard-section-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(availability)}</span></div>
         <p>${lead}</p>
-        <p class="dashboard-muted">Sign in only inside Orchestra's isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state.</p>
+        <p class="dashboard-muted">${escapeHtml(this.tr("managed.loginHint", "Sign in only inside Orchestra\'s isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state."))}</p>
+        ${this.renderUnsupportedAuth(status)}
         <div class="dashboard-task-controls">
           ${action}
-          <button class="secondary" data-managed-browser-action="refresh">Refresh status</button>
+          <button class="secondary" data-managed-browser-action="refresh">${escapeHtml(this.tr("managed.refresh", "Refresh status"))}</button>
         </div>
         ${this.renderValidation()}
       </section>`;
@@ -136,6 +176,17 @@
     async handleAction(action) {
       const normalized = String(action || "");
       if (normalized === "refresh") return this.refresh();
+      if (normalized === "open-external") return this.transport.openChatGPTExternal?.();
+      if (normalized === "use-companion") {
+        this.fallbackError = null;
+        const prepared = await this.transport.prepareCompanionFallback?.();
+        if (!prepared?.ok) {
+          this.fallbackError = prepared?.reason || "companion_fallback_prepare_failed";
+          this.render();
+          return prepared;
+        }
+        return this.transport.switchRuntime?.("companion");
+      }
       if (normalized === "open") {
         await this.transport.execute("openManagedBrowser", {});
         return this.refresh();

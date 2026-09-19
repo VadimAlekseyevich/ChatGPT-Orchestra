@@ -71,7 +71,7 @@ class ElectronPreloadChatGPTPageAdapter {
     const requestId = `agent-page-${this.nextRequest++}`;
     const requestedTimeout = Number(options.timeoutMs);
     const timeoutMs = Number.isFinite(requestedTimeout)
-      ? Math.max(250, Math.min(this.requestTimeoutMs, requestedTimeout))
+      ? Math.max(250, Math.min(30000, requestedTimeout))
       : this.requestTimeoutMs;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -195,12 +195,15 @@ class ElectronPreloadChatGPTPageAdapter {
     const navigation = this.navigationSignal(webContents, initialUrl);
     let result;
     try {
+      const confirmationMs = 900;
+      const commandTimeoutMs = Math.max(250, Math.min(15000, this.requestTimeoutMs - confirmationMs - 500));
+      const outerTimeoutMs = Math.min(30000, Math.max(this.requestTimeoutMs, commandTimeoutMs + confirmationMs + 1000));
       result = await Promise.race([
         this.request(webContents, "send-prompt", {
           prompt: String(prompt || ""),
-          timeoutMs: Math.min(this.requestTimeoutMs - 250, 15000),
-          confirmationMs: 900
-        }),
+          timeoutMs: commandTimeoutMs,
+          confirmationMs
+        }, { timeoutMs: outerTimeoutMs }),
         navigation.promise
       ]);
     } finally {

@@ -15,6 +15,7 @@ const { createDesktopRuntimeEvidence } = require("./runtime-evidence.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
+const { DesktopProjectWorkspaceService } = require("./project-workspace-service.js");
 
 const WATCHDOG_NAME = "orchestra-desktop-watchdog";
 
@@ -159,6 +160,14 @@ class DesktopHost {
       logger: this.logger
     });
     root.RecoveryRuntime.controller = this.recoveryController;
+    this.projectWorkspaceService = new DesktopProjectWorkspaceService({
+      stateStore: this.stateStore,
+      portableStateManager: this.portableStateManager,
+      projectStore: this.projectStore,
+      recoveryController: this.recoveryController,
+      portableStateKeys: root.PortableState.ALL_STORE_KEYS,
+      clock: this.clock
+    });
     this.recoveryController.setActions({
       stopAgent: (agentId) => this.agentRuntime.stopAgent(agentId),
       createWorkers: (count) => this.orchestrator.createWorkers(count),
@@ -267,12 +276,15 @@ class DesktopHost {
 
   async query(name, payload = {}) {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
+    if (String(name || "") === "projectCatalog") return jsonClone(await this.projectWorkspaceService.listProjects());
     return jsonClone(await this.orchestratorApi.query(name, payload));
   }
 
   async execute(name, payload = {}) {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
     const command = String(name || "");
+    if (command === "prepareNewProject") return jsonClone(await this.projectWorkspaceService.prepareNewProject());
+    if (command === "switchProject") return jsonClone(await this.projectWorkspaceService.switchProject(payload.projectId));
     const result = await this.orchestratorApi.execute(command, payload);
     if (result?.ok && command === "startProject") {
       const projectId = this.projectStore.getActiveProject()?.projectId;

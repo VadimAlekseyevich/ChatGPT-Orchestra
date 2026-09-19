@@ -18,6 +18,19 @@ function desktopShellRequested(argv = process.argv, env = process.env) {
   return (argv || []).includes("--desktop-shell") || env?.ORCHESTRA_DESKTOP_SHELL === "1";
 }
 
+function runtimeModeFlag(mode) {
+  const normalized = String(mode || "");
+  if (normalized === RUNTIME_MODES.COMPANION) return "--companion";
+  if (normalized === RUNTIME_MODES.MANAGED_BROWSER) return "--managed-browser";
+  if (normalized === RUNTIME_MODES.DESKTOP) return "--desktop-shell";
+  throw new Error("desktop_runtime_mode_invalid");
+}
+
+function runtimeRelaunchArgs(argv = process.argv.slice(1), mode) {
+  const stripped = (argv || []).filter((item) => !["--companion", "--managed-browser", "--desktop-shell"].includes(String(item || "")));
+  return [...stripped, runtimeModeFlag(mode)];
+}
+
 function resolveDesktopRuntimeMode(argv = process.argv, env = process.env) {
   const companion = companionRequested(argv, env);
   const managedBrowser = managedBrowserRequested(argv, env);
@@ -34,5 +47,7 @@ module.exports = {
   companionRequested,
   managedBrowserRequested,
   desktopShellRequested,
+  runtimeModeFlag,
+  runtimeRelaunchArgs,
   resolveDesktopRuntimeMode
 };

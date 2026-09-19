@@ -5,6 +5,8 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const packageJson = require("../package.json");
+const manifest = require("../manifest.json");
+const { FALLBACK_EXTENSION_ID, extensionIdFromManifestKey } = require("../apps/desktop/main/companion-fallback.js");
 
 const REQUIRED_CONTENT_FILES = [
   "content/message-types.js",
@@ -48,4 +50,14 @@ test("every packaged direct-browser JavaScript entry parses before packaging", (
       `syntax check failed for packaged runtime file: ${file}`
     );
   }
+});
+
+
+test("Windows desktop candidate embeds the staged extension fallback outside app.asar with a stable id", () => {
+  assert.equal(extensionIdFromManifestKey(manifest.key), FALLBACK_EXTENSION_ID);
+  assert.ok((packageJson.build?.extraResources || []).some((entry) =>
+    entry?.from === "dist/alpha-extension" && entry?.to === "alpha-extension"
+  ));
+  const buildScript = fs.readFileSync(path.resolve(__dirname, "..", "scripts", "build-windows-alpha.js"), "utf8");
+  assert.match(buildScript, /stageAlphaExtension\(\)/);
 });

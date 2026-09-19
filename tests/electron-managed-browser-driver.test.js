@@ -7,6 +7,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   ElectronManagedBrowserDriver,
+  unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 } = require("../apps/desktop/main/electron-managed-browser-driver.js");
 
@@ -39,6 +40,7 @@ class FakeBrowserWindow extends EventEmitter {
     this.webContents.emit("did-navigate", {}, this.webContents.url);
   }
   show() { this.visible = true; }
+  hide() { this.visible = false; this.focused = false; }
   restore() { this.visible = true; }
   focus() {
     for (const item of FakeBrowserWindow.instances) item.focused = false;
@@ -56,12 +58,18 @@ function harness() {
   FakeBrowserWindow.instances.length = 0;
   const fromPathCalls = [];
   const browserSession = { kind: "fake-session" };
+  const externalUrls = [];
   const electronApi = {
     BrowserWindow: FakeBrowserWindow,
     session: {
       fromPath(profileDirectory, options) {
         fromPathCalls.push({ profileDirectory, options });
         return browserSession;
+      }
+    },
+    shell: {
+      async openExternal(url) {
+        externalUrls.push(String(url));
       }
     }
   };
@@ -83,7 +91,7 @@ function harness() {
   const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, profileDirectory };
+  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory };
 }
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
@@ -113,6 +121,8 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.equal(assertManagedNavigationUrl("https://setup.auth.openai.com/login"), "https://setup.auth.openai.com/login");
   assert.equal(assertManagedNavigationUrl("https://auth0.openai.com/authorize"), "https://auth0.openai.com/authorize");
   assert.equal(assertManagedNavigationUrl("https://accounts.google.com/o/oauth2/v2/auth"), "https://accounts.google.com/o/oauth2/v2/auth");
+  assert.equal(unsupportedEmbeddedAuthProvider("https://accounts.google.com/o/oauth2/v2/auth"), "google");
+  assert.equal(unsupportedEmbeddedAuthProvider("https://chatgpt.com/"), null);
   assert.equal(assertManagedNavigationUrl("https://appleid.apple.com/auth/authorize"), "https://appleid.apple.com/auth/authorize");
   assert.equal(assertManagedNavigationUrl("https://login.microsoftonline.com/common/oauth2/v2.0/authorize"), "https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
   assert.equal(assertManagedNavigationUrl("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/"), "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/");
@@ -120,6 +130,34 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.throws(() => assertManagedNavigationUrl("https://evilopenai.com/"), /managed_browser_navigation_forbidden/);
   assert.throws(() => assertManagedNavigationUrl("https://example.com/"), /managed_browser_navigation_forbidden/);
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
+});
+
+test("Google auth is opened in the normal browser instead of the embedded Electron window", async () => {
+  const { driver, externalUrls, profileDirectory } = harness();
+  const events = [];
+  await driver.start({ profileDirectory });
+  driver.subscribe((event) => events.push(event));
+  const session = await driver.createSession({ url: "https://chatgpt.com/auth/login", active: true });
+  const win = FakeBrowserWindow.instances[0];
+
+  assert.deepEqual(
+    win.webContents.windowOpenHandler({ url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test" }),
+    { action: "deny" }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login");
+  assert.equal(win.isVisible(), false);
+  assert.deepEqual(externalUrls, ["https://chatgpt.com/"]);
+  assert.ok(events.some((event) => event.type === "unsupported-auth-provider" && event.provider === "google"));
+
+  const ping = await driver.pingSession(session.id);
+  assert.equal(ping.unsupportedAuthProvider, "google");
+
+  await driver.activateSession(session.id);
+  const afterReopen = await driver.pingSession(session.id);
+  assert.equal(afterReopen.unsupportedAuthProvider, null);
+  await driver.close();
 });
 
 test("allowlisted auth popups are redirected into the same managed window and arbitrary popups stay denied", async () => {

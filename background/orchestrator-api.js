@@ -59,6 +59,15 @@
         } else result = await this.planningEngine?.startProject?.({ goal: payload.goal, repositoryUrl: payload.repositoryUrl });
       }
       else if (command === "startExecution") result = await this.orchestrator?.startExecution?.(payload);
+      else if (command === "retryPlanning") {
+        const project = this.planningEngine?.getPublicState?.() || null;
+        const retryable = Boolean(project?.currentRunId
+          && ["PLANNING", "NEEDS_USER"].includes(String(project?.status || ""))
+          && project?.lastError?.reason === "lead_prompt_failed");
+        result = retryable
+          ? await this.planningEngine?.resumeCurrentStage?.({ reason: "manual_retry" })
+          : { ok: false, reason: "planning_retry_not_available" };
+      }
       else if (command === "registerActiveLead") {
         const beforeLead = this.orchestrator?.getPublicState?.()?.lead || null; const projectBefore = this.planningEngine?.getPublicState?.() || null;
         const planningRunPresent = Boolean(projectBefore?.currentRunId && ["PLANNING", "NEEDS_USER"].includes(String(projectBefore?.status || "")));

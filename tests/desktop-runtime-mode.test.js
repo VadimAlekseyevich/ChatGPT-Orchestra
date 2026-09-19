@@ -6,6 +6,7 @@ const {
   companionRequested,
   managedBrowserRequested,
   desktopShellRequested,
+  runtimeRelaunchArgs,
   resolveDesktopRuntimeMode
 } = require("../apps/desktop/main/desktop-runtime-mode.js");
 
@@ -36,4 +37,17 @@ test("desktop rejects every ambiguous multi-runtime selection", () => {
   assert.throws(() => resolveDesktopRuntimeMode(["--desktop-shell", "--managed-browser"], {}), /desktop_runtime_mode_conflict/);
   assert.throws(() => resolveDesktopRuntimeMode(["--desktop-shell", "--companion"], {}), /desktop_runtime_mode_conflict/);
   assert.throws(() => resolveDesktopRuntimeMode([], { ORCHESTRA_COMPANION: "1", ORCHESTRA_MANAGED_BROWSER: "1" }), /desktop_runtime_mode_conflict/);
+});
+
+
+test("runtime relaunch args remove conflicting mode flags and select exactly one target", () => {
+  assert.deepEqual(
+    runtimeRelaunchArgs([".", "--managed-browser", "--foo=1"], RUNTIME_MODES.COMPANION),
+    [".", "--foo=1", "--companion"]
+  );
+  assert.deepEqual(
+    runtimeRelaunchArgs(["app.asar", "--companion"], RUNTIME_MODES.MANAGED_BROWSER),
+    ["app.asar", "--managed-browser"]
+  );
+  assert.throws(() => runtimeRelaunchArgs([], "unknown"), /desktop_runtime_mode_invalid/);
 });

@@ -67,11 +67,110 @@ test("onboarding offers Lead registration only after ChatGPT composer becomes re
   };
   const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
   await onboarding.refresh();
-  assert.match(root.innerHTML, /ChatGPT ready/);
+  assert.match(root.innerHTML, /ChatGPT is ready/);
   assert.match(root.innerHTML, /Register this ChatGPT page as Lead/);
+  assert.match(root.innerHTML, /Step 2 of 4/);
 
   const result = await onboarding.handleAction("register");
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ["registerManagedBrowserLead"]);
   assert.match(root.innerHTML, /Lead connected/);
+});
+
+
+test("managed-browser onboarding routes blocked Google auth into the packaged companion fallback", async () => {
+  const calls = [];
+  const root = rootElement();
+  const transport = {
+    async query(name) {
+      if (name === "managedBrowserStatus") return {
+        ok: true,
+        managedBrowser: {
+          availability: "unavailable",
+          loginRequired: true,
+          leadRegistered: false,
+          unsupportedAuthProvider: "google"
+        }
+      };
+      if (name === "managedBrowserValidation") return { ok: true, validation: null };
+      return { ok: false, reason: "unknown" };
+    },
+    async execute() { return { ok: true }; },
+    async prepareCompanionFallback() {
+      calls.push("prepare");
+      return { ok: true, extensionId: "fixed", extensionDirectory: "C:/fallback" };
+    },
+    async switchRuntime(mode) {
+      calls.push(["switch", mode]);
+      return { ok: true, restarting: true, mode };
+    },
+    async openChatGPTExternal() {
+      calls.push("external");
+      return { ok: true };
+    }
+  };
+  const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
+  await onboarding.refresh();
+  assert.match(root.innerHTML, /Google sign-in must continue/);
+  assert.match(root.innerHTML, /Prepare and use Chrome \/ Edge fallback/);
+
+  const result = await onboarding.handleAction("use-companion");
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["prepare", ["switch", "companion"]]);
+});
+
+test("managed-browser onboarding fails closed when companion preparation is unavailable", async () => {
+  const root = rootElement();
+  const transport = {
+    async query() { return { ok: true }; },
+    async execute() { return { ok: true }; },
+    async prepareCompanionFallback() { return { ok: false, reason: "companion_fallback_requires_packaged_runtime" }; },
+    async switchRuntime() { throw new Error("must_not_switch"); }
+  };
+  const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
+  onboarding.status = { availability: "unavailable", loginRequired: true, leadRegistered: false, unsupportedAuthProvider: "google" };
+  const result = await onboarding.handleAction("use-companion");
+  assert.equal(result.ok, false);
+  assert.match(root.innerHTML, /packaged Windows candidate/);
+});
+
+
+test("diagnostics disclosure remains open across polling renders", () => {
+  const root = rootElement();
+  root.querySelector = (selector) => selector === ".managed-browser-validation" ? { open: true } : null;
+  const onboarding = new ManagedBrowserOnboarding({
+    rootElement: root,
+    transport: {
+      async query() { return { ok: true }; },
+      async execute() { return { ok: true }; }
+    }
+  });
+  onboarding.status = { availability: "ready", loginRequired: false, leadRegistered: true, leadStatus: "IDLE" };
+  onboarding.validation = { complete: false, checks: {} };
+  onboarding.render();
+  assert.equal(onboarding.validationOpen, true);
+  assert.match(root.innerHTML, /managed-browser-validation" open/);
+});
+
+
+test("registered Lead is not presented as connected when current ChatGPT composer is unavailable", () => {
+  const root = rootElement();
+  const onboarding = new ManagedBrowserOnboarding({
+    rootElement: root,
+    transport: {
+      async query() { return { ok: true }; },
+      async execute() { return { ok: true }; }
+    }
+  });
+  onboarding.status = {
+    availability: "unavailable",
+    loginRequired: true,
+    leadRegistered: true,
+    leadReady: false,
+    leadStatus: "ERROR"
+  };
+  onboarding.render();
+  assert.match(root.innerHTML, /Lead registered, but ChatGPT is not ready/);
+  assert.match(root.innerHTML, /Open \/ Login to ChatGPT/);
+  assert.doesNotMatch(root.innerHTML, /<strong>Lead connected<\/strong>/);
 });

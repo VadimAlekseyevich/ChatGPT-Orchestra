@@ -14,7 +14,7 @@ function silentLogger() { return { info() {}, warn() {}, error() {}, log() {} };
 function store() { return new TransactionalStateStore({ store: new MemoryStateStore() }); }
 
 class OnboardingDriver {
-  constructor() { this.sessions = new Map(); this.next = 1; this.availability = "unavailable"; }
+  constructor() { this.sessions = new Map(); this.next = 1; this.availability = "unavailable"; this.unsupportedAuthProvider = null; }
   async start() { return { ok: true }; }
   async close() {}
   async getActiveSession() { return [...this.sessions.values()].find((item) => item.active) || null; }
@@ -30,7 +30,7 @@ class OnboardingDriver {
   async activateSession(id) { const item = this.sessions.get(String(id)); for (const value of this.sessions.values()) value.active = false; item.active = true; return { ...item }; }
   async pingSession(id) {
     const item = this.sessions.get(String(id));
-    return item ? { ok: true, availability: this.availability, generating: false, url: item.url } : { ok: false, reason: "session_unavailable" };
+    return item ? { ok: true, availability: this.availability, generating: false, url: item.url, unsupportedAuthProvider: this.unsupportedAuthProvider } : { ok: false, reason: "session_unavailable" };
   }
   async sendPrompt() { return { ok: false, reason: "not_used" }; }
   async stopGeneration() { return { ok: false, reason: "not_used" }; }
@@ -84,6 +84,44 @@ test("managed browser status never exposes profile paths or credential material"
     const serialized = JSON.stringify(response);
     assert.equal(serialized.includes(profileDirectory), false);
     assert.equal(/cookie|credential|password|token/i.test(serialized), false);
+  } finally {
+    await host.close();
+  }
+});
+
+
+test("managed browser status reports only a sanitized unsupported auth provider marker", async () => {
+  const { host, driver } = await harness();
+  try {
+    driver.unsupportedAuthProvider = "google";
+    const response = await host.query("managedBrowserStatus");
+    assert.equal(response.managedBrowser.unsupportedAuthProvider, "google");
+    assert.equal(JSON.stringify(response).includes("accounts.google.com"), false);
+  } finally {
+    await host.close();
+  }
+});
+
+
+test("managed browser status refresh demotes a previously ready Lead when the composer disappears", async () => {
+  const { host, runtime, driver } = await harness();
+  try {
+    driver.availability = "ready";
+    const registered = await host.execute("registerManagedBrowserLead");
+    assert.equal(registered.ok, true);
+    const leadId = registered.managedBrowser.leadAgentId;
+    assert.equal(runtime.getAgent(leadId).status, "IDLE");
+
+    driver.availability = "unavailable";
+    const status = await host.query("managedBrowserStatus");
+    assert.equal(status.ok, true);
+    assert.equal(status.managedBrowser.leadRegistered, true);
+    assert.equal(status.managedBrowser.leadReady, false);
+    assert.equal(status.managedBrowser.loginRequired, true);
+    assert.equal(status.managedBrowser.availability, "unavailable");
+    assert.equal(status.managedBrowser.leadStatus, "ERROR");
+    assert.equal(runtime.getAgent(leadId).status, "ERROR");
+    assert.equal(runtime.getAgent(leadId).chatState.availability, "unavailable");
   } finally {
     await host.close();
   }
