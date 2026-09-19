@@ -135,13 +135,12 @@
       if (this.refreshing) return;
       this.refreshing = true;
       try {
-        const [response, catalog] = await Promise.all([
-          this.transport.query("dashboard", { eventLimit: 1, decisionLimit: 1, minimumSeverity: "warning" }),
-          this.transport.query("projectCatalog", {})
-        ]);
+        const response = await this.transport.query("dashboard", { eventLimit: 1, decisionLimit: 1, minimumSeverity: "warning" });
         if (!response?.ok) throw new Error(response?.reason || "dashboard_query_failed");
         this.project = response.dashboard?.project || null;
         this.agents = Array.isArray(response.dashboard?.agents) ? response.dashboard.agents : [];
+        let catalog = null;
+        try { catalog = await this.transport.query("projectCatalog", {}); } catch (_) { catalog = null; }
         if (catalog?.ok) {
           this.projects = Array.isArray(catalog.projects) ? catalog.projects : [];
           this.recoveryStatus = String(catalog.recoveryStatus || response.dashboard?.recovery?.status || "IDLE");
