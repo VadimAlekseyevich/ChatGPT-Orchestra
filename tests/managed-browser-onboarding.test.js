@@ -80,7 +80,7 @@ test("onboarding offers Lead registration only after ChatGPT composer becomes re
 
 test("managed-browser onboarding routes blocked Google auth into the packaged companion fallback", async () => {
   const calls = [];
-  const root = fakeRoot();
+  const root = rootElement();
   const transport = {
     async query(name) {
       if (name === "managedBrowserStatus") return {
@@ -120,7 +120,7 @@ test("managed-browser onboarding routes blocked Google auth into the packaged co
 });
 
 test("managed-browser onboarding fails closed when companion preparation is unavailable", async () => {
-  const root = fakeRoot();
+  const root = rootElement();
   const transport = {
     async query() { return { ok: true }; },
     async execute() { return { ok: true }; },
@@ -131,5 +131,5 @@ test("managed-browser onboarding fails closed when companion preparation is unav
   onboarding.status = { availability: "unavailable", loginRequired: true, leadRegistered: false, unsupportedAuthProvider: "google" };
   const result = await onboarding.handleAction("use-companion");
   assert.equal(result.ok, false);
-  assert.match(root.innerHTML, /companion_fallback_requires_packaged_runtime/);
+  assert.match(root.innerHTML, /packaged Windows candidate/);
 });
