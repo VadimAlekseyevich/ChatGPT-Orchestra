@@ -116,10 +116,13 @@
       const stageByStatus = { COMPLETED_UNVERIFIED: "REVIEW_REQUIRED", READY_FOR_INTEGRATION: "REVIEW_COMPLETE", INTEGRATING: "INTEGRATION", INTEGRATION_REPAIRING: "INTEGRATION_REPAIR", INTEGRATION_VERIFIED: "INTEGRATION_COMPLETE", NEEDS_USER: "EXECUTION_BLOCKED" };
       project.stage = stageByStatus[project.status] || "EXECUTION"; project.currentRunId = null; project.execution = { status: project.status, details: details && typeof details === "object" ? clone(details) : null, updatedAt: now }; project.updatedAt = now; await this.persist(); return this.getProject(projectId);
     }
-    async clearError(projectId) {
+    async clearError(projectId, status = null) {
       const project = this.state.projects[projectId]; if (!project) return null;
-      if (!project.lastError) return this.getProject(projectId);
-      delete project.lastError; project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
+      const nextStatus = status ? String(status) : null;
+      if (!project.lastError && (!nextStatus || project.status === nextStatus)) return this.getProject(projectId);
+      delete project.lastError;
+      if (nextStatus) project.status = nextStatus;
+      project.updatedAt = this.clock(); await this.persist(); return this.getProject(projectId);
     }
     async fail(projectId, reason, details = null, status = "NEEDS_USER") {
       const project = this.state.projects[projectId]; if (!project) return null;
