@@ -14,7 +14,7 @@ function silentLogger() { return { info() {}, warn() {}, error() {}, log() {} };
 function store() { return new TransactionalStateStore({ store: new MemoryStateStore() }); }
 
 class OnboardingDriver {
-  constructor() { this.sessions = new Map(); this.next = 1; this.availability = "unavailable"; }
+  constructor() { this.sessions = new Map(); this.next = 1; this.availability = "unavailable"; this.unsupportedAuthProvider = null; }
   async start() { return { ok: true }; }
   async close() {}
   async getActiveSession() { return [...this.sessions.values()].find((item) => item.active) || null; }
@@ -30,7 +30,7 @@ class OnboardingDriver {
   async activateSession(id) { const item = this.sessions.get(String(id)); for (const value of this.sessions.values()) value.active = false; item.active = true; return { ...item }; }
   async pingSession(id) {
     const item = this.sessions.get(String(id));
-    return item ? { ok: true, availability: this.availability, generating: false, url: item.url } : { ok: false, reason: "session_unavailable" };
+    return item ? { ok: true, availability: this.availability, generating: false, url: item.url, unsupportedAuthProvider: this.unsupportedAuthProvider } : { ok: false, reason: "session_unavailable" };
   }
   async sendPrompt() { return { ok: false, reason: "not_used" }; }
   async stopGeneration() { return { ok: false, reason: "not_used" }; }
@@ -84,6 +84,19 @@ test("managed browser status never exposes profile paths or credential material"
     const serialized = JSON.stringify(response);
     assert.equal(serialized.includes(profileDirectory), false);
     assert.equal(/cookie|credential|password|token/i.test(serialized), false);
+  } finally {
+    await host.close();
+  }
+});
+
+
+test("managed browser status reports only a sanitized unsupported auth provider marker", async () => {
+  const { host, driver } = await harness();
+  try {
+    driver.unsupportedAuthProvider = "google";
+    const response = await host.query("managedBrowserStatus");
+    assert.equal(response.managedBrowser.unsupportedAuthProvider, "google");
+    assert.equal(JSON.stringify(response).includes("accounts.google.com"), false);
   } finally {
     await host.close();
   }
