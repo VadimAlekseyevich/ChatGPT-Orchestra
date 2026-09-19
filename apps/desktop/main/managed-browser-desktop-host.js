@@ -88,27 +88,39 @@ class ManagedBrowserDesktopHost extends DesktopHost {
   }
 
   async managedBrowserStatus() {
-    const lead = this.agentRuntime.listAgents?.().find((agent) => agent.role === "lead") || null;
+    let lead = this.agentRuntime.listAgents?.().find((agent) => agent.role === "lead") || null;
     const session = await this.onboardingSession();
     let page = null;
-    if (session?.id && typeof this.agentRuntime.driver?.pingSession === "function") {
+    if (lead?.agentId && typeof this.agentRuntime.pingAgent === "function") {
+      try {
+        page = await this.agentRuntime.pingAgent(lead.agentId);
+        lead = this.agentRuntime.getAgent?.(lead.agentId) || page?.agent || lead;
+      } catch (error) {
+        page = { ok: false, reason: "managed_browser_page_unreachable", message: String(error?.message || error) };
+      }
+    } else if (session?.id && typeof this.agentRuntime.driver?.pingSession === "function") {
       try { page = await this.agentRuntime.driver.pingSession(session.id); }
       catch (error) { page = { ok: false, reason: "managed_browser_page_unreachable", message: String(error?.message || error) }; }
     }
-    const availability = String(page?.availability || "unavailable");
+    const availability = String(page?.availability || lead?.chatState?.availability || "unavailable");
     const loginReady = Boolean(page?.ok && ["ready", "generating"].includes(availability));
+    const leadReady = Boolean(lead?.agentId && lead?.status === "IDLE" && availability === "ready");
     return {
       ok: true,
       managedBrowser: {
         runtimeKind: "desktop-managed-browser",
         sessionOpen: Boolean(session?.id),
         sessionId: session?.id || null,
-        url: String(page?.url || session?.url || ""),
+        url: String(page?.url || session?.url || lead?.chatUrl || ""),
         availability,
         generating: Boolean(page?.generating),
+        composerOccupied: page?.composerOccupied === null || page?.composerOccupied === undefined
+          ? (lead?.chatState?.composerOccupied ?? null)
+          : Boolean(page.composerOccupied),
         unsupportedAuthProvider: page?.unsupportedAuthProvider || null,
         loginRequired: !loginReady,
         leadRegistered: Boolean(lead?.agentId),
+        leadReady,
         leadAgentId: lead?.agentId || null,
         leadStatus: lead?.status || null,
         pageError: page?.ok === false ? String(page.reason || "managed_browser_page_unavailable") : null
