@@ -28,9 +28,10 @@ function makeProjectStore(initial) {
       goal: state.initialGoal,
       lastError: state.lastError || null
     }),
-    async clearError(projectId) {
+    async clearError(projectId, status = null) {
       assert.equal(projectId, state.projectId);
       delete state.lastError;
+      if (status) state.status = String(status);
       return clone(state);
     },
     async beginStage(projectId, { stage, runId }) {
