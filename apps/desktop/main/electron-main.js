@@ -7,11 +7,17 @@ const {
   RUNTIME_MODES,
   companionRequested,
   managedBrowserRequested,
+  runtimeRelaunchArgs,
   resolveDesktopRuntimeMode
 } = require("./desktop-runtime-mode.js");
 
 const IPC_SELECT_REPOSITORY_DIRECTORY = "orchestra:select-repository-directory";
 const IPC_RESTART_APPLICATION = "orchestra:restart-application";
+const IPC_RUNTIME_MODE = "orchestra:runtime-mode";
+const IPC_SWITCH_RUNTIME = "orchestra:switch-runtime";
+const IPC_PREPARE_COMPANION_FALLBACK = "orchestra:prepare-companion-fallback";
+const IPC_OPEN_COMPANION_EXTENSION_FOLDER = "orchestra:open-companion-extension-folder";
+const IPC_OPEN_CHATGPT_EXTERNAL = "orchestra:open-chatgpt-external";
 
 function nativeMessagingRequested(argv = process.argv.slice(1)) {
   return CompanionNativeHost.isNativeMessagingLaunch(argv);
@@ -80,14 +86,22 @@ if (registrationRequest) {
   const { createManagedBrowserDesktopHost } = require("./managed-browser-desktop-host.js");
   const { DesktopIpcRouter, registerElectronIpc } = require("./ipc-router.js");
   const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
+  const { resolveCompanionExtensionDirectory, prepareCompanionFallback } = require("./companion-fallback.js");
 
   let host = null;
   let unregisterIpc = null;
   let mainWindow = null;
 
-  function registerDesktopShellIpc() {
-    ipcMain.removeHandler(IPC_SELECT_REPOSITORY_DIRECTORY);
-    ipcMain.removeHandler(IPC_RESTART_APPLICATION);
+  function registerDesktopShellIpc({ runtimeMode, dataDirectory }) {
+    for (const channel of [
+      IPC_SELECT_REPOSITORY_DIRECTORY,
+      IPC_RESTART_APPLICATION,
+      IPC_RUNTIME_MODE,
+      IPC_SWITCH_RUNTIME,
+      IPC_PREPARE_COMPANION_FALLBACK,
+      IPC_OPEN_COMPANION_EXTENSION_FOLDER,
+      IPC_OPEN_CHATGPT_EXTERNAL
+    ]) ipcMain.removeHandler(channel);
     ipcMain.handle(IPC_SELECT_REPOSITORY_DIRECTORY, async () => {
       const result = await dialog.showOpenDialog(mainWindow || undefined, {
         title: "Open local Git repository",
@@ -109,6 +123,69 @@ if (registrationRequest) {
       }, 75);
       return { ok: true, restarting: true };
     });
+    ipcMain.handle(IPC_RUNTIME_MODE, async () => ({
+      ok: true,
+      mode: runtimeMode,
+      packaged: Boolean(app.isPackaged)
+    }));
+    ipcMain.handle(IPC_SWITCH_RUNTIME, async (_event, requestedMode) => {
+      const mode = String(requestedMode || "");
+      if (![RUNTIME_MODES.COMPANION, RUNTIME_MODES.MANAGED_BROWSER].includes(mode)) {
+        return { ok: false, reason: "desktop_runtime_mode_invalid" };
+      }
+      const args = runtimeRelaunchArgs(process.argv.slice(1), mode);
+      delete process.env.ORCHESTRA_COMPANION;
+      delete process.env.ORCHESTRA_MANAGED_BROWSER;
+      delete process.env.ORCHESTRA_DESKTOP_SHELL;
+      setTimeout(() => {
+        try {
+          app.relaunch({ args });
+          app.quit();
+        } catch (error) {
+          console.error("[ChatGPT Orchestra] desktop_runtime_switch_failed", error);
+          app.exit(1);
+        }
+      }, 75);
+      return { ok: true, restarting: true, mode };
+    });
+    ipcMain.handle(IPC_PREPARE_COMPANION_FALLBACK, async () => {
+      const extensionDirectory = resolveCompanionExtensionDirectory({
+        isPackaged: Boolean(app.isPackaged),
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      });
+      if (!app.isPackaged) {
+        return { ok: false, reason: "companion_fallback_requires_packaged_runtime", extensionDirectory };
+      }
+      try {
+        return prepareCompanionFallback({
+          extensionDirectory,
+          dataDirectory,
+          hostPath: process.execPath,
+          browsers: ["edge", "chrome"]
+        });
+      } catch (error) {
+        const reason = String(error?.message || error || "companion_fallback_prepare_failed");
+        return { ok: false, reason: /^[a-z0-9_:-]+$/i.test(reason) ? reason : "companion_fallback_prepare_failed" };
+      }
+    });
+    ipcMain.handle(IPC_OPEN_COMPANION_EXTENSION_FOLDER, async () => {
+      const extensionDirectory = resolveCompanionExtensionDirectory({
+        isPackaged: Boolean(app.isPackaged),
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      });
+      const error = await shell.openPath(extensionDirectory);
+      return error ? { ok: false, reason: "companion_fallback_extension_open_failed" } : { ok: true, extensionDirectory };
+    });
+    ipcMain.handle(IPC_OPEN_CHATGPT_EXTERNAL, async () => {
+      try {
+        await shell.openExternal("https://chatgpt.com/");
+        return { ok: true };
+      } catch (_) {
+        return { ok: false, reason: "external_chatgpt_open_failed" };
+      }
+    });
   }
 
   async function createMainWindow() {
@@ -118,7 +195,7 @@ if (registrationRequest) {
     else if (runtimeMode === RUNTIME_MODES.MANAGED_BROWSER) host = await createManagedBrowserDesktopHost({ dataDirectory });
     else host = await createDesktopHost({ dataDirectory });
     unregisterIpc = registerElectronIpc({ ipcMain, router: new DesktopIpcRouter({ host }) });
-    registerDesktopShellIpc();
+    registerDesktopShellIpc({ runtimeMode, dataDirectory });
 
     const title = runtimeMode === RUNTIME_MODES.COMPANION
       ? "ChatGPT Orchestra · Companion"
@@ -167,8 +244,15 @@ if (registrationRequest) {
   });
 
   app.on("before-quit", () => {
-    ipcMain.removeHandler(IPC_SELECT_REPOSITORY_DIRECTORY);
-    ipcMain.removeHandler(IPC_RESTART_APPLICATION);
+    for (const channel of [
+      IPC_SELECT_REPOSITORY_DIRECTORY,
+      IPC_RESTART_APPLICATION,
+      IPC_RUNTIME_MODE,
+      IPC_SWITCH_RUNTIME,
+      IPC_PREPARE_COMPANION_FALLBACK,
+      IPC_OPEN_COMPANION_EXTENSION_FOLDER,
+      IPC_OPEN_CHATGPT_EXTERNAL
+    ]) ipcMain.removeHandler(channel);
     unregisterIpc?.();
     unregisterIpc = null;
     host?.close?.().catch((error) => console.warn("[ChatGPT Orchestra] desktop_close_failed", error));
@@ -186,5 +270,10 @@ module.exports = {
   runNativeMessagingHost,
   runNativeHostRegistration,
   IPC_SELECT_REPOSITORY_DIRECTORY,
-  IPC_RESTART_APPLICATION
+  IPC_RESTART_APPLICATION,
+  IPC_RUNTIME_MODE,
+  IPC_SWITCH_RUNTIME,
+  IPC_PREPARE_COMPANION_FALLBACK,
+  IPC_OPEN_COMPANION_EXTENSION_FOLDER,
+  IPC_OPEN_CHATGPT_EXTERNAL
 };
