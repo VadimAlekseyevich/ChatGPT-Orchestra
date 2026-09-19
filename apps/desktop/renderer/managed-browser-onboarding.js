@@ -36,19 +36,22 @@
   });
 
   class ManagedBrowserOnboarding {
-    constructor({ rootElement, transport, pollMs = 2500, download = downloadJson } = {}) {
+    constructor({ rootElement, transport, pollMs = 2500, download = downloadJson, t = null } = {}) {
       if (!rootElement) throw new TypeError("managed_browser_onboarding_root_required");
       if (!transport?.query || !transport?.execute) throw new TypeError("managed_browser_onboarding_transport_invalid");
       this.rootElement = rootElement;
       this.transport = transport;
       this.pollMs = Math.max(1000, Number(pollMs) || 2500);
       this.download = download;
+      this.t = typeof t === "function" ? t : (_key, fallback) => fallback;
       this.status = null;
       this.validation = null;
       this.timer = null;
       this.refreshing = false;
       this.onClick = (event) => this.handleClick(event);
     }
+
+    tr(key, fallback, params = {}) { return this.t(key, fallback, params); }
 
     start() {
       this.rootElement.addEventListener?.("click", this.onClick);
@@ -93,15 +96,21 @@
       const validation = this.validation;
       if (!validation) return "";
       const checks = validation.checks || {};
-      const rows = Object.entries(VALIDATION_LABELS).map(([key, label]) => (
-        `<li><strong>${checks[key] ? "✓" : "○"}</strong> ${escapeHtml(label)}</li>`
+      const rows = Object.entries(VALIDATION_LABELS).map(([key, fallback]) => (
+        `<li><strong>${checks[key] ? "✓" : "○"}</strong> ${escapeHtml(this.tr(`managed.check.${key}`, fallback))}</li>`
       )).join("");
-      return `<div class="dashboard-evidence managed-browser-validation">
-        <div class="dashboard-section-head"><strong>Live validation evidence</strong><span>${validation.complete ? "COMPLETE" : "IN PROGRESS"}</span></div>
-        <ul>${rows}</ul>
-        <p class="dashboard-muted">This evidence contains only aggregate state and counters; browser URLs, session/page identifiers, prompts, responses and credentials are excluded.</p>
-        <button class="secondary" data-managed-browser-action="export-validation">Export validation evidence</button>
-      </div>`;
+      const state = validation.complete
+        ? this.tr("managed.complete", "COMPLETE")
+        : this.tr("managed.inProgress", "IN PROGRESS");
+      return `<details class="dashboard-evidence managed-browser-validation">
+        <summary><strong>${escapeHtml(this.tr("managed.diagnostics", "Diagnostics / alpha validation"))}</strong> · ${escapeHtml(state)}</summary>
+        <div class="managed-browser-validation-body">
+          <div class="dashboard-section-head"><strong>${escapeHtml(this.tr("managed.validation", "Live validation evidence"))}</strong><span>${escapeHtml(state)}</span></div>
+          <ul>${rows}</ul>
+          <p class="dashboard-muted">${escapeHtml(this.tr("managed.validationPrivacy", "This evidence contains only aggregate state and counters; browser URLs, session/page identifiers, prompts, responses and credentials are excluded."))}</p>
+          <button class="secondary" data-managed-browser-action="export-validation">${escapeHtml(this.tr("managed.exportValidation", "Export validation evidence"))}</button>
+        </div>
+      </details>`;
     }
 
     render() {
@@ -111,23 +120,28 @@
         return;
       }
       const availability = String(status.availability || "unavailable");
-      const lead = status.leadRegistered
-        ? `<strong>Lead connected</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
+      const title = status.leadRegistered
+        ? this.tr("managed.connected", "ChatGPT connected")
         : status.loginRequired
-          ? `<strong>Login required</strong> · ${escapeHtml(availability)}`
-          : `<strong>ChatGPT ready</strong> · Lead not registered`;
+          ? this.tr("managed.step1", "Step 1 of 4 — Connect ChatGPT")
+          : this.tr("managed.step2", "Step 2 of 4 — Create the Lead");
+      const lead = status.leadRegistered
+        ? `<strong>${escapeHtml(this.tr("managed.leadConnected", "Lead connected"))}</strong> · ${escapeHtml(status.leadStatus || "UNKNOWN")}`
+        : status.loginRequired
+          ? `<strong>${escapeHtml(this.tr("managed.loginRequired", "Login required"))}</strong> · ${escapeHtml(availability)}`
+          : `<strong>${escapeHtml(this.tr("managed.readyNoLead", "ChatGPT ready. Register this page as the Lead."))}</strong>`;
       const action = status.loginRequired
-        ? `<button data-managed-browser-action="open">Open / Login to ChatGPT</button>`
+        ? `<button data-managed-browser-action="open">${escapeHtml(this.tr("managed.openLogin", "Open / Login to ChatGPT"))}</button>`
         : status.leadRegistered
-          ? `<button class="secondary" data-managed-browser-action="open">Open ChatGPT</button>`
-          : `<button data-managed-browser-action="register">Register this ChatGPT page as Lead</button>`;
+          ? `<button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.open", "Open ChatGPT"))}</button>`
+          : `<button data-managed-browser-action="register">${escapeHtml(this.tr("managed.register", "Register this ChatGPT page as Lead"))}</button>`;
       this.rootElement.innerHTML = `<section class="dashboard-section managed-browser-onboarding">
-        <div class="dashboard-section-head"><h3>Direct Desktop ChatGPT</h3><span>${escapeHtml(availability)}</span></div>
+        <div class="dashboard-section-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(availability)}</span></div>
         <p>${lead}</p>
-        <p class="dashboard-muted">Sign in only inside Orchestra's isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state.</p>
+        <p class="dashboard-muted">${escapeHtml(this.tr("managed.loginHint", "Sign in only inside Orchestra's isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state."))}</p>
         <div class="dashboard-task-controls">
           ${action}
-          <button class="secondary" data-managed-browser-action="refresh">Refresh status</button>
+          <button class="secondary" data-managed-browser-action="refresh">${escapeHtml(this.tr("managed.refresh", "Refresh status"))}</button>
         </div>
         ${this.renderValidation()}
       </section>`;
