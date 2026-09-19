@@ -33,6 +33,12 @@ function isAllowedManagedNavigation(parsed) {
   return ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
+function unsupportedEmbeddedAuthProvider(value) {
+  let parsed;
+  try { parsed = new URL(String(value || "")); } catch (_) { return null; }
+  return parsed.origin === "https://accounts.google.com" ? "google" : null;
+}
+
 function assertManagedNavigationUrl(value) {
   const raw = String(value || "").trim();
   if (raw === "about:blank") return raw;
@@ -121,12 +127,31 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
+    const redirectUnsupportedAuth = (rawUrl) => {
+      const provider = unsupportedEmbeddedAuthProvider(rawUrl);
+      if (!provider) return false;
+      const entry = this.entry(id);
+      if (entry) entry.unsupportedAuthProvider = provider;
+      window.hide?.();
+      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(String(rawUrl || ""))).catch((error) => {
+        this.emit({ type: "navigation-blocked", sessionId: id, reason: `external_auth_open_failed:${asError(error)}` });
+      });
+      this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
+      return true;
+    };
     const onNavigation = (_event, url) => {
       const entry = this.entry(id);
-      if (entry) entry.url = String(url || "");
+      if (entry) {
+        entry.url = String(url || "");
+        if (!unsupportedEmbeddedAuthProvider(url)) entry.unsupportedAuthProvider = null;
+      }
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
     window.webContents?.on?.("will-navigate", (event, url) => {
+      if (redirectUnsupportedAuth(url)) {
+        event?.preventDefault?.();
+        return;
+      }
       try { assertManagedNavigationUrl(url); } catch (error) {
         event?.preventDefault?.();
         this.emit({ type: "navigation-blocked", sessionId: id, url: String(url || ""), reason: asError(error) });
@@ -150,6 +175,7 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
+      if (redirectUnsupportedAuth(rawUrl)) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
@@ -195,7 +221,7 @@ class ElectronManagedBrowserDriver {
         devTools: false
       }
     });
-    this.sessions.set(id, { window, url: targetUrl });
+    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null });
     this.attachWindow(id, window);
     try {
       await window.loadURL(targetUrl);
@@ -249,6 +275,7 @@ class ElectronManagedBrowserDriver {
     const id = String(sessionId ?? "");
     const entry = this.entry(id);
     if (!entry?.window || entry.window.isDestroyed?.()) throw new Error("managed_browser_session_missing");
+    entry.unsupportedAuthProvider = null;
     entry.window.show?.();
     entry.window.restore?.();
     entry.window.focus?.();
@@ -260,8 +287,11 @@ class ElectronManagedBrowserDriver {
     const id = String(sessionId ?? "");
     const entry = this.entry(id);
     if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
-    if (typeof this.pageAdapter?.ping === "function") return this.pageAdapter.ping(entry.window.webContents);
-    return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || "") };
+    if (typeof this.pageAdapter?.ping === "function") {
+      const result = await this.pageAdapter.ping(entry.window.webContents);
+      return { ...result, unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
+    }
+    return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || ""), unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
   }
 
   async readAssistantSnapshot(sessionId) {
@@ -310,5 +340,6 @@ module.exports = {
   DEFAULT_AGENT_PRELOAD,
   ALLOWED_ORIGINS,
   ALLOWED_HOST_SUFFIXES,
+  unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 };
