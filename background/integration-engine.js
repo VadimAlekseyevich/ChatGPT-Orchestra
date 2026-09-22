@@ -13,6 +13,12 @@
   function isSha(value) { return root.GitProvider?.isCommitSha?.(value) === true; }
   function normalizePath(value) { return root.GitProvider?.normalizePath?.(value) || String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, ""); }
 
+  function liveAgent(registry, agent) {
+    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
+    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
+    return Number.isInteger(agent.tabId);
+  }
+
   class IntegrationEngine {
     constructor({ store, schedulerStore, projectStore, registry, eventBus, gitProvider, sendPrompt, clock = () => Date.now(), idFactory = null, logger = console } = {}) {
       this.store = store;
@@ -54,7 +60,7 @@
       const run = this.store.currentRun();
       if (!run || !["ASSIGNED", "RUNNING", "REPAIRING", "REPAIR_PENDING"].includes(run.status)) return;
       const agent = this.registry.getAgent(run.agentId);
-      if (!agent || !Number.isInteger(agent.tabId) || ["OFFLINE", "ERROR"].includes(agent.status)) {
+      if (!liveAgent(this.registry, agent)) {
         await this.store.abandon(run.runId, "integrator_unavailable_after_restart");
         await this.schedulerStore.setStatus("READY_FOR_INTEGRATION");
         return;
@@ -74,7 +80,7 @@
       }
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && Number.isInteger(agent.tabId)
+        && liveAgent(this.registry, agent)
         && agent.status === "IDLE"
         && !agent.protocolContext
       )).sort((a, b) => (authorCounts.get(a.agentId) || 0) - (authorCounts.get(b.agentId) || 0) || a.agentId.localeCompare(b.agentId));
