@@ -331,6 +331,45 @@ test("retryable planning delivery failure is visible and retries the same planni
 });
 
 
+test("legacy rejected planning artifact is visible and can be retried", async () => {
+  let project = {
+    projectId: "P-artifact-retry",
+    status: "NEEDS_USER",
+    stage: "PLAN_V1",
+    currentRunId: "planning-plan_v1-old",
+    lastError: { reason: "plan_milestones_missing", details: { stage: "PLAN_V1" } }
+  };
+  const calls = [];
+  const app = new DesktopProjectOnboarding({
+    rootElement: fakeRoot(),
+    transport: {
+      async query(name) {
+        if (name === "dashboard") return { ok: true, dashboard: { project, agents: readyLead() } };
+        return { ok: false, reason: "catalog_unavailable" };
+      },
+      async execute(name) {
+        calls.push(name);
+        if (name === "retryPlanning") {
+          project = { ...project, status: "PLANNING", currentRunId: "planning-plan_v1-new", lastError: null };
+          return { ok: true, resumed: true, freshRun: true, previousRunId: "planning-plan_v1-old", runId: "planning-plan_v1-new" };
+        }
+        return { ok: false, reason: "unexpected_command" };
+      }
+    }
+  });
+
+  await app.refresh();
+  assert.match(app.rootElement.innerHTML, /plan_milestones_missing/);
+  assert.match(app.rootElement.innerHTML, /Lead response needs correction/);
+  assert.match(app.rootElement.innerHTML, /Retry current planning stage/);
+
+  const result = await app.retryPlanning();
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["retryPlanning"]);
+  assert.match(app.rootElement.innerHTML, /Planning in progress/);
+  assert.doesNotMatch(app.rootElement.innerHTML, /plan_milestones_missing/);
+});
+
 test("project manager lists archived projects and restores the selected project", async () => {
   const calls = [];
   let restarted = 0;
