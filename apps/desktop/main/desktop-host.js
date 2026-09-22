@@ -37,6 +37,14 @@ function resultSummary(result) {
   };
 }
 
+function hostNow(host) {
+  return typeof host?.clock === "function" ? host.clock() : Date.now();
+}
+
+function hostDiagnosticLogger(host) {
+  return host?.hostLogger || host?.logger || null;
+}
+
 class DesktopHost {
   constructor({
     dataDirectory = null,
@@ -220,28 +228,30 @@ class DesktopHost {
   }
 
   async traceApiCall(kind, name, payload, action) {
-    const requestId = `${kind}-${++this.requestSequence}`;
-    const startedAt = this.clock();
+    this.requestSequence = Number.isFinite(this.requestSequence) ? this.requestSequence + 1 : 1;
+    const requestId = `${kind}-${this.requestSequence}`;
+    const startedAt = hostNow(this);
     const level = kind === "query" ? "debug" : "info";
-    this.hostLogger[level]?.(`desktop_api_${kind}_started`, {
+    const logger = hostDiagnosticLogger(this);
+    logger?.[level]?.(`desktop_api_${kind}_started`, {
       requestId,
       name: String(name || ""),
       payloadKeys: payloadKeys(payload)
     });
     try {
       const result = await action();
-      this.hostLogger[level]?.(`desktop_api_${kind}_completed`, {
+      logger?.[level]?.(`desktop_api_${kind}_completed`, {
         requestId,
         name: String(name || ""),
-        durationMs: Math.max(0, this.clock() - startedAt),
+        durationMs: Math.max(0, hostNow(this) - startedAt),
         ...resultSummary(result)
       });
       return result;
     } catch (error) {
-      this.hostLogger.error?.(`desktop_api_${kind}_failed`, {
+      logger?.error?.(`desktop_api_${kind}_failed`, {
         requestId,
         name: String(name || ""),
-        durationMs: Math.max(0, this.clock() - startedAt),
+        durationMs: Math.max(0, hostNow(this) - startedAt),
         error
       });
       throw error;
@@ -249,19 +259,20 @@ class DesktopHost {
   }
 
   async traceInitPhase(phase, action) {
-    const startedAt = this.clock();
-    this.hostLogger.debug?.("desktop_init_phase_started", { phase });
+    const startedAt = hostNow(this);
+    const logger = hostDiagnosticLogger(this);
+    logger?.debug?.("desktop_init_phase_started", { phase });
     try {
       const result = await action();
-      this.hostLogger.debug?.("desktop_init_phase_completed", {
+      logger?.debug?.("desktop_init_phase_completed", {
         phase,
-        durationMs: Math.max(0, this.clock() - startedAt)
+        durationMs: Math.max(0, hostNow(this) - startedAt)
       });
       return result;
     } catch (error) {
-      this.hostLogger.error?.("desktop_init_phase_failed", {
+      logger?.error?.("desktop_init_phase_failed", {
         phase,
-        durationMs: Math.max(0, this.clock() - startedAt),
+        durationMs: Math.max(0, hostNow(this) - startedAt),
         error
       });
       throw error;
@@ -269,14 +280,15 @@ class DesktopHost {
   }
 
   async sendWorkerPromptWithWorkspace(agentId, prompt) {
-    const startedAt = this.clock();
+    const startedAt = hostNow(this);
+    const logger = hostDiagnosticLogger(this);
     const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
     const agent = this.agentRuntime.getAgent?.(agentId) || null;
     const context = agent?.protocolContext || null;
     const run = context?.runId ? this.schedulerStore.getRun?.(context.runId) : null;
     const taskState = context?.taskId ? this.schedulerStore.getTask?.(context.taskId) : null;
     const project = this.projectStore.getActiveProject?.() || null;
-    this.hostLogger.info?.("worker_prompt_dispatch_started", {
+    logger?.info?.("worker_prompt_dispatch_started", {
       agentId: String(agentId || ""),
       taskId: context?.taskId || null,
       runId: context?.runId || null,
@@ -287,11 +299,11 @@ class DesktopHost {
       const prepared = await this.gitProvider.prepareRun({ project, task, run, snapshot: this.schedulerStore.getGitSnapshot?.() || null });
       if (!prepared?.ok) {
         const failed = { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
-        this.hostLogger.warn?.("worker_prompt_dispatch_blocked", {
+        logger?.warn?.("worker_prompt_dispatch_blocked", {
           agentId: String(agentId || ""),
           taskId: task.id,
           runId: run.runId,
-          durationMs: Math.max(0, this.clock() - startedAt),
+          durationMs: Math.max(0, hostNow(this) - startedAt),
           reason: failed.reason,
           details: failed.details
         });
@@ -309,23 +321,23 @@ class DesktopHost {
     }
     try {
       const result = await this.agentRuntime.sendPrompt(agentId, prompt);
-      this.hostLogger.info?.("worker_prompt_dispatch_completed", {
+      logger?.info?.("worker_prompt_dispatch_completed", {
         agentId: String(agentId || ""),
         taskId: context?.taskId || null,
         runId: context?.runId || null,
         promptBytes,
-        durationMs: Math.max(0, this.clock() - startedAt),
+        durationMs: Math.max(0, hostNow(this) - startedAt),
         ok: result?.ok !== false,
         reason: result?.reason || null
       });
       return result;
     } catch (error) {
-      this.hostLogger.error?.("worker_prompt_dispatch_failed", {
+      logger?.error?.("worker_prompt_dispatch_failed", {
         agentId: String(agentId || ""),
         taskId: context?.taskId || null,
         runId: context?.runId || null,
         promptBytes,
-        durationMs: Math.max(0, this.clock() - startedAt),
+        durationMs: Math.max(0, hostNow(this) - startedAt),
         error
       });
       throw error;
@@ -387,7 +399,7 @@ class DesktopHost {
     this.initialized = true;
     this.hostLogger.info?.("desktop_host_ready", {
       apiVersion: this.root.ORCHESTRATOR_API_VERSION,
-      durationMs: Math.max(0, this.clock() - startedAt)
+      durationMs: Math.max(0, hostNow(this) - startedAt)
     });
     return this.query("state");
   }
@@ -428,7 +440,7 @@ class DesktopHost {
     if (this.ownsTimerRuntime) await this.timerRuntime.close?.();
     if (this.ownsStateStore) this.stateStore.close?.();
     this.hostLogger.info?.("desktop_host_closed", {
-      durationMs: Math.max(0, this.clock() - startedAt)
+      durationMs: Math.max(0, hostNow(this) - startedAt)
     });
   }
 }
