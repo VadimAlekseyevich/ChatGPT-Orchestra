@@ -176,7 +176,7 @@ test("boot reevaluates persisted RECOVERY_REQUIRED and clears it when continuity
   assert.equal(controller.canDispatchNewPrompts(), false);
 
   const result = await controller.afterRuntimeInit();
-  assert.equal(result.ok, true);
+  assert.equal(result.status, "RUNNING");
   assert.equal(store.summary().status, "RUNNING");
   assert.equal(controller.canDispatchNewPrompts(), true);
 });
