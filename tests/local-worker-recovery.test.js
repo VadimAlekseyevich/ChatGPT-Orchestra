@@ -65,3 +65,34 @@ test("desktop scheduler replays persisted local Worker DONE after restart only w
   assert.deepEqual(await engine.replayPersistedLocalCompletions(), { replayed: 0 });
   assert.deepEqual(completions, []);
 });
+
+
+test("local Worker recovery searches the full retained EventBus history instead of only recent 200", async () => {
+  const completions = [];
+  class BaseSchedulerEngine {
+    constructor(options = {}) { Object.assign(this, options); }
+    async init() { return { initialized: true }; }
+    getPublicState() { return { status: "RUNNING" }; }
+  }
+  const LocalSchedulerEngine = createLocalSchedulerEngine(BaseSchedulerEngine);
+  const store = {
+    activeRuns() { return [run()]; },
+    async logDecision() {}
+  };
+  const target = record();
+  const filler = Array.from({ length: 250 }, (_, index) => record({
+    cursor: 100 + index,
+    event: { ...record().event, runId: `other-${index}`, eventId: `other-${index}` }
+  }));
+  const all = [target, ...filler];
+  const eventBus = {
+    allEvents() { return all; },
+    recent() { return { events: filler.slice(-200) }; }
+  };
+  const engine = new LocalSchedulerEngine({ store, eventBus });
+  engine.handleCompletion = async (item) => { completions.push(item.event.eventId); };
+
+  const result = await engine.replayPersistedLocalCompletions();
+  assert.deepEqual(result, { replayed: 1 });
+  assert.deepEqual(completions, ["R1-final"]);
+});
