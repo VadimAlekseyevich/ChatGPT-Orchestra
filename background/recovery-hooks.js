@@ -175,6 +175,8 @@
 
     proto.reconcileForResume = async function reconcileForResume() {
       const issues = [];
+      const terminal = await this.reconcileTerminalReviews?.();
+      if (terminal?.ok === false) issues.push({ code: terminal.reason || "review_terminal_reconciliation_failed", details: terminal });
       for (const review of this.store.active()) {
         const reviewer = this.registry.getAgent(review.reviewerAgentId);
         if (!liveAgent(this.registry, reviewer)) {
