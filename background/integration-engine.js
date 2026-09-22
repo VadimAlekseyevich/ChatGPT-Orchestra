@@ -38,6 +38,34 @@
 
     getPublicState() { return this.store.summary(); }
 
+    async reconcileVerifiedState({ reason = "integration_verified_reconcile" } = {}) {
+      const summary = this.store.summary();
+      if (summary.status !== "INTEGRATION_VERIFIED") return { ok: true, ignored: true };
+      const run = this.store.currentRun();
+      const result = run?.result || summary.summary || null;
+      const projectId = summary.projectId || this.projectStore.getActiveProject()?.projectId || null;
+      let changed = false;
+
+      if (this.schedulerStore.summary().status !== "INTEGRATION_VERIFIED") {
+        await this.schedulerStore.setStatus("INTEGRATION_VERIFIED");
+        changed = true;
+      }
+      const project = this.projectStore.getActiveProject?.() || null;
+      if (projectId && project?.projectId === projectId && project.status !== "INTEGRATION_VERIFIED") {
+        await this.projectStore.setExecutionStatus?.(projectId, "INTEGRATION_VERIFIED", { phase: 8, integration: result, recovered: true });
+        changed = true;
+      }
+      if (changed) {
+        await this.schedulerStore.logDecision?.("integration_verified_reconciled", {
+          runId: run?.runId || null,
+          reason,
+          branch: result?.branch || null,
+          commit: result?.commit || null
+        });
+      }
+      return { ok: true, reconciled: changed, run, result };
+    }
+
     async init() {
       if (this.initialized) return this.getPublicState();
       await this.store.load();
@@ -51,6 +79,7 @@
         this.unsubscribers.push(this.eventBus.subscribe("review", () => this.tick({ reason: "review_event" })));
       }
       await this.restoreActiveRun();
+      await this.reconcileVerifiedState({ reason: "integration_init" });
       this.initialized = true;
       await this.tick({ reason: "service_worker_init" });
       return this.getPublicState();
@@ -180,7 +209,11 @@
 
     async tick({ reason = "integration_tick" } = {}) {
       this.tickPromise = this.tickPromise.catch(() => {}).then(async () => {
-        if (this.store.summary().status === "INTEGRATION_VERIFIED" || this.store.summary().status === "NEEDS_USER") return { ok: true, terminal: true };
+        if (this.store.summary().status === "INTEGRATION_VERIFIED") {
+          await this.reconcileVerifiedState({ reason: `integration_tick:${reason}` });
+          return { ok: true, terminal: true };
+        }
+        if (this.store.summary().status === "NEEDS_USER") return { ok: true, terminal: true };
         await this.checkWatchdog();
         if (this.store.summary().status === "NEEDS_USER") return { ok: false, reason: "integration_needs_user" };
         const current = this.store.currentRun();
@@ -274,13 +307,26 @@
     }
 
     async handleCompletion(record) {
+      const event = record?.event;
+      const current = this.store.currentRun();
+      if (!event || event.event !== "DONE" || !current) return;
+      const identityMatches = event.projectId === this.store.summary().projectId
+        && event.taskId === INTEGRATION_TASK_ID
+        && event.runId === current.runId
+        && event.agentId === current.agentId;
+      if (!identityMatches) return;
+
+      if (current.status === "VERIFIED") {
+        return this.reconcileVerifiedState({ reason: "integration_done_replay" });
+      }
+
       const run = this.matchesRun(record);
-      if (!run || record.event.event !== "DONE") return;
-      const normalized = root.IntegrationPolicy.validateDonePayload(record.event.payload || {}, run);
+      if (!run) return;
+      const normalized = root.IntegrationPolicy.validateDonePayload(event.payload || {}, run);
       if (!normalized.ok) return this.escalate(normalized.reason, normalized);
       const validation = await this.validateRemoteIntegration(run, normalized.result);
       if (!validation.ok) return this.escalate(validation.reason || "integration_artifact_invalid", validation);
-      if (run.activeRepairTaskId) await this.store.finishRepair(run.activeRepairTaskId, { outcome: "resolved", eventId: record.event.eventId });
+      if (run.activeRepairTaskId) await this.store.finishRepair(run.activeRepairTaskId, { outcome: "resolved", eventId: event.eventId });
       await this.registry.clearProtocolContext(run.agentId);
       const result = {
         ...normalized.result,
@@ -290,9 +336,7 @@
         remoteValidation: validation.summary
       };
       await this.store.complete(run.runId, result);
-      await this.schedulerStore.setStatus("INTEGRATION_VERIFIED");
-      const projectId = this.store.summary().projectId;
-      await this.projectStore.setExecutionStatus?.(projectId, "INTEGRATION_VERIFIED", { phase: 8, integration: result });
+      await this.reconcileVerifiedState({ reason: "integration_done" });
       await this.schedulerStore.logDecision("integration_verified", {
         runId: run.runId,
         branch: result.branch,
@@ -300,6 +344,7 @@
         mergeOrder: result.mergedTaskIds,
         targetPolicy: result.targetPolicy
       });
+      return { ok: true, result };
     }
 
     async handleFailureEvent(record) {
