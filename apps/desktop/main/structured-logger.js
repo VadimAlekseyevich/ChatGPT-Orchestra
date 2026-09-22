@@ -45,6 +45,17 @@ function omittedContent(value) {
   return "[omitted]";
 }
 
+function mergeDetails(baseDetails, details) {
+  const base = baseDetails && typeof baseDetails === "object" && !Array.isArray(baseDetails) && !(baseDetails instanceof Error)
+    ? baseDetails
+    : { context: baseDetails };
+  if (details === undefined || details === null) return { ...base };
+  if (details && typeof details === "object" && !Array.isArray(details) && !(details instanceof Error)) {
+    return { ...base, ...details };
+  }
+  return { ...base, value: details };
+}
+
 function sanitizeValue(value, {
   key = "",
   seen = new WeakSet(),
@@ -164,7 +175,7 @@ class StructuredLogger {
       level: String(level || "info"),
       component: this.component,
       event: String(event || "desktop_event"),
-      details: sanitizeValue({ ...(this.baseDetails || {}), ...(details || {}) }, { maxStringBytes: this.maxStringBytes })
+      details: sanitizeValue(mergeDetails(this.baseDetails, details), { maxStringBytes: this.maxStringBytes })
     };
     const line = `${JSON.stringify(record)}\n`;
     try {
@@ -199,6 +210,7 @@ module.exports = {
   StructuredLogger,
   sanitizeValue,
   sanitizeUrlString,
+  mergeDetails,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_FILES,
   DEFAULT_MAX_STRING_BYTES
