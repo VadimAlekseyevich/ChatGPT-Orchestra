@@ -387,6 +387,11 @@ class DesktopHost {
     await this.traceInitPhase("recovery_prepare", () => this.recoveryController.prepareForBoot());
     await this.traceInitPhase("orchestrator", () => this.orchestrator.init());
     await this.traceInitPhase("integration", () => this.integrationEngine.init());
+    await this.traceInitPhase("event_replay", async () => {
+      const replay = await this.eventBus.replayPending?.({ limit: 1000 });
+      if (replay?.failed) this.hostLogger.warn?.("desktop_pending_events_replay_incomplete", replay);
+      return replay || { ok: true, attempted: 0, applied: 0, failed: 0 };
+    });
     await this.traceInitPhase("recovery_after_runtime", () => this.recoveryController.afterRuntimeInit());
     this.watchdogCancel = this.timerRuntime.scheduleRecurring(WATCHDOG_NAME, { periodMinutes: 1 }, async () => {
       const watchdogStartedAt = hostNow(this);
