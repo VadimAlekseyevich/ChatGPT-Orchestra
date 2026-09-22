@@ -87,6 +87,13 @@
       sequence: event.sequence
     };
   }
+  function processedStatus(value) {
+    if (!value) return null;
+    // Entries written before durable delivery tracking existed were effectively
+    // considered processed. Keep that interpretation for backwards compatibility;
+    // engine-specific recovery can still reconcile old accepted records.
+    return value.status === "accepted" || value.status === "applied" ? value.status : "applied";
+  }
 
   class EventStore {
     constructor({ stateStore = null, storageArea = null, clock = () => Date.now(), maxEvents = DEFAULT_MAX_EVENTS, maxRejections = DEFAULT_MAX_REJECTIONS, maxProcessed = DEFAULT_MAX_PROCESSED } = {}) {
@@ -121,11 +128,15 @@
 
     snapshot() { return clone(this.state); }
     summary() {
+      const pendingEvents = this.state.processedOrder.reduce((count, eventId) => (
+        processedStatus(this.state.processedEvents[eventId]) === "accepted" ? count + 1 : count
+      ), 0);
       return {
         schemaVersion: this.state.schemaVersion,
         eventCursor: this.state.eventCursor,
         acceptedEvents: this.state.events.length,
         processedEventIds: this.state.processedOrder.length,
+        pendingEvents,
         rejectedEvents: this.state.rejections.length,
         updatedAt: this.state.updatedAt
       };
@@ -140,8 +151,48 @@
       return this.snapshot();
     }
 
-    getProcessed(eventId) { const item = this.state.processedEvents[eventId]; return item ? clone(item) : null; }
-    getLastSequence(runKey) { const value = Number(this.state.sequences[runKey]); return Number.isSafeInteger(value) ? value : 0; }
+    getProcessed(eventId) {
+      const item = this.state.processedEvents[eventId];
+      return item ? { ...clone(item), status: processedStatus(item) } : null;
+    }
+    getLastSequence(runKey) {
+      const value = Number(this.state.sequences[runKey]);
+      return Number.isSafeInteger(value) ? value : 0;
+    }
+    getEvent(eventId) {
+      const id = String(eventId || "");
+      const record = [...this.state.events].reverse().find((item) => item?.event?.eventId === id);
+      return record ? clone(record) : null;
+    }
+    allEvents() { return clone(this.state.events); }
+    pendingEvents(limit = this.maxEvents) {
+      const count = Math.max(1, Math.min(this.maxEvents, Number(limit) || this.maxEvents));
+      return clone(this.state.events.filter((record) => (
+        processedStatus(this.state.processedEvents[record?.event?.eventId]) === "accepted"
+      )).slice(0, count));
+    }
+
+    pruneProcessed() {
+      while (this.state.processedOrder.length > this.maxProcessed) {
+        const removableIndex = this.state.processedOrder.findIndex((eventId) => (
+          processedStatus(this.state.processedEvents[eventId]) !== "accepted"
+        ));
+        if (removableIndex < 0) break;
+        const [eventId] = this.state.processedOrder.splice(removableIndex, 1);
+        if (eventId) delete this.state.processedEvents[eventId];
+      }
+    }
+
+    pruneEvents() {
+      while (this.state.events.length > this.maxEvents) {
+        const removableIndex = this.state.events.findIndex((record) => {
+          const eventId = record?.event?.eventId;
+          return processedStatus(this.state.processedEvents[eventId]) !== "accepted";
+        });
+        if (removableIndex < 0) break;
+        this.state.events.splice(removableIndex, 1);
+      }
+    }
 
     async accept(event, { route = null, tabId = null, runtimeSource = null, source = null } = {}) {
       const now = this.clock();
@@ -151,12 +202,19 @@
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
       const normalizedSource = normalizeSource({ ...(source || {}), runtime: source?.runtime || runtimeSource || null });
 
-      this.state.processedEvents[event.eventId] = { ...identity, signature: eventSignature(event), cursor, acceptedAt: now };
+      this.state.processedEvents[event.eventId] = {
+        ...identity,
+        signature: eventSignature(event),
+        cursor,
+        status: "accepted",
+        acceptedAt: now,
+        appliedAt: null,
+        deliveryAttempts: 0,
+        lastDeliveryError: null,
+        lastDeliveryAttemptAt: null
+      };
       this.state.processedOrder.push(event.eventId);
-      while (this.state.processedOrder.length > this.maxProcessed) {
-        const oldestId = this.state.processedOrder.shift();
-        if (oldestId) delete this.state.processedEvents[oldestId];
-      }
+      this.pruneProcessed();
 
       this.state.sequences[runKey] = event.sequence;
       this.state.events.push({
@@ -168,9 +226,37 @@
         source: normalizedSource,
         event: clone(event)
       });
-      if (this.state.events.length > this.maxEvents) this.state.events.splice(0, this.state.events.length - this.maxEvents);
+      this.pruneEvents();
       await this.persist();
       return { cursor, runKey, source: clone(normalizedSource) };
+    }
+
+    async markApplied(eventId) {
+      const id = String(eventId || "");
+      const item = this.state.processedEvents[id];
+      if (!item) return null;
+      const now = this.clock();
+      item.status = "applied";
+      item.appliedAt = item.appliedAt || now;
+      item.lastDeliveryAttemptAt = now;
+      item.deliveryAttempts = Math.max(1, Number(item.deliveryAttempts) || 0);
+      item.lastDeliveryError = null;
+      this.pruneProcessed();
+      this.pruneEvents();
+      await this.persist();
+      return this.getProcessed(id);
+    }
+
+    async markDeliveryFailed(eventId, error) {
+      const id = String(eventId || "");
+      const item = this.state.processedEvents[id];
+      if (!item) return null;
+      item.status = "accepted";
+      item.deliveryAttempts = (Number(item.deliveryAttempts) || 0) + 1;
+      item.lastDeliveryAttemptAt = this.clock();
+      item.lastDeliveryError = String(error?.message || error || "event_listener_failed").slice(0, 1000);
+      await this.persist();
+      return this.getProcessed(id);
     }
 
     async reject(reason, { event = null, tabId = null, runtimeSource = null, details = null } = {}) {
@@ -188,8 +274,14 @@
       return { ok: false, reason };
     }
 
-    recentEvents(limit = 50) { const count = Math.max(1, Math.min(200, Number(limit) || 50)); return clone(this.state.events.slice(-count)); }
-    recentRejections(limit = 25) { const count = Math.max(1, Math.min(100, Number(limit) || 25)); return clone(this.state.rejections.slice(-count)); }
+    recentEvents(limit = 50) {
+      const count = Math.max(1, Math.min(200, Number(limit) || 50));
+      return clone(this.state.events.slice(-count));
+    }
+    recentRejections(limit = 25) {
+      const count = Math.max(1, Math.min(100, Number(limit) || 25));
+      return clone(this.state.rejections.slice(-count));
+    }
   }
 
   root.EventStore = EventStore;
@@ -197,6 +289,19 @@
   root.eventSignature = eventSignature;
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { EventStore, STORAGE_KEY, SCHEMA_VERSION, eventIdentity, eventSignature, canonicalize, normalizeSource, normalizePlanningArtifact, normalizeWorkerArtifact, normalizeRuntimeSource, MAX_WORKER_ARTIFACT_LENGTH };
+    module.exports = {
+      EventStore,
+      STORAGE_KEY,
+      SCHEMA_VERSION,
+      eventIdentity,
+      eventSignature,
+      canonicalize,
+      normalizeSource,
+      normalizePlanningArtifact,
+      normalizeWorkerArtifact,
+      normalizeRuntimeSource,
+      processedStatus,
+      MAX_WORKER_ARTIFACT_LENGTH
+    };
   }
 })();
