@@ -19,15 +19,15 @@ function eventLine(overrides = {}) {
   })}`;
 }
 
-function harness() {
+function harness({ eventResult = { ok: true, accepted: true }, protocolContext = null } = {}) {
   const messages = [];
-  const agent = { agentId: "A1", sessionId: "S1", chatUrl: "https://chatgpt.com/c/test" };
+  const agent = { agentId: "A1", sessionId: "S1", chatUrl: "https://chatgpt.com/c/test", protocolContext };
   const runtime = {
     getAgent(agentId) { return agentId === agent.agentId ? { ...agent } : null; },
     sessionIdForAgent(value) { return value?.sessionId || null; },
     async publishRuntimeMessage(message, sender) {
       messages.push({ message, sender });
-      if (message.type === MESSAGE_TYPES.ORCHESTRA_EVENT) return { ok: true, accepted: true };
+      if (message.type === MESSAGE_TYPES.ORCHESTRA_EVENT) return eventResult;
       return { ok: true };
     }
   };
@@ -128,4 +128,26 @@ test("managed browser protocol adapter publishes parser failures through existin
   assert.equal(result.ok, false);
   assert.equal(messages.at(-1).message.type, MESSAGE_TYPES.PROTOCOL_ERROR);
   assert.equal(messages.some((item) => item.message.type === MESSAGE_TYPES.ORCHESTRA_EVENT), false);
+});
+
+
+test("managed browser propagates EventBus rejection instead of reporting false success", async () => {
+  const { runtime } = harness({ eventResult: { ok: false, reason: "event_id_collision" } });
+  const adapter = new ManagedBrowserProtocolAdapter({ logger: { info() {} } });
+  const result = await adapter.publishCompletion(runtime, "A1", snapshot(`work complete\n${eventLine()}`));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "event_id_collision");
+  assert.equal(result.eventResult.reason, "event_id_collision");
+});
+
+test("bound Orchestra turn fails closed when assistant completion has no protocol envelope", async () => {
+  const { runtime, messages } = harness({
+    protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" }
+  });
+  const adapter = new ManagedBrowserProtocolAdapter({ logger: { info() {} } });
+  const result = await adapter.publishCompletion(runtime, "A1", snapshot("Finished the work but forgot the envelope."));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "protocol_event_missing");
+  assert.equal(messages.at(-1).message.type, MESSAGE_TYPES.PROTOCOL_ERROR);
+  assert.equal(messages.at(-1).message.payload.reason, "protocol_event_missing");
 });
