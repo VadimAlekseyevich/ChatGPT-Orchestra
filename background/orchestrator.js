@@ -227,6 +227,7 @@
       const agent = this.agentRuntime.getAgentBySessionId?.(sessionId);
       if (!agent) return;
       await this.agentRuntime.markSessionOffline(sessionId, "session_closed");
+      if (agent.role === "lead") await this.planningEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
       await this.schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
     }
 
