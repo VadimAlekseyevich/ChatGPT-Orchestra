@@ -57,6 +57,34 @@ test("Dashboard command path works with Fake transport and refreshes DTO", async
   assert.match(root.innerHTML, /PAUSED/);
 });
 
+test("Dashboard disables recovery Resume while Lead is actively generating planning", async () => {
+  const dashboard = defaultDashboard();
+  dashboard.project.status = "PLANNING";
+  dashboard.project.stage = "PLAN_V1";
+  dashboard.recovery.status = "RECOVERY_REQUIRED";
+  dashboard.agents = [{
+    agentId: "lead-1",
+    role: "lead",
+    connected: true,
+    status: "BUSY",
+    label: "Lead"
+  }];
+
+  const root = fakeRoot();
+  const transport = {
+    async query(name) {
+      if (name === "dashboard") return { ok: true, dashboard: structuredClone(dashboard) };
+      return { ok: false, reason: "unknown_api_query" };
+    },
+    async execute() { return { ok: false, reason: "must_not_resume_active_planning" }; }
+  };
+  const app = new DashboardApp({ rootElement: root, transport });
+  await app.refresh();
+
+  assert.match(root.innerHTML, /data-dashboard-action="resume" disabled/);
+  assert.match(root.innerHTML, /BUSY/);
+});
+
 test("Dashboard exposes command errors while retaining current view", async () => {
   const root = fakeRoot();
   const transport = new FakeDashboardTransport();
