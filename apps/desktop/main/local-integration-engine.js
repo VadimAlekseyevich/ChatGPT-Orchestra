@@ -28,8 +28,7 @@ function createLocalIntegrationEngine(BaseIntegrationEngine) {
         }
       };
       await this.store.complete(runSpec.runId, result);
-      await this.schedulerStore.setStatus("INTEGRATION_VERIFIED");
-      await this.projectStore.setExecutionStatus?.(project.projectId, "INTEGRATION_VERIFIED", { phase: 17, integration: result });
+      await this.reconcileVerifiedState?.({ reason: recovered ? "local_integration_recovered" : "local_integration_completed" });
       await this.schedulerStore.logDecision(recovered ? "integration_recovered_local" : "integration_verified_local", {
         runId: runSpec.runId,
         branch: result.branch,
