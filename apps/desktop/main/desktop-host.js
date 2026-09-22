@@ -397,6 +397,8 @@ class DesktopHost {
       const watchdogStartedAt = hostNow(this);
       this.hostLogger.debug?.("desktop_watchdog_started", {});
       try {
+        const replay = await this.eventBus.replayPending?.({ limit: 100 });
+        if (replay?.failed) this.hostLogger.warn?.("desktop_watchdog_pending_events", replay);
         await this.schedulerEngine.tick({ reason: "desktop_watchdog" });
         await this.integrationEngine.tick({ reason: "desktop_watchdog" });
         await this.recoveryController.tick({ reason: "desktop_watchdog" });
