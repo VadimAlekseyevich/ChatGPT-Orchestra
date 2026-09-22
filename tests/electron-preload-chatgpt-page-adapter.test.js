@@ -130,6 +130,37 @@ test("first-message navigation confirms submission even when the old preload res
   adapter.close();
 });
 
+test("post-timeout navigation still confirms a prompt after the original preload context is lost", async () => {
+  const ipcMain = new FakeIpcMain();
+  const page = new EventEmitter();
+  let url = "https://chatgpt.com/";
+  page.id = 60;
+  page.getURL = () => url;
+  page.send = (channel, message) => {
+    assert.equal(channel, COMMAND_CHANNEL);
+    if (message.name === "send-prompt") {
+      setTimeout(() => {
+        url = "https://chatgpt.com/c/post-timeout";
+        page.emit("did-navigate-in-page", {}, url);
+      }, 2250);
+      return;
+    }
+    assert.equal(message.name, "status");
+    // Simulate the replacement preload not being ready yet. The browser-level
+    // navigation must remain authoritative even though status IPC still times out.
+  };
+
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 500 });
+  const result = await adapter.sendPrompt(page, "planning prompt");
+  assert.equal(result.ok, true);
+  assert.equal(result.accepted, true);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.method, "navigation");
+  assert.equal(result.recoveredFrom, "agent_preload_timeout");
+  assert.equal(result.url, "https://chatgpt.com/c/post-timeout");
+  adapter.close();
+});
+
 test("timed-out first-message send reconciles against the replacement preload after navigation", async () => {
   const ipcMain = new FakeIpcMain();
   const page = new EventEmitter();
