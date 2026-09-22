@@ -98,3 +98,18 @@ test("sanitizeValue bounds large collections and handles non-JSON values", () =>
   assert.equal(sanitized.items.length, 101);
   assert.match(sanitized.items.at(-1), /^\[omitted:/);
 });
+
+
+test("StructuredLogger keeps primitive detail values under an explicit field", () => {
+  const filename = tempLogFile();
+  const logger = new StructuredLogger({
+    filename,
+    consoleTarget: silentConsole(),
+    instanceId: "primitive-details"
+  });
+
+  logger.warn("primitive_reason", "invalid_auth");
+
+  const record = JSON.parse(fs.readFileSync(filename, "utf8").trim());
+  assert.equal(record.details.value, "invalid_auth");
+});
