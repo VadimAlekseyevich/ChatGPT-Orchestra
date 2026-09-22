@@ -28,7 +28,14 @@ function createLocalIntegrationEngine(BaseIntegrationEngine) {
         }
       };
       await this.store.complete(runSpec.runId, result);
-      await this.reconcileVerifiedState?.({ reason: recovered ? "local_integration_recovered" : "local_integration_completed" });
+      if (typeof this.reconcileVerifiedState === "function") {
+        await this.reconcileVerifiedState({ reason: recovered ? "local_integration_recovered" : "local_integration_completed" });
+      } else {
+        // Keep the local adapter self-contained for alternate/test base engines and
+        // fail-safe if the base integration engine does not expose reconciliation.
+        await this.schedulerStore.setStatus("INTEGRATION_VERIFIED");
+        await this.projectStore.setExecutionStatus?.(project.projectId, "INTEGRATION_VERIFIED", { phase: 17, integration: result });
+      }
       await this.schedulerStore.logDecision(recovered ? "integration_recovered_local" : "integration_verified_local", {
         runId: runSpec.runId,
         branch: result.branch,
