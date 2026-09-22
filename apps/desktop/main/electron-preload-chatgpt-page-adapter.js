@@ -162,6 +162,7 @@ class ElectronPreloadChatGPTPageAdapter {
     const recoveredFrom = originalResult?.reason || "agent_preload_timeout";
     const recoveryMs = Math.max(2500, Math.min(10000, this.requestTimeoutMs + 3000));
     const deadline = Date.now() + recoveryMs;
+    let trustedEnterSent = false;
 
     while (Date.now() < deadline) {
       const directUrl = currentUrl(webContents);
@@ -202,7 +203,8 @@ class ElectronPreloadChatGPTPageAdapter {
             recoveredFrom
           };
         }
-        if (latest.composerOccupied === true && typeof webContents?.sendInputEvent === "function") {
+        if (latest.composerOccupied === true && !trustedEnterSent && typeof webContents?.sendInputEvent === "function") {
+          trustedEnterSent = true;
           try {
             webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
             webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
