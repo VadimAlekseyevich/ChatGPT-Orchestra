@@ -79,7 +79,11 @@ class DesktopProjectWorkspaceService {
   }
 
   changeAllowed() {
-    return SAFE_PROJECT_CHANGE_STATES.has(this.recoveryStatus());
+    const recovery = this.recoveryController?.getPublicState?.() || { status: "IDLE", safePoint: { reached: true } };
+    const status = String(recovery.status || "IDLE");
+    if (!SAFE_PROJECT_CHANGE_STATES.has(status)) return false;
+    if (status === "IDLE") return true;
+    return recovery.safePoint?.reached === true;
   }
 
   async archiveCurrent() {
