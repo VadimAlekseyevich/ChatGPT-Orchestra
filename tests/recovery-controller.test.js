@@ -31,6 +31,10 @@ function fixtures() {
   const registry = {
     listAgents() { return [...agents.values()].map((agent) => ({ ...agent })); },
     getAgent(id) { const value = agents.get(id); return value ? { ...value } : null; },
+    isAgentConnected(agentOrId) {
+      const value = typeof agentOrId === "string" ? agents.get(agentOrId) : agentOrId;
+      return Boolean(value && !["OFFLINE", "ERROR"].includes(value.status));
+    },
     async setProtocolContext(id, context) { const value = agents.get(id); if (value) value.protocolContext = context; return value; },
     async clearProtocolContext(id) { const value = agents.get(id); if (value) value.protocolContext = null; return value; },
     async removeAgent(id) { return agents.delete(id); }
@@ -156,4 +160,23 @@ test("Resume removes offline worker identities before creating replacement tabs"
   assert.equal(observedOldIdentity, false);
   assert.equal(fx.agents.has("A-old"), false);
   assert.equal(fx.agents.has("A-new"), true);
+});
+
+
+test("boot reevaluates persisted RECOVERY_REQUIRED and clears it when continuity is healthy", async () => {
+  const fx = fixtures();
+  fx.activeRuns.splice(0);
+  const { store, controller } = controllerFrom(fx, { bootReady: false });
+  await store.load();
+  await store.attachProject("P1", { status: "RECOVERY_REQUIRED", reason: "transient_restart_gap" });
+  assert.equal(store.summary().status, "RECOVERY_REQUIRED");
+
+  await controller.prepareForBoot();
+  assert.equal(store.summary().status, "RECOVERING");
+  assert.equal(controller.canDispatchNewPrompts(), false);
+
+  const result = await controller.afterRuntimeInit();
+  assert.equal(result.ok, true);
+  assert.equal(store.summary().status, "RUNNING");
+  assert.equal(controller.canDispatchNewPrompts(), true);
 });
