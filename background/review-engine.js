@@ -10,6 +10,12 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function liveAgent(registry, agent) {
+    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
+    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
+    return Number.isInteger(agent.tabId);
+  }
+
   function asText(value, max = 4000) {
     const text = String(value || "").trim();
     return text.length > max ? `${text.slice(0, max)}…` : text;
@@ -166,7 +172,7 @@
     async restoreActiveReviews() {
       for (const review of this.store.active()) {
         const reviewer = this.registry.getAgent(review.reviewerAgentId);
-        if (!reviewer || !Number.isInteger(reviewer.tabId) || ["OFFLINE", "ERROR"].includes(reviewer.status)) {
+        if (!liveAgent(this.registry, reviewer)) {
           await this.replaceReview(review, "reviewer_unavailable_after_restart");
           continue;
         }
@@ -226,7 +232,7 @@
       const requested = new Set(Array.isArray(task?.definition?.reviewerCapabilities) ? task.definition.reviewerCapabilities : []);
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && Number.isInteger(agent.tabId)
+        && liveAgent(this.registry, agent)
         && agent.status === "IDLE"
         && agent.agentId !== review.authorAgentId
         && !workerBusy.has(agent.agentId)
