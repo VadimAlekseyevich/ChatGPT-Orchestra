@@ -13,6 +13,7 @@
       this.store = store;
       this.logger = logger;
       this.listeners = new Map();
+      this.inFlight = new Map();
     }
 
     async load() { return this.store.load(); }
@@ -23,6 +24,7 @@
         rejections: this.store.recentRejections(Math.min(25, Number(limit) || 25))
       };
     }
+    allEvents() { return this.store.allEvents?.() || this.store.recentEvents?.(200) || []; }
 
     subscribe(route, listener) {
       if (typeof listener !== "function") return () => {};
@@ -38,13 +40,22 @@
 
     async emit(route, record) {
       const listeners = [...(this.listeners.get(route) || []), ...(this.listeners.get("*") || [])];
+      if (!listeners.length) return { ok: false, reason: "event_listener_missing", delivered: 0, errors: [] };
+      const errors = [];
+      let delivered = 0;
       for (const listener of listeners) {
         try {
           await listener(record);
+          delivered += 1;
         } catch (error) {
-          this.logger.warn?.("[ChatGPT Orchestra] event_listener_failed", route, error?.message || String(error));
+          const message = error?.message || String(error);
+          errors.push(message);
+          this.logger.warn?.("[ChatGPT Orchestra] event_listener_failed", route, message);
         }
       }
+      return errors.length
+        ? { ok: false, reason: "event_listener_failed", delivered, errors }
+        : { ok: true, delivered, errors: [] };
     }
 
     normalizeSender(sender = {}) {
@@ -92,6 +103,79 @@
       return { ok: true };
     }
 
+    recordFromStored(stored) {
+      if (!stored?.event) return null;
+      const context = stored.runtimeSource || stored.source?.runtime || {};
+      const agent = stored.event.agentId ? this.registry?.getAgent?.(stored.event.agentId) : null;
+      return {
+        cursor: stored.cursor,
+        route: stored.route || Protocol.routeForEvent(stored.event.event),
+        tabId: Number.isInteger(stored.tabId) ? stored.tabId : null,
+        runtimeSource: context,
+        source: stored.source || {},
+        agent,
+        event: stored.event
+      };
+    }
+
+    async applyRecord(record, { replayed = false } = {}) {
+      const eventId = record?.event?.eventId;
+      if (!eventId) return { ok: false, reason: "event_id_missing" };
+      const execute = async () => {
+        const delivered = await this.emit(record.route, record);
+        if (!delivered.ok) {
+          await this.store.markDeliveryFailed?.(eventId, delivered.errors?.[0] || delivered.reason);
+          return {
+            ok: false,
+            reason: delivered.reason || "event_listener_failed",
+            eventId,
+            cursor: record.cursor,
+            route: record.route,
+            replayed,
+            delivered: delivered.delivered || 0,
+            errors: delivered.errors || []
+          };
+        }
+        await this.store.markApplied?.(eventId);
+        return {
+          ok: true,
+          applied: true,
+          eventId,
+          cursor: record.cursor,
+          route: record.route,
+          replayed,
+          delivered: delivered.delivered || 0
+        };
+      };
+      const existing = this.inFlight.get(eventId);
+      if (existing) return existing;
+      const promise = execute().finally(() => {
+        if (this.inFlight.get(eventId) === promise) this.inFlight.delete(eventId);
+      });
+      this.inFlight.set(eventId, promise);
+      return promise;
+    }
+
+    async replayPending({ limit = 1000 } = {}) {
+      const records = this.store.pendingEvents?.(limit) || [];
+      const results = [];
+      for (const stored of records) {
+        const record = this.recordFromStored(stored);
+        if (!record?.route) {
+          results.push({ ok: false, reason: "unknown_route", eventId: stored?.event?.eventId || null });
+          continue;
+        }
+        results.push(await this.applyRecord(record, { replayed: true }));
+      }
+      return {
+        ok: results.every((item) => item?.ok),
+        attempted: results.length,
+        applied: results.filter((item) => item?.ok).length,
+        failed: results.filter((item) => !item?.ok).length,
+        results
+      };
+    }
+
     async handleEvent(rawEvent, sender, source = {}) {
       const validation = Protocol.validateEnvelope(rawEvent);
       if (!validation.ok) {
@@ -128,10 +212,22 @@
 
       const existing = this.store.getProcessed(event.eventId);
       if (existing) {
-        if (existing.signature && existing.signature === eventSignature(event)) {
-          return { ok: true, duplicate: true, eventId: event.eventId, cursor: existing.cursor, route };
+        if (!existing.signature || existing.signature !== eventSignature(event)) {
+          return this.reject("event_id_collision", { event, sender: context });
         }
-        return this.reject("event_id_collision", { event, sender: context });
+        if (existing.status === "applied") {
+          return { ok: true, duplicate: true, applied: true, eventId: event.eventId, cursor: existing.cursor, route };
+        }
+        const stored = this.store.getEvent?.(event.eventId);
+        if (!stored) {
+          return this.reject("pending_event_record_missing", {
+            event,
+            sender: context,
+            details: { cursor: existing.cursor || null }
+          });
+        }
+        const replayed = await this.applyRecord(this.recordFromStored(stored), { replayed: true });
+        return { ...replayed, duplicate: true };
       }
 
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
@@ -156,8 +252,15 @@
         agent,
         event
       };
-      await this.emit(route, record);
-      return { ok: true, accepted: true, duplicate: false, cursor: accepted.cursor, route, eventId: event.eventId };
+      const applied = await this.applyRecord(record);
+      return {
+        ...applied,
+        accepted: true,
+        duplicate: false,
+        cursor: accepted.cursor,
+        route,
+        eventId: event.eventId
+      };
     }
 
     async handleProtocolError(payload, sender) {
