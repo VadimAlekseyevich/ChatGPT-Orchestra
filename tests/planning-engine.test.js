@@ -27,6 +27,7 @@ class FakeEventBus {
     return () => {};
   }
   recent() { return { events: this.recentEvents, rejections: [] }; }
+  allEvents() { return [...this.recentEvents]; }
 }
 
 function fakeRegistry() {
@@ -98,8 +99,13 @@ function validGraph() {
 function completion(project, stage, artifact) {
   return {
     event: {
+      v: 1,
       agentId: "A1",
       projectId: project.projectId,
+      taskId: `planning:${stage.toLowerCase()}`,
+      runId: project.currentRunId,
+      eventId: `${project.currentRunId}-final`,
+      sequence: 1,
       event: "DONE",
       payload: { stage }
     },
