@@ -133,7 +133,11 @@
           failure: project.lastError?.reason || null,
           reason
         });
-        const retried = await this.dispatchStage(project.projectId, stage, { lead, readinessChecked: true });
+        const retried = await this.dispatchStage(project.projectId, stage, {
+          lead,
+          readinessChecked: true,
+          correctionReason: project.lastError?.reason || "planning_artifact_invalid"
+        });
         return {
           ...retried,
           resumed: Boolean(retried?.ok),
@@ -178,7 +182,7 @@
       };
     }
 
-    async dispatchStage(projectId, stage, { lead: readyLead = null, readinessChecked = false } = {}) {
+    async dispatchStage(projectId, stage, { lead: readyLead = null, readinessChecked = false, correctionReason = null } = {}) {
       const project = this.projectStore.getProject(projectId);
       if (!project) return { ok: false, reason: "unknown_project" };
       let lead = readyLead || this.getLead();
@@ -200,7 +204,10 @@
       await this.projectStore.beginStage(projectId, { stage, runId });
       await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId });
       const current = this.projectStore.getProject(projectId);
-      const prompt = root.PlanningPrompts.buildPlanningPrompt({ stage, project: current, agentId: lead.agentId, runId });
+      let prompt = root.PlanningPrompts.buildPlanningPrompt({ stage, project: current, agentId: lead.agentId, runId });
+      if (correctionReason) {
+        prompt = `${prompt}\n\nRETRY CORRECTION:\n- The previous response for this same planning stage was received but rejected by Orchestra validation: ${String(correctionReason)}.\n- Produce a new artifact that exactly satisfies the requested stage schema.\n- Use only the new protocol identity/runId in this prompt; do not reuse any previous eventId or runId.`;
+      }
       const result = await this.sendPrompt(lead.agentId, prompt);
       if (!result?.ok) {
         await this.registry.clearProtocolContext?.(lead.agentId);
