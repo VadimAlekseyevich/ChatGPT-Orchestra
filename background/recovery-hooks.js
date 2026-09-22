@@ -16,8 +16,10 @@
   function controller() { return root.RecoveryRuntime?.controller || null; }
   function canDispatch() { return controller()?.canDispatchNewPrompts?.() !== false; }
   function recovering() { return controller()?.isRecovering?.() === true; }
-  function liveAgent(agent) {
-    return Boolean(agent && Number.isInteger(agent.tabId) && !["OFFLINE", "ERROR"].includes(agent.status));
+  function liveAgent(registry, agent) {
+    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
+    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
+    return Number.isInteger(agent.tabId);
   }
   function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
@@ -87,9 +89,9 @@
   if (root.PlanningEngine?.prototype) {
     const proto = root.PlanningEngine.prototype;
     const originalDispatchStage = proto.dispatchStage;
-    proto.dispatchStage = async function recoveryGatedDispatchStage(projectId, stage) {
+    proto.dispatchStage = async function recoveryGatedDispatchStage(projectId, stage, options = {}) {
       if (!canDispatch()) return { ok: true, pending: true, reason: "lifecycle_dispatch_blocked", project: this.getPublicState() };
-      return originalDispatchStage.call(this, projectId, stage);
+      return originalDispatchStage.call(this, projectId, stage, options);
     };
 
     const originalStartProject = proto.startProject;
@@ -115,25 +117,41 @@
     };
 
     proto.resumeAfterRecovery = async function resumeAfterRecovery() {
-      const project = this.projectStore.getActiveProject();
-      if (!project || project.status !== "PLANNING") return { ok: true, ignored: true };
-      const lead = this.getLead();
-      if (!liveAgent(lead)) return { ok: false, reason: "lead_reconnect_required" };
-      if (project.currentRunId) {
-        const completed = project.stageHistory.some((entry) => entry.stage === project.stage && entry.runId === project.currentRunId && entry.status === "completed");
-        if (!completed) {
-          await this.registry.setProtocolContext(lead.agentId, {
-            projectId: project.projectId,
-            taskId: `planning:${project.stage.toLowerCase()}`,
-            runId: project.currentRunId
-          });
-          return { ok: true, waitingForExistingRun: true };
-        }
-        const next = NEXT_PLANNING_STAGE[project.stage];
-        if (!next) return { ok: true, waiting: true };
-        return this.dispatchStage(project.projectId, next);
+      let project = this.projectStore.getActiveProject();
+      if (!project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))) return { ok: true, ignored: true };
+
+      const beforeStage = project.stage;
+      const beforeRunId = project.currentRunId;
+      const recovered = await this.recoverPersistedCompletion?.({ reason: "recovery_resume" });
+      project = this.projectStore.getActiveProject();
+      if (!project || project.status === "READY"
+        || project.stage !== beforeStage
+        || project.currentRunId !== beforeRunId) {
+        return recovered || { ok: true, recovered: true };
       }
-      return this.dispatchStage(project.projectId, project.stage || "DISCOVERY");
+
+      const lead = this.getLead();
+      if (!liveAgent(this.registry, lead)) return { ok: false, reason: "lead_reconnect_required" };
+      if (project.currentRunId) {
+        const completed = typeof this.currentRunCompleted === "function"
+          ? this.currentRunCompleted(project)
+          : project.stageHistory.some((entry) => entry.stage === project.stage && entry.runId === project.currentRunId && entry.status === "completed");
+        if (completed) {
+          if (typeof this.advanceCompletedStage === "function") {
+            return this.advanceCompletedStage(project, { lead, reason: "recovery_resume_completed_stage" });
+          }
+          const next = NEXT_PLANNING_STAGE[project.stage];
+          if (!next) return { ok: true, waiting: true };
+          return this.dispatchStage(project.projectId, next, { lead });
+        }
+        await this.registry.setProtocolContext(lead.agentId, {
+          projectId: project.projectId,
+          taskId: `planning:${project.stage.toLowerCase()}`,
+          runId: project.currentRunId
+        });
+        return { ok: true, waitingForExistingRun: true };
+      }
+      return this.dispatchStage(project.projectId, project.stage || "DISCOVERY", { lead });
     };
   }
 
@@ -159,7 +177,7 @@
       const issues = [];
       for (const review of this.store.active()) {
         const reviewer = this.registry.getAgent(review.reviewerAgentId);
-        if (!liveAgent(reviewer)) {
+        if (!liveAgent(this.registry, reviewer)) {
           const replacement = await this.replaceReview(review, "reviewer_unavailable_during_recovery");
           if (!replacement) issues.push({ code: "review_requeue_failed", reviewId: review.reviewId, taskId: review.taskId });
           continue;
@@ -192,7 +210,7 @@
       if (!recovering()) return originalRestore.call(this);
       for (const run of this.store.activeRuns()) {
         const agent = this.registry.getAgent(run.agentId);
-        if (!liveAgent(agent)) {
+        if (!liveAgent(this.registry, agent)) {
           await this.store.logDecision("recovery_active_run_waiting_reconciliation", { runId: run.runId, taskId: run.taskId, agentId: run.agentId });
           continue;
         }
@@ -230,7 +248,7 @@
 
       for (const run of this.store.activeRuns()) {
         const agent = this.registry.getAgent(run.agentId);
-        if (liveAgent(agent)) {
+        if (liveAgent(this.registry, agent)) {
           await this.registry.setProtocolContext(run.agentId, { projectId: this.store.summary().projectId, taskId: run.taskId, runId: run.runId });
           continue;
         }
@@ -334,7 +352,7 @@
       if (!run) return { ok: true, waiting: true };
       if (["VERIFIED", "ABANDONED", "NEEDS_USER"].includes(run.status)) return { ok: true, terminal: true };
       const agent = this.registry.getAgent(run.agentId);
-      if (!liveAgent(agent)) return this.interruptForRecovery("integrator_missing_during_recovery");
+      if (!liveAgent(this.registry, agent)) return this.interruptForRecovery("integrator_missing_during_recovery");
       await this.registry.setProtocolContext(run.agentId, {
         projectId: this.store.summary().projectId,
         taskId: root.INTEGRATION_TASK_ID || "integration",
