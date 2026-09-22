@@ -98,6 +98,18 @@ The extension fallback can be staged with:
 npm run extension:stage-alpha
 ```
 
+## Diagnostic logs
+
+The desktop runtime writes structured JSONL diagnostics to the application data directory:
+
+```text
+Windows: %APPDATA%\ChatGPT Orchestra\logs\orchestra.jsonl
+```
+
+The log records desktop initialization, Orchestrator API calls, watchdog activity, managed-browser agent/session lifecycle, prompt delivery metadata, recovery/orchestrator warnings and companion transport lifecycle. Prompt/assistant text is not persisted: content fields are omitted, secret-like fields are redacted, and logged HTTP(S) URLs have query strings and fragments removed.
+
+The active log is rotated at approximately 8 MiB. Up to four numbered archives are retained as `orchestra.jsonl.1` … `orchestra.jsonl.4`.
+
 ## Safety invariants
 
 - dispatch stays closed until startup/recovery reconciliation completes;
