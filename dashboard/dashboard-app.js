@@ -144,8 +144,15 @@
       const runsActive = Number(metrics.runs?.active) || 0;
       const reviewsActive = Number(metrics.reviews?.active) || 0;
       const warnings = this.filteredWarnings();
+      const leadBusy = (d.agents || []).some((agent) =>
+        String(agent?.role || "").toLowerCase() === "lead"
+        && agent?.connected === true
+        && String(agent?.status || "") === "BUSY"
+      );
+      const activePlanningGeneration = Boolean(project?.status === "PLANNING" && leadBusy);
       const canPause = ["RUNNING", "IDLE"].includes(String(recovery.status || "IDLE"));
-      const canResume = ["PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(String(recovery.status || "IDLE"));
+      const canResume = ["PAUSED", "STOPPED", "RECOVERY_REQUIRED"].includes(String(recovery.status || "IDLE"))
+        && !activePlanningGeneration;
       const canStop = project && !["STOPPED", "STOPPING", "INTEGRATION_VERIFIED"].includes(String(recovery.status || "")) && project.status !== "INTEGRATION_VERIFIED";
       const canIntegrate = d.scheduler?.status === "READY_FOR_INTEGRATION" && d.integration?.summary?.status !== "INTEGRATION_VERIFIED";
 
