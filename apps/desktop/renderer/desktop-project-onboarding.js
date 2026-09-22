@@ -7,6 +7,18 @@
   const PROJECT_MODES = new Set([MODE_LOCAL, MODE_CLONE]);
   const TERMINAL_PROJECT_STATUSES = new Set(["INTEGRATION_VERIFIED", "FAILED", "CANCELLED"]);
   const SAFE_PROJECT_CHANGE_STATES = new Set(["IDLE", "PAUSED", "STOPPED", "RECOVERY_REQUIRED"]);
+  const RETRYABLE_PLANNING_ARTIFACT_FAILURES = new Set([
+    "stage_artifact_not_object",
+    "repository_access_status_missing",
+    "repository_inspection_evidence_missing",
+    "repository_commands_missing",
+    "plan_milestones_missing",
+    "completion_definition_missing",
+    "critique_findings_missing",
+    "revised_plan_milestones_missing",
+    "agents_md_proposal_invalid",
+    "task_graph_tasks_missing"
+  ]);
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -213,17 +225,27 @@
         return;
       }
       if (this.project && !this.newProjectRequested) {
-        const planning = this.project.status === "PLANNING";
-        const retryableDelivery = this.project?.lastError?.reason === "lead_prompt_failed";
-        const deliveryReason = String(this.project?.lastError?.details?.reason || this.project?.lastError?.reason || "");
+        const failureReason = String(this.project?.lastError?.reason || "");
+        const retryMode = failureReason === "lead_prompt_failed"
+          ? "same_run"
+          : (this.project?.lastError?.details?.retryMode === "fresh_run" || RETRYABLE_PLANNING_ARTIFACT_FAILURES.has(failureReason) ? "fresh_run" : null);
+        const planning = this.project.status === "PLANNING" || Boolean(retryMode);
+        const retryablePlanning = Boolean(retryMode);
+        const failureDetail = String(this.project?.lastError?.details?.reason || failureReason || "");
+        const pausedTitle = retryMode === "fresh_run"
+          ? this.tr("project.planningArtifactRejected", "The Lead response needs correction.")
+          : this.tr("project.planningPaused", "Planning prompt delivery paused.");
+        const retryHint = retryMode === "fresh_run"
+          ? this.tr("project.planningArtifactRetryHint", "The response was received, but its planning artifact did not pass validation. Retry starts a fresh run of the same stage and preserves all completed earlier stages.")
+          : this.tr("project.planningRetryHint", "The current planning stage was not delivered to the Lead. Retry the same stage and run; completed discovery data will not be discarded.");
         this.rootElement.innerHTML = this.withProjectManager(planning
           ? `<section class="dashboard-section desktop-project-onboarding">
               <div class="dashboard-section-head"><h3>${escapeHtml(this.tr("project.planningTitle", "Planning in progress"))}</h3><span>${escapeHtml(this.project.stage || "PLANNING")}</span></div>
-              <p><strong>${escapeHtml(retryableDelivery ? this.tr("project.planningPaused", "Planning prompt delivery paused.") : this.tr("project.planning", "The Lead is planning the project."))}</strong></p>
-              <p class="dashboard-muted">${escapeHtml(retryableDelivery
-                ? this.tr("project.planningRetryHint", "The current planning stage was not delivered to the Lead. Retry the same stage and run; completed discovery data will not be discarded.")
+              <p><strong>${escapeHtml(retryablePlanning ? pausedTitle : this.tr("project.planning", "The Lead is planning the project."))}</strong></p>
+              <p class="dashboard-muted">${escapeHtml(retryablePlanning
+                ? retryHint
                 : this.tr("project.planningHint", "Orchestra is inspecting the repository, refining the goal and building a dependency graph. You can follow progress here; execution stays closed until the plan is ready."))}</p>
-              ${retryableDelivery ? `<div class="dashboard-error">${escapeHtml(deliveryReason)}</div>
+              ${retryablePlanning ? `<div class="dashboard-error">${escapeHtml(failureDetail)}</div>
                 <div class="dashboard-task-controls"><button data-project-action="retry-planning" ${this.busy ? "disabled" : ""}>${escapeHtml(this.busy ? this.tr("project.retrying", "Retrying…") : this.tr("project.retryPlanning", "Retry current planning stage"))}</button></div>` : ""}
               ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
             </section>`
