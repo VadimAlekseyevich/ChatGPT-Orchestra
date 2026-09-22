@@ -48,6 +48,8 @@ test("dashboard exposes project/task/review/integration/agent observability", ()
   const dashboard = service.dashboard();
   assert.equal(dashboard.observabilityVersion, 1);
   assert.equal(dashboard.project.projectId, "P1");
+  assert.equal(dashboard.operationalState.status, "RECOVERY_REQUIRED");
+  assert.equal(dashboard.operationalState.source, "recovery");
   assert.equal(dashboard.tasks.length, 2);
   assert.deepEqual(dashboard.tasks.find((task) => task.taskId === "T2").blockers, []);
   assert.equal(dashboard.reviews.items[0].status, "APPROVED");
