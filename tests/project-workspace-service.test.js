@@ -160,7 +160,7 @@ test("switchProject archives the current project and restores the target slot th
       }
     },
     projectStore: { getActiveProject: () => project("P2", "READY") },
-    recoveryController: { getPublicState: () => ({ status: "PAUSED" }) },
+    recoveryController: { getPublicState: () => ({ status: "PAUSED", safePoint: { reached: true } }) },
     portableStateKeys: ["a"],
     clock: () => 100
   });
@@ -200,4 +200,36 @@ test("project changes fail closed while runtime work is active", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "project_change_requires_safe_state");
   assert.equal(result.recoveryStatus, "RUNNING");
+});
+
+
+test("RECOVERY_REQUIRED does not permit project switching until the real safe point is reached", async () => {
+  const stateStore = fakeStateStore({
+    [CATALOG_KEY]: {
+      schemaVersion: 1,
+      projects: {
+        P1: {
+          projectId: "P1",
+          metadata: { projectId: "P1", status: "STOPPED", stage: "STOPPED", goal: "Old", repository: null },
+          snapshot: { schemaVersion: 1, projectId: "P1", namespaces: {} },
+          archivedAt: 1
+        }
+      }
+    }
+  });
+  const service = new DesktopProjectWorkspaceService({
+    stateStore,
+    portableStateManager: {
+      async capture() { throw new Error("must_not_capture_unsafe_project"); },
+      async import() { throw new Error("must_not_import_unsafe_project"); }
+    },
+    projectStore: { getActiveProject: () => project("P2", "PLANNING") },
+    recoveryController: { getPublicState: () => ({ status: "RECOVERY_REQUIRED", safePoint: { reached: false, activePlanning: true } }) },
+    portableStateKeys: ["a"]
+  });
+
+  const result = await service.switchProject("P1");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "project_change_requires_safe_state");
+  assert.equal(result.recoveryStatus, "RECOVERY_REQUIRED");
 });
