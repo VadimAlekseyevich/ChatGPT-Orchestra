@@ -39,7 +39,7 @@ function createLocalSchedulerEngine(BaseSchedulerEngine) {
     async replayPersistedLocalCompletions() {
       const activeRuns = new Map((this.store?.activeRuns?.() || []).map((run) => [run.runId, run]));
       if (!activeRuns.size) return { replayed: 0 };
-      const records = this.eventBus?.recent?.(200)?.events || [];
+      const records = this.eventBus?.allEvents?.() || this.eventBus?.recent?.(200)?.events || [];
       let replayed = 0;
       for (const record of records) {
         const run = activeRuns.get(record?.event?.runId);
