@@ -283,8 +283,13 @@ async function completePlanning(host) {
     assert.equal(project.stage, stage);
     await host.planningEngine.handleCompletion({
       event: {
+        v: 1,
         agentId: host.agentRuntime.listAgents().find((agent) => agent.role === "lead").agentId,
         projectId: project.projectId,
+        taskId: `planning:${stage.toLowerCase()}`,
+        runId: project.currentRunId,
+        eventId: `${project.currentRunId}-fixture-done`,
+        sequence: 1,
         event: "DONE",
         payload: { stage }
       },
