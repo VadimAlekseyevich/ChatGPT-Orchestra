@@ -92,12 +92,22 @@ class FakeManagedBrowserDriver {
   }
 }
 
+function silentLogger() {
+  return { debug() {}, info() {}, warn() {}, error() {}, log() {} };
+}
+
 function harness(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-browser-runtime-"));
   const profileDirectory = path.join(root, "orchestra-browser-profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
   const driver = new FakeManagedBrowserDriver();
-  const runtime = new ManagedBrowserAgentRuntime({ driver, profileDirectory, clock: options.clock || (() => 1000), maxAgents: options.maxAgents || 5 });
+  const runtime = new ManagedBrowserAgentRuntime({
+    driver,
+    profileDirectory,
+    clock: options.clock || (() => 1000),
+    maxAgents: options.maxAgents || 5,
+    logger: options.logger || silentLogger()
+  });
   return { root, profileDirectory, driver, runtime };
 }
 
@@ -195,4 +205,34 @@ test("managed browser runtime enforces a bounded logical-agent concurrency polic
 
 test("managed browser driver contract fails closed when an unsafe partial driver is injected", () => {
   assert.throws(() => assertManagedBrowserDriver({ start() {} }), /managed_browser_driver_contract_missing/);
+});
+
+
+test("managed browser diagnostics record lifecycle metadata without prompt or auth-query contents", async () => {
+  const entries = [];
+  const logger = {
+    debug(event, details) { entries.push({ level: "debug", event, details }); },
+    info(event, details) { entries.push({ level: "info", event, details }); },
+    warn(event, details) { entries.push({ level: "warn", event, details }); },
+    error(event, details) { entries.push({ level: "error", event, details }); }
+  };
+  let now = 1000;
+  const { runtime } = harness({ logger, clock: () => ++now });
+  await runtime.load();
+  const session = await runtime.createSession({
+    url: "https://chatgpt.com/c/test?access_token=must-not-log#private",
+    active: true
+  });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
+  await runtime.sendPrompt(agent.agentId, "top secret prompt body");
+  await runtime.pingAgent(agent.agentId);
+  await runtime.stopAgent(agent.agentId);
+  await runtime.close();
+
+  const serialized = JSON.stringify(entries);
+  assert.equal(serialized.includes("top secret prompt body"), false);
+  assert.equal(serialized.includes("must-not-log"), false);
+  assert.ok(entries.some((entry) => entry.event === "managed_browser_prompt_send_started" && entry.details.promptBytes > 0));
+  assert.ok(entries.some((entry) => entry.event === "managed_browser_agent_ping_completed"));
+  assert.ok(entries.some((entry) => entry.event === "managed_browser_runtime_closed"));
 });
