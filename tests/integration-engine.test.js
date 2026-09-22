@@ -227,3 +227,30 @@ test("semantic conflict with explicit responsible tasks enters repair loop", asy
   assert.equal(prompts.length, 2);
   assert.match(prompts[1].prompt, /For semantic conflict: make the smallest compatibility repair/);
 });
+
+
+test("verified IntegrationStore reconciles Scheduler and Project after a crash boundary", async () => {
+  const { engine, store, schedulerStore, projectStore } = await setup();
+  const run = store.currentRun();
+  const result = {
+    branch: run.branch,
+    commit: HEAD,
+    baseSha: BASE,
+    targetBranch: "main",
+    mergedTaskIds: ["T1", "T2"],
+    changedFiles: ["src/a.js", "src/b.js"],
+    checks: [],
+    summary: "already validated before crash"
+  };
+
+  await store.complete(run.runId, result);
+  assert.equal(store.summary().status, "INTEGRATION_VERIFIED");
+  assert.equal(schedulerStore.state.status, "INTEGRATING");
+  assert.equal(projectStore.project.status, "INTEGRATING");
+
+  const reconciled = await engine.reconcileVerifiedState({ reason: "test_crash_boundary" });
+  assert.equal(reconciled.ok, true);
+  assert.equal(reconciled.reconciled, true);
+  assert.equal(schedulerStore.state.status, "INTEGRATION_VERIFIED");
+  assert.equal(projectStore.project.status, "INTEGRATION_VERIFIED");
+});
