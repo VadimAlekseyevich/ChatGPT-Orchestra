@@ -23,6 +23,20 @@ function jsonClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function payloadKeys(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  return Object.keys(payload).sort().slice(0, 32);
+}
+
+function resultSummary(result) {
+  if (!result || typeof result !== "object") return { ok: result !== false, reason: null, keys: [] };
+  return {
+    ok: result.ok !== false,
+    reason: result.reason || null,
+    keys: Object.keys(result).sort().slice(0, 32)
+  };
+}
+
 class DesktopHost {
   constructor({
     dataDirectory = null,
@@ -40,18 +54,21 @@ class DesktopHost {
     this.root = loadDesktopCore();
     this.paths = paths || ensureDesktopPaths({ dataDirectory });
     this.logger = logger || new StructuredLogger({ filename: this.paths.logFile, clock });
+    this.hostLogger = this.logger.child?.("desktop-host") || this.logger;
+    this.componentLogger = (component) => this.logger.child?.(component) || this.logger;
     this.clock = clock;
+    this.requestSequence = 0;
     this.runtimeEvidence = runtimeEvidence || createDesktopRuntimeEvidence({ clock });
     this.ownsStateStore = !stateStore;
     this.ownsTimerRuntime = !timerRuntime;
     this.persistenceBackend = stateStore ? "injected" : "sqlite";
     this.stateStore = stateStore || new SQLiteStateStore({ filename: this.paths.stateDatabase, clock });
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
-    this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.logger });
-    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock, logger: this.logger });
-    this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.logger, clock });
-    this.gitProvider = new LocalValidatingGitProvider({ remoteProvider: this.remoteGitProvider, repositoryService: this.repositoryService, logger: this.logger });
-    this.localIntegrationCoordinator = new LocalIntegrationCoordinator({ repositoryService: this.repositoryService, clock, logger: this.logger });
+    this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.componentLogger("timer") });
+    this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock, logger: this.componentLogger("repository") });
+    this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.componentLogger("git-remote"), clock });
+    this.gitProvider = new LocalValidatingGitProvider({ remoteProvider: this.remoteGitProvider, repositoryService: this.repositoryService, logger: this.componentLogger("git-local") });
+    this.localIntegrationCoordinator = new LocalIntegrationCoordinator({ repositoryService: this.repositoryService, clock, logger: this.componentLogger("integration-local") });
     this.autoSeedFakeLead = autoSeedFakeLead;
     this.initialized = false;
     this.closed = false;
@@ -66,7 +83,7 @@ class DesktopHost {
     root.PlatformContracts.assertTimerRuntime(this.timerRuntime);
 
     this.eventStore = new root.EventStore({ stateStore: this.stateStore });
-    this.eventBus = new root.EventBus({ registry: this.agentRuntime, store: this.eventStore });
+    this.eventBus = new root.EventBus({ registry: this.agentRuntime, store: this.eventStore, logger: this.componentLogger("event-bus") });
     this.projectStore = new root.ProjectStore({ storageArea: this.stateStore });
     this.schedulerStore = new root.SchedulerStore({ storageArea: this.stateStore });
     this.reviewStore = new root.ReviewStore({ storageArea: this.stateStore });
@@ -141,7 +158,7 @@ class DesktopHost {
       eventBus: this.eventBus,
       planningEngine: this.planningEngine,
       schedulerEngine: this.schedulerEngine,
-      logger: this.logger
+      logger: this.componentLogger("orchestrator")
     });
 
     this.recoveryController = new root.RecoveryController({
@@ -156,7 +173,7 @@ class DesktopHost {
       reviewEngine: this.reviewEngine,
       integrationEngine: this.integrationEngine,
       gitProvider: this.gitProvider,
-      logger: this.logger
+      logger: this.componentLogger("recovery")
     });
     root.RecoveryRuntime.controller = this.recoveryController;
     this.recoveryController.setActions({
@@ -202,16 +219,84 @@ class DesktopHost {
     });
   }
 
+  async traceApiCall(kind, name, payload, action) {
+    const requestId = `${kind}-${++this.requestSequence}`;
+    const startedAt = this.clock();
+    const level = kind === "query" ? "debug" : "info";
+    this.hostLogger[level]?.(`desktop_api_${kind}_started`, {
+      requestId,
+      name: String(name || ""),
+      payloadKeys: payloadKeys(payload)
+    });
+    try {
+      const result = await action();
+      this.hostLogger[level]?.(`desktop_api_${kind}_completed`, {
+        requestId,
+        name: String(name || ""),
+        durationMs: Math.max(0, this.clock() - startedAt),
+        ...resultSummary(result)
+      });
+      return result;
+    } catch (error) {
+      this.hostLogger.error?.(`desktop_api_${kind}_failed`, {
+        requestId,
+        name: String(name || ""),
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
+      throw error;
+    }
+  }
+
+  async traceInitPhase(phase, action) {
+    const startedAt = this.clock();
+    this.hostLogger.debug?.("desktop_init_phase_started", { phase });
+    try {
+      const result = await action();
+      this.hostLogger.debug?.("desktop_init_phase_completed", {
+        phase,
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
+      return result;
+    } catch (error) {
+      this.hostLogger.error?.("desktop_init_phase_failed", {
+        phase,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
+      throw error;
+    }
+  }
+
   async sendWorkerPromptWithWorkspace(agentId, prompt) {
+    const startedAt = this.clock();
+    const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
     const agent = this.agentRuntime.getAgent?.(agentId) || null;
     const context = agent?.protocolContext || null;
     const run = context?.runId ? this.schedulerStore.getRun?.(context.runId) : null;
     const taskState = context?.taskId ? this.schedulerStore.getTask?.(context.taskId) : null;
     const project = this.projectStore.getActiveProject?.() || null;
+    this.hostLogger.info?.("worker_prompt_dispatch_started", {
+      agentId: String(agentId || ""),
+      taskId: context?.taskId || null,
+      runId: context?.runId || null,
+      promptBytes
+    });
     if (run && taskState && project && this.gitProvider?.prepareRun) {
       const task = taskState.definition || taskState;
       const prepared = await this.gitProvider.prepareRun({ project, task, run, snapshot: this.schedulerStore.getGitSnapshot?.() || null });
-      if (!prepared?.ok) return { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
+      if (!prepared?.ok) {
+        const failed = { ok: false, reason: "local_workspace_prepare_failed", details: { reason: prepared?.reason || "unknown", runId: run.runId, taskId: task.id } };
+        this.hostLogger.warn?.("worker_prompt_dispatch_blocked", {
+          agentId: String(agentId || ""),
+          taskId: task.id,
+          runId: run.runId,
+          durationMs: Math.max(0, this.clock() - startedAt),
+          reason: failed.reason,
+          details: failed.details
+        });
+        return failed;
+      }
       if (!prepared.skipped) {
         await this.schedulerStore.logDecision?.("task_workspace_prepared", {
           taskId: task.id,
@@ -222,7 +307,29 @@ class DesktopHost {
         });
       }
     }
-    return this.agentRuntime.sendPrompt(agentId, prompt);
+    try {
+      const result = await this.agentRuntime.sendPrompt(agentId, prompt);
+      this.hostLogger.info?.("worker_prompt_dispatch_completed", {
+        agentId: String(agentId || ""),
+        taskId: context?.taskId || null,
+        runId: context?.runId || null,
+        promptBytes,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        ok: result?.ok !== false,
+        reason: result?.reason || null
+      });
+      return result;
+    } catch (error) {
+      this.hostLogger.error?.("worker_prompt_dispatch_failed", {
+        agentId: String(agentId || ""),
+        taskId: context?.taskId || null,
+        runId: context?.runId || null,
+        promptBytes,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
+      throw error;
+    }
   }
 
   async seedFakeLead() {
@@ -248,52 +355,81 @@ class DesktopHost {
   async init() {
     if (this.closed) throw new Error("desktop_host_closed");
     if (this.initialized) return this.query("state");
-    this.logger.info?.("desktop_host_starting", { backend: this.persistenceBackend });
-    await this.seedFakeLead();
-    await this.contextPackets.init();
-    await this.recoveryController.prepareForBoot();
-    await this.orchestrator.init();
-    await this.integrationEngine.init();
-    await this.recoveryController.afterRuntimeInit();
+    const startedAt = this.clock();
+    this.hostLogger.info?.("desktop_host_starting", {
+      backend: this.persistenceBackend,
+      runtimeKind: this.agentRuntime?.constructor?.name || "unknown"
+    });
+    await this.traceInitPhase("seed_fake_lead", () => this.seedFakeLead());
+    await this.traceInitPhase("context_packets", () => this.contextPackets.init());
+    await this.traceInitPhase("recovery_prepare", () => this.recoveryController.prepareForBoot());
+    await this.traceInitPhase("orchestrator", () => this.orchestrator.init());
+    await this.traceInitPhase("integration", () => this.integrationEngine.init());
+    await this.traceInitPhase("recovery_after_runtime", () => this.recoveryController.afterRuntimeInit());
     this.watchdogCancel = this.timerRuntime.scheduleRecurring(WATCHDOG_NAME, { periodMinutes: 1 }, async () => {
-      await this.schedulerEngine.tick({ reason: "desktop_watchdog" });
-      await this.integrationEngine.tick({ reason: "desktop_watchdog" });
-      await this.recoveryController.tick({ reason: "desktop_watchdog" });
+      const watchdogStartedAt = this.clock();
+      this.hostLogger.debug?.("desktop_watchdog_started", {});
+      try {
+        await this.schedulerEngine.tick({ reason: "desktop_watchdog" });
+        await this.integrationEngine.tick({ reason: "desktop_watchdog" });
+        await this.recoveryController.tick({ reason: "desktop_watchdog" });
+        this.hostLogger.debug?.("desktop_watchdog_completed", {
+          durationMs: Math.max(0, this.clock() - watchdogStartedAt)
+        });
+      } catch (error) {
+        this.hostLogger.error?.("desktop_watchdog_failed", {
+          durationMs: Math.max(0, this.clock() - watchdogStartedAt),
+          error
+        });
+        throw error;
+      }
     });
     this.initialized = true;
-    this.logger.info?.("desktop_host_ready", { apiVersion: this.root.ORCHESTRATOR_API_VERSION });
+    this.hostLogger.info?.("desktop_host_ready", {
+      apiVersion: this.root.ORCHESTRATOR_API_VERSION,
+      durationMs: Math.max(0, this.clock() - startedAt)
+    });
     return this.query("state");
   }
 
   async query(name, payload = {}) {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
-    return jsonClone(await this.orchestratorApi.query(name, payload));
+    const queryName = String(name || "");
+    return this.traceApiCall("query", queryName, payload, async () => jsonClone(await this.orchestratorApi.query(queryName, payload)));
   }
 
   async execute(name, payload = {}) {
     if (!this.initialized) throw new Error("desktop_host_not_initialized");
     const command = String(name || "");
-    const result = await this.orchestratorApi.execute(command, payload);
-    if (result?.ok && command === "startProject") {
-      const projectId = this.projectStore.getActiveProject()?.projectId;
-      if (projectId) await this.recoveryController.attachProject(projectId, "project_started");
-    }
-    if (result?.ok && command === "startExecution") {
-      const projectId = this.projectStore.getActiveProject()?.projectId;
-      if (projectId && this.recoveryStore.summary().projectId !== projectId) await this.recoveryController.attachProject(projectId, "execution_started");
-    }
-    if (result?.ok && ["startExecution", "resume", "createWorkers"].includes(command)) await this.readyFakeWorkers(command);
-    if (!(command === "importProjectBundle" && result?.ok && result?.reloadRequired)) await this.recoveryController.tick({ reason: `desktop_api:${command || "unknown"}` });
-    return jsonClone(result);
+    return this.traceApiCall("command", command, payload, async () => {
+      const result = await this.orchestratorApi.execute(command, payload);
+      if (result?.ok && command === "startProject") {
+        const projectId = this.projectStore.getActiveProject()?.projectId;
+        if (projectId) await this.recoveryController.attachProject(projectId, "project_started");
+      }
+      if (result?.ok && command === "startExecution") {
+        const projectId = this.projectStore.getActiveProject()?.projectId;
+        if (projectId && this.recoveryStore.summary().projectId !== projectId) await this.recoveryController.attachProject(projectId, "execution_started");
+      }
+      if (result?.ok && ["startExecution", "resume", "createWorkers"].includes(command)) await this.readyFakeWorkers(command);
+      if (!(command === "importProjectBundle" && result?.ok && result?.reloadRequired)) await this.recoveryController.tick({ reason: `desktop_api:${command || "unknown"}` });
+      return jsonClone(result);
+    });
   }
 
   async close() {
     if (this.closed) return;
     this.closed = true;
-    try { await this.watchdogCancel?.(); } catch (_) {}
+    const startedAt = this.clock();
+    this.hostLogger.info?.("desktop_host_closing", {});
+    try { await this.watchdogCancel?.(); } catch (error) {
+      this.hostLogger.warn?.("desktop_watchdog_cancel_failed", { error });
+    }
     if (this.ownsTimerRuntime) await this.timerRuntime.close?.();
     if (this.ownsStateStore) this.stateStore.close?.();
-    this.logger.info?.("desktop_host_closed", {});
+    this.hostLogger.info?.("desktop_host_closed", {
+      durationMs: Math.max(0, this.clock() - startedAt)
+    });
   }
 }
 
