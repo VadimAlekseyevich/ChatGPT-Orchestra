@@ -9,7 +9,8 @@ class ManagedBrowserCompletionMonitor {
     pollMs = 400,
     quietMs = 1200,
     timeoutMs = 30 * 60 * 1000,
-    maxSnapshotErrors = 3,
+    maxSnapshotErrors = 50,
+    snapshotErrorGraceMs = 30_000,
     prepareAttempts = 2,
     prepareRetryMs = 250,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -24,7 +25,8 @@ class ManagedBrowserCompletionMonitor {
     this.pollMs = Math.max(100, Number(pollMs) || 400);
     this.quietMs = Math.max(this.pollMs, Number(quietMs) || 1200);
     this.timeoutMs = Math.max(this.quietMs + this.pollMs, Number(timeoutMs) || (30 * 60 * 1000));
-    this.maxSnapshotErrors = Math.max(1, Math.min(10, Number(maxSnapshotErrors) || 3));
+    this.maxSnapshotErrors = Math.max(1, Math.min(100, Number(maxSnapshotErrors) || 50));
+    this.snapshotErrorGraceMs = Math.max(this.pollMs, Math.min(120_000, Number(snapshotErrorGraceMs) || 30_000));
     this.prepareAttempts = Math.max(1, Math.min(4, Number(prepareAttempts) || 2));
     this.prepareRetryMs = Math.max(0, Math.min(2000, Number(prepareRetryMs) || 250));
     this.sleep = sleep;
@@ -121,6 +123,7 @@ class ManagedBrowserCompletionMonitor {
     let sawGenerating = false;
     let sawChange = false;
     let snapshotErrors = 0;
+    let snapshotErrorElapsedMs = 0;
     let lastSnapshot = baseline;
 
     for (let poll = 0; poll < maxPolls; poll += 1) {
@@ -137,17 +140,31 @@ class ManagedBrowserCompletionMonitor {
       const raw = await this.driver.readAssistantSnapshot(control.sessionId);
       if (!raw?.ok) {
         snapshotErrors += 1;
-        if (snapshotErrors >= this.maxSnapshotErrors) {
-          await this.protocolAdapter.publishProtocolError(runtime, agentId, lastSnapshot, {
-            reason: raw?.reason || "managed_browser_snapshot_unavailable"
-          });
-          return { ok: false, reason: raw?.reason || "managed_browser_snapshot_unavailable" };
+        const retryDelayMs = Math.min(2000, this.pollMs * Math.pow(2, Math.min(4, snapshotErrors - 1)));
+        snapshotErrorElapsedMs += retryDelayMs;
+        const reason = raw?.reason || "managed_browser_snapshot_unavailable";
+        if (snapshotErrors >= this.maxSnapshotErrors || snapshotErrorElapsedMs >= this.snapshotErrorGraceMs) {
+          await this.protocolAdapter.publishProtocolError(runtime, agentId, lastSnapshot, { reason });
+          return {
+            ok: false,
+            reason,
+            snapshotErrors,
+            snapshotErrorElapsedMs
+          };
         }
-        await this.sleep(this.pollMs);
+        this.logger?.debug?.("managed_browser_snapshot_retry", {
+          agentId,
+          reason,
+          snapshotErrors,
+          retryDelayMs,
+          snapshotErrorElapsedMs
+        });
+        await this.sleep(retryDelayMs);
         continue;
       }
 
       snapshotErrors = 0;
+      snapshotErrorElapsedMs = 0;
       const snapshot = this.normalizeSnapshot(raw);
       lastSnapshot = snapshot;
       if (snapshot.generating || snapshot.availability === "generating") sawGenerating = true;
