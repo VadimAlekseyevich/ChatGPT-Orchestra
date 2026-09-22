@@ -111,9 +111,19 @@ class ManagedBrowserProtocolAdapter {
         eventId: submittedEvent.eventId,
         event: submittedEvent.event,
         accepted: Boolean(eventResult?.accepted),
+        applied: Boolean(eventResult?.applied),
         duplicate: Boolean(eventResult?.duplicate),
         reason: eventResult?.reason || null
       });
+      if (!eventResult?.ok) {
+        return {
+          ok: false,
+          reason: eventResult?.reason || "orchestra_event_rejected",
+          completion,
+          parsed,
+          eventResult
+        };
+      }
       return { ok: true, completion, parsed, eventResult };
     }
 
@@ -125,6 +135,18 @@ class ManagedBrowserProtocolAdapter {
         lastLine: parsed.lastLine
       });
       return { ok: false, reason: parsed.reason, completion, protocolError };
+    }
+
+    // A completion from an agent with a bound Orchestra context is not a generic
+    // ChatGPT conversation. Missing the final protocol envelope must fail closed;
+    // otherwise the completion monitor would stop while the state machine waits forever.
+    if (agent.protocolContext) {
+      const protocolError = await this.publishProtocolError(runtime, agent.agentId, snapshot, {
+        reason: "protocol_event_missing",
+        parsedKind: parsed.kind,
+        lastLine: parsed.lastLine || ""
+      });
+      return { ok: false, reason: "protocol_event_missing", completion, parsed, protocolError };
     }
 
     return { ok: true, completion, parsed };
