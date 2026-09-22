@@ -185,3 +185,20 @@ test("incomplete approval payload fails closed", () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "review_criteria_incomplete");
 });
+
+
+test("terminal ReviewStore result reconciles a task left REVIEWING by a crash", async () => {
+  const { engine, schedulerStore, reviewStore } = await setup();
+  const review = reviewStore.list()[0];
+  assert.equal(schedulerStore.getTask("T1").status, "REVIEWING");
+
+  await reviewStore.complete(review.reviewId, "REVIEW_APPROVED", approvedPayload());
+  assert.equal(reviewStore.get(review.reviewId).status, "APPROVED");
+  assert.equal(schedulerStore.getTask("T1").status, "REVIEWING");
+
+  const reconciled = await engine.reconcileTerminalReviews();
+  assert.equal(reconciled.ok, true);
+  assert.deepEqual(reconciled.repaired, [review.reviewId]);
+  assert.equal(schedulerStore.getTask("T1").status, "APPROVED");
+  assert.equal(schedulerStore.getTask("T1").lastReview.reviewId, review.reviewId);
+});
