@@ -219,6 +219,65 @@ test("recovers an already accepted stage artifact after service-worker restart",
   assert.equal(bus.listeners.get("completion").length, 1);
 });
 
+test("rejected planning artifact stays retryable and restarts the same stage with a fresh run", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-artifact-retry" });
+  const registry = fakeRegistry();
+  const prompts = [];
+  let run = 0;
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: new FakeEventBus(),
+    idFactory: () => `R${++run}`,
+    sendPrompt: async (agentId, prompt) => {
+      prompts.push({ agentId, prompt });
+      return { ok: true, accepted: true };
+    },
+    logger: { info() {}, warn() {} }
+  });
+  await engine.init();
+
+  const started = await engine.startProject({
+    goal: "Plan a small feature and recover if the Lead returns a malformed stage artifact.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+  assert.equal(started.ok, true);
+
+  let project = store.getActiveProject();
+  await engine.handleCompletion(completion(project, "DISCOVERY", discoveryArtifact()));
+  project = store.getActiveProject();
+  assert.equal(project.stage, "PLAN_V1");
+  const rejectedRunId = project.currentRunId;
+
+  await engine.handleCompletion(completion(project, "PLAN_V1", {
+    milestones: [],
+    risks: [],
+    verificationStrategy: ["npm test"],
+    completionDefinition: ""
+  }));
+
+  project = store.getActiveProject();
+  assert.equal(project.status, "PLANNING");
+  assert.equal(project.stage, "PLAN_V1");
+  assert.equal(project.currentRunId, rejectedRunId);
+  assert.equal(project.lastError.reason, "plan_milestones_missing");
+  assert.equal(project.lastError.details.retryable, true);
+  assert.equal(project.lastError.details.retryMode, "fresh_run");
+  assert.equal(engine.canRetryCurrentStage(), true);
+
+  const retried = await engine.resumeCurrentStage({ reason: "manual_retry" });
+  project = store.getActiveProject();
+  assert.equal(retried.ok, true);
+  assert.equal(retried.resumed, true);
+  assert.equal(retried.freshRun, true);
+  assert.equal(retried.previousRunId, rejectedRunId);
+  assert.notEqual(project.currentRunId, rejectedRunId);
+  assert.equal(project.stage, "PLAN_V1");
+  assert.equal(project.lastError, undefined);
+  assert.equal(prompts.length, 3);
+  assert.match(prompts.at(-1).prompt, /planning stage PLAN_V1/);
+});
+
 test("Start Project refuses stale IDLE Lead when a fresh readiness check reports no composer", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-stale" });
   const lead = { agentId: "A-stale", role: "lead", tabId: 9, status: "IDLE", chatState: null };
