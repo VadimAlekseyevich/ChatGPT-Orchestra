@@ -2,6 +2,7 @@
 
 const { DesktopHost } = require("./desktop-host.js");
 const { ensureDesktopPaths } = require("./app-data.js");
+const { StructuredLogger } = require("./structured-logger.js");
 const { ManagedBrowserAgentRuntime } = require("./managed-browser-agent-runtime.js");
 const { CompletionAwareManagedBrowserRuntime } = require("./completion-aware-managed-browser-runtime.js");
 const { ManagedBrowserCompletionMonitor } = require("./managed-browser-completion-monitor.js");
@@ -307,23 +308,25 @@ async function createManagedBrowserDesktopHost({
 } = {}) {
   const resolvedPaths = paths || ensureDesktopPaths({ dataDirectory });
   const clock = options.clock || (() => Date.now());
+  const rootLogger = logger || new StructuredLogger({ filename: resolvedPaths.logFile, clock });
+  const runtimeLogger = rootLogger.child?.("managed-browser") || rootLogger;
   const managedPageAdapter = pageAdapter || (!agentRuntime && !driver
-    ? new ElectronPreloadChatGPTPageAdapter({ ipcMain, logger: logger || console })
+    ? new ElectronPreloadChatGPTPageAdapter({ ipcMain, logger: runtimeLogger })
     : null);
   const managedDriver = driver || (agentRuntime ? null : new ElectronManagedBrowserDriver({
     pageAdapter: managedPageAdapter,
-    logger: logger || console
+    logger: runtimeLogger
   }));
 
   let managedProtocolAdapter = protocolAdapter || null;
   let managedCompletionMonitor = completionMonitor || null;
   let runtime = agentRuntime || null;
   if (!runtime) {
-    managedProtocolAdapter = managedProtocolAdapter || new ManagedBrowserProtocolAdapter({ logger: logger || console });
+    managedProtocolAdapter = managedProtocolAdapter || new ManagedBrowserProtocolAdapter({ logger: runtimeLogger });
     managedCompletionMonitor = managedCompletionMonitor || new ManagedBrowserCompletionMonitor({
       driver: managedDriver,
       protocolAdapter: managedProtocolAdapter,
-      logger: logger || console,
+      logger: runtimeLogger,
       ...(completionOptions || {})
     });
     runtime = new CompletionAwareManagedBrowserRuntime({
@@ -331,7 +334,7 @@ async function createManagedBrowserDesktopHost({
       completionMonitor: managedCompletionMonitor,
       profileDirectory: resolvedPaths.browserProfileDirectory,
       clock,
-      logger: logger || console,
+      logger: runtimeLogger,
       maxAgents: 5
     });
   } else if (!(runtime instanceof ManagedBrowserAgentRuntime) && typeof runtime?.bindHostHandlers !== "function") {
@@ -342,7 +345,7 @@ async function createManagedBrowserDesktopHost({
     ...options,
     paths: resolvedPaths,
     agentRuntime: runtime,
-    logger
+    logger: rootLogger
   });
   host.managedBrowserPageAdapter = managedPageAdapter;
   host.managedBrowserProtocolAdapter = managedProtocolAdapter;
