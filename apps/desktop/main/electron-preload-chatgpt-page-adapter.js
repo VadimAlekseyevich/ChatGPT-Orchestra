@@ -158,35 +158,77 @@ class ElectronPreloadChatGPTPageAdapter {
     };
   }
 
-  async recoverTimedOutSubmission(webContents, initialUrl, originalResult) {
-    const latest = await this.request(webContents, "status", {}, { timeoutMs: 1200 });
-    if (!latest?.ok) return originalResult;
-    const latestUrl = String(latest.url || currentUrl(webContents) || "");
-    const navigated = Boolean(initialUrl && latestUrl && latestUrl !== initialUrl);
-    const generating = latest.generating === true || latest.availability === "generating";
-    if (navigated || generating) {
-      return {
-        ...latest,
-        ok: true,
-        accepted: true,
-        confirmed: true,
-        method: navigated ? "navigation-reconciled" : "status-reconciled",
-        recoveredFrom: originalResult?.reason || "agent_preload_timeout"
-      };
-    }
-    if (latest.composerOccupied === true && typeof webContents?.sendInputEvent === "function") {
-      try {
-        webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-        webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
-      } catch (error) {
+  async recoverTimedOutSubmission(webContents, initialUrl, originalResult, navigationPromise = null) {
+    const recoveredFrom = originalResult?.reason || "agent_preload_timeout";
+    const recoveryMs = Math.max(2500, Math.min(10000, this.requestTimeoutMs + 3000));
+    const deadline = Date.now() + recoveryMs;
+
+    while (Date.now() < deadline) {
+      const directUrl = currentUrl(webContents);
+      if (initialUrl && directUrl && directUrl !== initialUrl) {
         return {
-          ...originalResult,
-          ok: false,
-          message: String(error?.message || error)
+          ok: true,
+          accepted: true,
+          confirmed: true,
+          method: "navigation-reconciled",
+          url: directUrl,
+          recoveredFrom
         };
       }
-      return this.waitForNativeSubmission(webContents, 1800, initialUrl);
+
+      const remainingMs = Math.max(250, deadline - Date.now());
+      const statusPromise = this.request(webContents, "status", {}, {
+        timeoutMs: Math.min(1200, remainingMs)
+      });
+      const latest = navigationPromise
+        ? await Promise.race([statusPromise, navigationPromise])
+        : await statusPromise;
+
+      if (latest?.ok && latest.accepted === true && latest.confirmed === true && latest.method === "navigation") {
+        return { ...latest, recoveredFrom };
+      }
+
+      if (latest?.ok) {
+        const latestUrl = String(latest.url || currentUrl(webContents) || "");
+        const navigated = Boolean(initialUrl && latestUrl && latestUrl !== initialUrl);
+        const generating = latest.generating === true || latest.availability === "generating";
+        if (navigated || generating) {
+          return {
+            ...latest,
+            ok: true,
+            accepted: true,
+            confirmed: true,
+            method: navigated ? "navigation-reconciled" : "status-reconciled",
+            recoveredFrom
+          };
+        }
+        if (latest.composerOccupied === true && typeof webContents?.sendInputEvent === "function") {
+          try {
+            webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+            webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+          } catch (error) {
+            return {
+              ...originalResult,
+              ok: false,
+              message: String(error?.message || error)
+            };
+          }
+          const confirmed = await Promise.race([
+            this.waitForNativeSubmission(webContents, Math.min(1800, Math.max(250, deadline - Date.now())), initialUrl),
+            ...(navigationPromise ? [navigationPromise] : [])
+          ]);
+          if (confirmed?.ok) {
+            return {
+              ...confirmed,
+              recoveredFrom
+            };
+          }
+        }
+      }
+
+      if (Date.now() < deadline) await Utils.sleep(150);
     }
+
     return originalResult;
   }
 
@@ -206,34 +248,38 @@ class ElectronPreloadChatGPTPageAdapter {
         }, { timeoutMs: outerTimeoutMs }),
         navigation.promise
       ]);
+
+      if (result?.ok) return result;
+      if (result?.reason === "agent_preload_timeout") {
+        const recovered = await this.recoverTimedOutSubmission(webContents, initialUrl, result, navigation.promise);
+        if (recovered?.ok) return recovered;
+        result = recovered || result;
+      }
+      if (result?.reason !== "send_not_confirmed" || result?.promptStaged !== true) return result;
+      if (typeof webContents?.sendInputEvent !== "function") return result;
+
+      try {
+        // A BrowserWindow-level keyboard event is trusted by Chromium, unlike a
+        // synthetic DOM click/KeyboardEvent created inside the remote page.
+        webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+        webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+      } catch (error) {
+        return {
+          ...result,
+          ok: false,
+          reason: "send_not_confirmed",
+          fallback: "trusted-enter",
+          message: String(error?.message || error)
+        };
+      }
+
+      return await Promise.race([
+        this.waitForNativeSubmission(webContents, 1800, initialUrl),
+        navigation.promise
+      ]);
     } finally {
       navigation.close();
     }
-    if (result?.ok) return result;
-    if (result?.reason === "agent_preload_timeout") {
-      const recovered = await this.recoverTimedOutSubmission(webContents, initialUrl, result);
-      if (recovered?.ok) return recovered;
-      result = recovered || result;
-    }
-    if (result?.reason !== "send_not_confirmed" || result?.promptStaged !== true) return result;
-    if (typeof webContents?.sendInputEvent !== "function") return result;
-
-    try {
-      // A BrowserWindow-level keyboard event is trusted by Chromium, unlike a
-      // synthetic DOM click/KeyboardEvent created inside the remote page.
-      webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-      webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
-    } catch (error) {
-      return {
-        ...result,
-        ok: false,
-        reason: "send_not_confirmed",
-        fallback: "trusted-enter",
-        message: String(error?.message || error)
-      };
-    }
-
-    return this.waitForNativeSubmission(webContents, 1800, initialUrl);
   }
 
   async stopGeneration(webContents) {
