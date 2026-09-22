@@ -132,6 +132,11 @@
 
       const lead = this.getLead();
       if (!liveAgent(this.registry, lead)) return { ok: false, reason: "lead_reconnect_required" };
+
+      if (typeof this.canRetryCurrentStage === "function" && this.canRetryCurrentStage()) {
+        return this.resumeCurrentStage({ reason: "recovery_resume_retry" });
+      }
+
       if (project.currentRunId) {
         const completed = typeof this.currentRunCompleted === "function"
           ? this.currentRunCompleted(project)
