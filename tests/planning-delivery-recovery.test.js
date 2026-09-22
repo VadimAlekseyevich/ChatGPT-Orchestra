@@ -217,6 +217,32 @@ test("retryable PLANNING delivery failure resumes the same run and clears stale 
   assert.match(prompts[0].prompt, /replacement:PLAN_V1:planning-plan_v1-existing/);
 });
 
+test("retryPlanning API accepts a persisted rejected-artifact recovery", async () => {
+  const calls = [];
+  const planningEngine = {
+    getPublicState: () => ({
+      projectId: "P1",
+      status: "NEEDS_USER",
+      stage: "PLAN_V1",
+      currentRunId: "R-old",
+      lastError: { reason: "plan_milestones_missing", details: { stage: "PLAN_V1" } }
+    }),
+    canRetryCurrentStage: () => true,
+    async resumeCurrentStage(payload) {
+      calls.push(payload);
+      return { ok: true, resumed: true, freshRun: true, previousRunId: "R-old", runId: "R-new" };
+    }
+  };
+  const api = new OrchestratorApi({ orchestrator: {}, planningEngine });
+
+  const result = await api.execute("retryPlanning");
+  assert.equal(result.ok, true);
+  assert.equal(result.freshRun, true);
+  assert.equal(result.previousRunId, "R-old");
+  assert.equal(result.runId, "R-new");
+  assert.deepEqual(calls, [{ reason: "manual_retry" }]);
+});
+
 test("retryPlanning API is gated to a persisted lead delivery failure", async () => {
   const calls = [];
   const planningEngine = {
