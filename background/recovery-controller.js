@@ -9,8 +9,10 @@
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
   }
-  function liveAgent(agent) {
-    return Boolean(agent && Number.isInteger(agent.tabId) && !["OFFLINE", "ERROR"].includes(agent.status));
+  function liveAgent(registry, agent) {
+    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
+    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
+    return Number.isInteger(agent.tabId);
   }
 
   class RecoveryController {
@@ -49,7 +51,7 @@
       this.bootReady = false;
       await this.store.load();
       const state = this.store.summary();
-      if (["RUNNING", "PAUSING", "STOPPING", "RECOVERING"].includes(state.status)) {
+      if (["RUNNING", "PAUSING", "STOPPING", "RECOVERING", "RECOVERY_REQUIRED"].includes(state.status)) {
         await this.store.transition("RECOVERING", {
           reason: "service_worker_restart_reconciliation",
           issues: [],
@@ -115,16 +117,16 @@
 
       if (this.activePlanningGeneration()) {
         const lead = this.planningEngine?.getLead?.();
-        if (!liveAgent(lead)) issues.push({ code: "lead_reconnect_required", projectId: project.projectId });
+        if (!liveAgent(this.registry, lead)) issues.push({ code: "lead_reconnect_required", projectId: project.projectId });
       }
       for (const run of this.schedulerStore?.activeRuns?.() || []) {
-        if (!liveAgent(this.registry.getAgent(run.agentId))) issues.push({ code: "worker_run_requires_reconciliation", runId: run.runId, taskId: run.taskId, agentId: run.agentId });
+        if (!liveAgent(this.registry, this.registry.getAgent(run.agentId))) issues.push({ code: "worker_run_requires_reconciliation", runId: run.runId, taskId: run.taskId, agentId: run.agentId });
       }
       for (const review of this.reviewStore?.active?.() || []) {
-        if (!liveAgent(this.registry.getAgent(review.reviewerAgentId))) issues.push({ code: "review_requires_reconciliation", reviewId: review.reviewId, taskId: review.taskId, agentId: review.reviewerAgentId });
+        if (!liveAgent(this.registry, this.registry.getAgent(review.reviewerAgentId))) issues.push({ code: "review_requires_reconciliation", reviewId: review.reviewId, taskId: review.taskId, agentId: review.reviewerAgentId });
       }
       const integrationRun = this.integrationStore?.currentRun?.();
-      if (integrationRun && ACTIVE_INTEGRATION_GENERATION.has(integrationRun.status) && !liveAgent(this.registry.getAgent(integrationRun.agentId))) {
+      if (integrationRun && ACTIVE_INTEGRATION_GENERATION.has(integrationRun.status) && !liveAgent(this.registry, this.registry.getAgent(integrationRun.agentId))) {
         issues.push({ code: "integration_requires_reconciliation", runId: integrationRun.runId, agentId: integrationRun.agentId });
       }
       return issues;
@@ -245,7 +247,31 @@
     }
 
     async tick({ reason = "recovery_tick" } = {}) {
-      if (this.store.summary().status !== "PAUSING") return { ok: true, ignored: true };
+      const status = this.store.summary().status;
+
+      if (status === "RUNNING") {
+        const planningWatchdog = await this.planningEngine?.checkWatchdog?.();
+        if (planningWatchdog?.ok === false && planningWatchdog.reason === "planning_timeout") {
+          await this.store.transition("RECOVERY_REQUIRED", {
+            reason: "planning_timeout",
+            issues: [{ code: "planning_timeout", details: planningWatchdog }],
+            snapshot: this.buildSnapshot("planning_timeout"),
+            reconciled: false
+          });
+          return { ok: false, reason: "planning_timeout", recovery: this.getPublicState() };
+        }
+        return { ok: true, ignored: true };
+      }
+
+      if (status === "RECOVERY_REQUIRED" && this.bootReady) {
+        const issues = this.continuityIssues();
+        if (!issues.length) {
+          return this._resume({ reason: `automatic_continuity_restored:${reason}`, automatic: true });
+        }
+        return { ok: true, pending: true, issues, recovery: this.getPublicState() };
+      }
+
+      if (status !== "PAUSING") return { ok: true, ignored: true };
       const safe = this.safePointSummary();
       if (!safe.reached) return { ok: true, pending: true, safePoint: safe };
       await this.reconcileProtocolContexts();
@@ -280,11 +306,11 @@
     }
 
     async resume() {
-      this.resumePromise = this.resumePromise.catch(() => {}).then(() => this._resume());
+      this.resumePromise = this.resumePromise.catch(() => {}).then(() => this._resume({ reason: "user_resume_requested", automatic: false }));
       return this.resumePromise;
     }
 
-    async _resume() {
+    async _resume({ reason = "user_resume_requested", automatic = false } = {}) {
       const project = this.projectStore?.getActiveProject?.();
       if (!project) return { ok: false, reason: "no_active_project" };
       const currentStatus = this.store.summary().status;
@@ -292,7 +318,7 @@
       if (!RECOVERABLE_STATES.has(currentStatus)) return { ok: false, reason: "lifecycle_not_resumable", status: currentStatus };
 
       await this.store.transition("RECOVERING", {
-        reason: "user_resume_requested",
+        reason,
         issues: [],
         snapshot: this.buildSnapshot("resume_requested")
       });
@@ -303,7 +329,7 @@
       const schedulerSummary = this.schedulerStore?.summary?.();
       if (schedulerSummary?.taskCount > 0 && schedulerSummary.status !== "INTEGRATION_VERIFIED") {
         for (const agent of this.registry?.listAgents?.() || []) {
-          if (agent.role === "worker" && !Number.isInteger(agent.tabId)) await this.registry.removeAgent?.(agent.agentId);
+          if (agent.role === "worker" && !liveAgent(this.registry, agent)) await this.registry.removeAgent?.(agent.agentId);
         }
         const target = Math.max(2, Number(schedulerSummary.settings?.maxWorkers) || 2);
         try {
@@ -315,7 +341,7 @@
       }
 
       const planningProject = this.projectStore.getActiveProject();
-      if (planningProject?.status === "PLANNING" && !liveAgent(this.planningEngine?.getLead?.())) {
+      if (planningProject?.status === "PLANNING" && !liveAgent(this.registry, this.planningEngine?.getLead?.())) {
         issues.push({ code: "lead_reconnect_required", projectId: planningProject.projectId });
       }
 
@@ -338,12 +364,12 @@
       }
 
       await this.store.transition("RUNNING", {
-        reason: "resume_reconciled",
+        reason: automatic ? "automatic_resume_reconciled" : "resume_reconciled",
         issues: [],
         snapshot: this.buildSnapshot("resume_reconciled"),
         reconciled: true
       });
-      await this.kickEngines("user_resume");
+      await this.kickEngines(automatic ? "automatic_resume" : "user_resume");
       return { ok: true, recovery: this.getPublicState() };
     }
 
