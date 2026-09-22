@@ -138,6 +138,7 @@
       }
       const project = d.project;
       const recovery = d.recovery || {};
+      const operational = d.operationalState || { status: project?.status || recovery.status || "IDLE" };
       const metrics = d.metrics || {};
       const taskMetrics = metrics.tasks || {};
       const agentMetrics = metrics.agents || {};
@@ -162,7 +163,7 @@
           <div class="dashboard-topbar">
             <div>
               <h2>${escapeHtml(this.tr("dashboard.title", "Dashboard"))}</h2>
-              <p>${project ? `${escapeHtml(project.status)} · ${escapeHtml(project.repository?.fullName || project.repository?.url || "repository")}` : escapeHtml(this.tr("dashboard.noProject", "No active project"))}</p>
+              <p>${project ? `${escapeHtml(operational.status || project.status)} · ${escapeHtml(project.repository?.fullName || project.repository?.url || "repository")}` : escapeHtml(this.tr("dashboard.noProject", "No active project"))}</p>
             </div>
             <button class="secondary compact" data-dashboard-action="refresh">${escapeHtml(this.tr("dashboard.refresh", "Refresh"))}</button>
           </div>
