@@ -23,6 +23,17 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function urlForLog(value) {
+  const raw = String(value || "");
+  if (raw === "about:blank") return raw;
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch (_) {
+    return raw ? "[invalid-url]" : "";
+  }
+}
+
 function assertManagedBrowserDriver(driver) {
   const missing = MANAGED_BROWSER_DRIVER_METHODS.filter((method) => typeof driver?.[method] !== "function");
   if (missing.length) throw new TypeError(`managed_browser_driver_contract_missing:${missing.join(",")}`);
@@ -66,6 +77,8 @@ class ManagedBrowserAgentRuntime {
 
   async load() {
     if (!this.started) {
+      const startedAt = this.clock();
+      this.logger?.info?.("managed_browser_runtime_starting", { maxAgents: this.maxAgents });
       await this.driver.start({ profileDirectory: this.profileDirectory });
       this.started = true;
       if (typeof this.driver.subscribe === "function") {
@@ -75,6 +88,9 @@ class ManagedBrowserAgentRuntime {
           });
         });
       }
+      this.logger?.info?.("managed_browser_runtime_started", {
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
     }
     this.updatedAt = this.clock();
     return this.snapshot();
@@ -196,14 +212,59 @@ class ManagedBrowserAgentRuntime {
 
   async createSession({ url = "about:blank", active = false } = {}) {
     await this.ensureStarted();
-    return normalizeSession(await this.driver.createSession({ url: String(url || "about:blank"), active: Boolean(active) }));
+    const startedAt = this.clock();
+    const targetUrl = String(url || "about:blank");
+    this.logger?.info?.("managed_browser_session_create_started", {
+      active: Boolean(active),
+      url: urlForLog(targetUrl)
+    });
+    try {
+      const session = normalizeSession(await this.driver.createSession({ url: targetUrl, active: Boolean(active) }));
+      this.logger?.info?.("managed_browser_session_created", {
+        sessionId: session.id,
+        active: session.active,
+        url: urlForLog(session.url),
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
+      return session;
+    } catch (error) {
+      this.logger?.error?.("managed_browser_session_create_failed", {
+        active: Boolean(active),
+        url: urlForLog(targetUrl),
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
+      throw error;
+    }
   }
 
   async navigateSession(sessionId, url) {
     await this.ensureStarted();
-    const session = normalizeSession(await this.driver.navigateSession(String(sessionId ?? ""), String(url || "")));
-    await this.updateSessionNavigation(session.id, session.url);
-    return session;
+    const id = String(sessionId ?? "");
+    const targetUrl = String(url || "");
+    const startedAt = this.clock();
+    this.logger?.info?.("managed_browser_session_navigation_started", {
+      sessionId: id,
+      url: urlForLog(targetUrl)
+    });
+    try {
+      const session = normalizeSession(await this.driver.navigateSession(id, targetUrl));
+      await this.updateSessionNavigation(session.id, session.url);
+      this.logger?.info?.("managed_browser_session_navigation_completed", {
+        sessionId: session.id,
+        url: urlForLog(session.url),
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
+      return session;
+    } catch (error) {
+      this.logger?.error?.("managed_browser_session_navigation_failed", {
+        sessionId: id,
+        url: urlForLog(targetUrl),
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
+      throw error;
+    }
   }
 
   async removeSession(sessionId) {
@@ -212,6 +273,11 @@ class ManagedBrowserAgentRuntime {
     const agent = this.getAgentBySessionId(id);
     const result = await this.driver.removeSession(id);
     if (agent && !this.hostHandlers?.onSessionRemoved) await this.markSessionOffline(id, "session_removed");
+    this.logger?.info?.("managed_browser_session_removed", {
+      sessionId: id,
+      agentId: agent?.agentId || null,
+      removed: Boolean(result)
+    });
     return result;
   }
 
@@ -261,6 +327,13 @@ class ManagedBrowserAgentRuntime {
     };
     this.agents.set(agentId, agent);
     this.updatedAt = now;
+    this.logger?.info?.("managed_browser_agent_created", {
+      agentId,
+      role: agent.role,
+      sessionId: normalized.id,
+      status: agent.status,
+      url: urlForLog(agent.chatUrl)
+    });
     return this.getAgent(agentId);
   }
 
@@ -288,6 +361,10 @@ class ManagedBrowserAgentRuntime {
     mutable.tabId = null;
     mutable.updatedAt = this.clock();
     this.updatedAt = mutable.updatedAt;
+    this.logger?.warn?.("managed_browser_agent_offline", {
+      agentId: mutable.agentId,
+      reason: mutable.lastError
+    });
     return this.getAgent(agent.agentId);
   }
 
@@ -312,6 +389,12 @@ class ManagedBrowserAgentRuntime {
     mutable.lastError = null;
     if (url) mutable.chatUrl = String(url);
     this.updatedAt = mutable.updatedAt;
+    this.logger?.debug?.("managed_browser_agent_heartbeat", {
+      agentId: mutable.agentId,
+      status: mutable.status,
+      availability: payload.availability || null,
+      generating: payload.generating === true
+    });
     return this.getAgent(agent.agentId);
   }
 
@@ -320,12 +403,34 @@ class ManagedBrowserAgentRuntime {
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
+    const startedAt = this.clock();
     try {
       const result = await this.driver.pingSession(sessionId);
-      if (!result?.ok) return { ...result, agentId: agent.agentId };
+      if (!result?.ok) {
+        this.logger?.warn?.("managed_browser_agent_ping_failed", {
+          agentId: agent.agentId,
+          sessionId,
+          reason: result?.reason || "ping_failed",
+          durationMs: Math.max(0, this.clock() - startedAt)
+        });
+        return { ...result, agentId: agent.agentId };
+      }
       const updated = await this.updateHeartbeat(sessionId, result, result.url || agent.chatUrl || "");
+      this.logger?.debug?.("managed_browser_agent_ping_completed", {
+        agentId: agent.agentId,
+        sessionId,
+        availability: result.availability || null,
+        generating: result.generating === true,
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
       return { ...result, ok: true, agent: updated || this.getAgent(agent.agentId), agentId: agent.agentId };
     } catch (error) {
+      this.logger?.error?.("managed_browser_agent_ping_error", {
+        agentId: agent.agentId,
+        sessionId,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
       return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
     }
   }
@@ -335,11 +440,33 @@ class ManagedBrowserAgentRuntime {
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
+    const startedAt = this.clock();
+    const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
+    this.logger?.info?.("managed_browser_prompt_send_started", {
+      agentId: agent.agentId,
+      sessionId,
+      promptBytes
+    });
     try {
       const result = await this.driver.sendPrompt(sessionId, String(prompt || ""));
       if (result?.ok) await this.updateHeartbeat(sessionId, { availability: "generating", generating: true }, result.url || agent.chatUrl || "");
+      this.logger?.info?.("managed_browser_prompt_send_completed", {
+        agentId: agent.agentId,
+        sessionId,
+        promptBytes,
+        ok: result?.ok !== false,
+        reason: result?.reason || null,
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
       return { ...(result || {}), agentId: agent.agentId };
     } catch (error) {
+      this.logger?.error?.("managed_browser_prompt_send_failed", {
+        agentId: agent.agentId,
+        sessionId,
+        promptBytes,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
       return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
     }
   }
@@ -349,17 +476,38 @@ class ManagedBrowserAgentRuntime {
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
+    const startedAt = this.clock();
+    this.logger?.info?.("managed_browser_stop_started", { agentId: agent.agentId, sessionId });
     try {
       const result = await this.driver.stopGeneration(sessionId);
       if (result?.ok) await this.updateHeartbeat(sessionId, { availability: "ready", generating: false }, result.url || agent.chatUrl || "");
+      this.logger?.info?.("managed_browser_stop_completed", {
+        agentId: agent.agentId,
+        sessionId,
+        ok: result?.ok !== false,
+        reason: result?.reason || null,
+        durationMs: Math.max(0, this.clock() - startedAt)
+      });
       return { ...(result || {}), agentId: agent.agentId };
     } catch (error) {
+      this.logger?.error?.("managed_browser_stop_failed", {
+        agentId: agent.agentId,
+        sessionId,
+        durationMs: Math.max(0, this.clock() - startedAt),
+        error
+      });
       return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
     }
   }
 
   async handleDriverEvent(event = {}) {
     const type = String(event.type || "");
+    this.logger?.debug?.("managed_browser_driver_event", {
+      type,
+      sessionId: event.sessionId === undefined || event.sessionId === null ? null : String(event.sessionId),
+      agentId: event.agentId || null,
+      reason: event.reason || null
+    });
     if (type === "runtime-message") return this.publishRuntimeMessage(event.message || {}, { sessionId: event.sessionId, agentId: event.agentId, url: event.url || "" });
     if (type === "api-message") return this.publishApiMessage(event.message || {}, { sessionId: event.sessionId, agentId: event.agentId, url: event.url || "" });
     if (type === "session-removed") {
@@ -395,11 +543,21 @@ class ManagedBrowserAgentRuntime {
   }
 
   async close() {
-    try { this.unsubscribeDriver?.(); } catch (_) {}
+    const startedAt = this.clock();
+    this.logger?.info?.("managed_browser_runtime_closing", {
+      agents: this.agents.size,
+      started: this.started
+    });
+    try { this.unsubscribeDriver?.(); } catch (error) {
+      this.logger?.warn?.("managed_browser_unsubscribe_failed", { error });
+    }
     this.unsubscribeDriver = null;
     this.unbindHostHandlers();
     if (this.started) await this.driver.close();
     this.started = false;
+    this.logger?.info?.("managed_browser_runtime_closed", {
+      durationMs: Math.max(0, this.clock() - startedAt)
+    });
   }
 }
 
