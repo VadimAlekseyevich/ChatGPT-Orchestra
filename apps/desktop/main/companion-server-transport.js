@@ -39,6 +39,7 @@ class CompanionServerTransport {
 
   async connect() {
     if (this.server) return this.getStatus();
+    this.logger.info?.("companion_transport_starting", { host: this.host, requestedPort: this.port });
     this.server = net.createServer((socket) => this.accept(socket));
     await new Promise((resolve, reject) => {
       const onError = (error) => { this.server?.off("listening", onListen); reject(error); };
@@ -58,6 +59,7 @@ class CompanionServerTransport {
       instanceId: crypto.randomUUID()
     }, null, 2), { encoding: "utf8", mode: 0o600 });
     try { fs.chmodSync(this.paths.companionEndpointFile, 0o600); } catch (_) {}
+    this.logger.info?.("companion_transport_listening", { host: this.host, port: address.port });
     return this.getStatus();
   }
 
@@ -121,6 +123,7 @@ class CompanionServerTransport {
           this.socket = socket;
           this.status = { ...this.status, connected: true, clientId: clientNonce.slice(0, 12), lastError: null };
           socket.write(`${JSON.stringify(createServerAck(this.secret, clientNonce))}\n`);
+          this.logger.info?.("companion_transport_authenticated", { clientId: this.status.clientId });
           this.resolveWaiters();
           continue;
         }
@@ -133,23 +136,33 @@ class CompanionServerTransport {
 
     socket.on("error", (error) => {
       if (this.socket === socket) this.status = { ...this.status, connected: false, clientId: null, lastError: error?.message || String(error) };
+      this.logger.warn?.("companion_transport_socket_error", { error });
     });
     socket.on("close", () => {
       if (this.socket === socket) {
         this.socket = null;
         this.status = { ...this.status, connected: false, clientId: null };
       }
+      this.logger.info?.("companion_transport_socket_closed", {});
     });
   }
 
   async send(input) {
     if (!this.socket || !this.status.connected) throw new Error("companion_transport_disconnected");
     const frame = Protocol.validateFrame(input);
+    this.logger.debug?.("companion_transport_frame_send", {
+      type: frame.type || frame.kind || null,
+      requestId: frame.requestId || frame.id || null
+    });
     await new Promise((resolve, reject) => this.socket.write(`${JSON.stringify(frame)}\n`, (error) => error ? reject(error) : resolve()));
     return { ok: true };
   }
 
   async disconnect() {
+    this.logger.info?.("companion_transport_stopping", {
+      connected: this.status.connected,
+      listening: this.status.listening
+    });
     const socket = this.socket;
     this.socket = null;
     if (socket) {
@@ -162,6 +175,7 @@ class CompanionServerTransport {
     this.status = { ...this.status, connected: false, listening: false, port: null, clientId: null };
     this.rejectWaiters(new Error("companion_transport_stopped"));
     try { fs.unlinkSync(this.paths.companionEndpointFile); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+    this.logger.info?.("companion_transport_stopped", {});
     return this.getStatus();
   }
 }
