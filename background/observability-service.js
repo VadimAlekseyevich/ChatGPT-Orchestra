@@ -39,6 +39,44 @@
     return ({ info: 0, warning: 1, error: 2, critical: 3 })[String(value || "info").toLowerCase()] ?? 0;
   }
 
+  function operationalState({ project = null, recovery = null, scheduler = null, integration = null, agents = [] } = {}) {
+    const projectStatus = String(project?.status || "IDLE");
+    const recoveryStatus = String(recovery?.status || "IDLE");
+    const schedulerStatus = String(scheduler?.status || "IDLE");
+    const integrationStatus = String(integration?.status || "IDLE");
+    const controlStates = new Set(["PAUSING", "PAUSED", "STOPPING", "STOPPED", "RECOVERING", "RECOVERY_REQUIRED"]);
+    if (!project) return { status: "IDLE", source: "project", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    if (controlStates.has(recoveryStatus)) return { status: recoveryStatus, source: "recovery", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    if (projectStatus === "NEEDS_USER" || schedulerStatus === "NEEDS_USER" || integrationStatus === "NEEDS_USER") {
+      return { status: "NEEDS_USER", source: "work", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    }
+    if ([projectStatus, schedulerStatus, integrationStatus].includes("INTEGRATION_VERIFIED")) {
+      return { status: "INTEGRATION_VERIFIED", source: "integration", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    }
+    if (projectStatus === "INTEGRATION_REPAIRING") {
+      return { status: "INTEGRATION_REPAIRING", source: "project", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    }
+    if (projectStatus === "INTEGRATING" || integrationStatus === "INTEGRATING") {
+      return { status: "INTEGRATING", source: "integration", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    }
+    if (schedulerStatus === "READY_FOR_INTEGRATION" || projectStatus === "READY_FOR_INTEGRATION") {
+      return { status: "READY_FOR_INTEGRATION", source: "scheduler", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+    }
+    if (projectStatus === "PLANNING") {
+      const lead = agents.find((agent) => agent.role === "lead") || null;
+      const active = Boolean(lead?.connected && lead?.status === "BUSY");
+      return {
+        status: active ? "PLANNING_ACTIVE" : "PLANNING_WAITING",
+        source: "planning",
+        projectStatus,
+        recoveryStatus,
+        schedulerStatus,
+        integrationStatus
+      };
+    }
+    return { status: projectStatus || schedulerStatus || "IDLE", source: "project", projectStatus, recoveryStatus, schedulerStatus, integrationStatus };
+  }
+
   function warning(id, severity, code, message, details = null, at = 0) {
     return sanitize({
       id: String(id || code || "warning"),
@@ -265,6 +303,8 @@
       const rejections = sanitize(clone(recent.rejections || []));
       const decisions = sanitize(clone(this.schedulerStore?.recentDecisions?.(decisionLimit) || []));
       const persistence = sanitize(typeof this.persistenceInfo === "function" ? this.persistenceInfo() : (this.persistenceInfo || {}));
+      const agents = this.agents();
+      const operational = operationalState({ project, recovery, scheduler, integration, agents });
       const timestamps = [project?.updatedAt, scheduler?.updatedAt, integration?.updatedAt, recovery?.updatedAt, ...tasks.map((item) => item.updatedAt), ...reviews.map((item) => item.updatedAt)].map(number);
       const revision = Math.max(0, ...timestamps, number(events.at?.(-1)?.receivedAt), number(rejections.at?.(-1)?.receivedAt));
 
@@ -272,6 +312,7 @@
         observabilityVersion: OBSERVABILITY_VERSION,
         revision,
         generatedAt: this.clock(),
+        operationalState: sanitize(operational),
         project: project ? sanitize({ projectId: project.projectId, status: project.status, stage: project.stage, goal: text(project.initialGoal || "", 12000), repository: clone(project.repository || null), validation: clone(project.validation || null), execution: clone(project.execution || null), lastError: project.lastError ? clone(project.lastError) : null, createdAt: number(project.createdAt), updatedAt: number(project.updatedAt) }) : null,
         scheduler: sanitize(scheduler),
         tasks,
@@ -279,7 +320,7 @@
         reviews: { summary: sanitize(this.reviewStore?.summary?.() || null), items: reviews },
         integration: { summary: sanitize(integration), runs: integrationRuns, repairs },
         recovery,
-        agents: this.agents(),
+        agents,
         decisions,
         events,
         rejections,
@@ -300,5 +341,5 @@
 
   root.ObservabilityService = ObservabilityService;
   root.OBSERVABILITY_VERSION = OBSERVABILITY_VERSION;
-  if (typeof module !== "undefined" && module.exports) module.exports = { ObservabilityService, OBSERVABILITY_VERSION, sanitize, taskPublic, runPublic, reviewPublic, integrationRunPublic };
+  if (typeof module !== "undefined" && module.exports) module.exports = { ObservabilityService, OBSERVABILITY_VERSION, sanitize, operationalState, taskPublic, runPublic, reviewPublic, integrationRunPublic };
 })();
