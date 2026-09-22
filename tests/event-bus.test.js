@@ -27,6 +27,7 @@ async function setup({ stateStore = new MemoryStateStore() } = {}) {
   const store = new EventStore({ stateStore });
   const bus = new EventBus({ registry: runtime, store, logger: { warn() {} } });
   await bus.load();
+  bus.subscribe("*", async () => {});
   const sender = runtime.normalizeSender({ agentId: "A1" });
   return { runtime, store, bus, sender, stateStore };
 }
@@ -97,4 +98,31 @@ test("persists processed events across portable StateStore reload", async () => 
   const second = await setup({ stateStore });
   const replay = await second.bus.handleEvent(event(), second.sender);
   assert.equal(replay.duplicate, true);
+});
+
+
+test("listener failure keeps the accepted event pending and exact replay applies it later", async () => {
+  const { bus, store, sender } = await setup();
+  let fail = true;
+  let attempts = 0;
+  bus.subscribe("completion", async () => {
+    attempts += 1;
+    if (fail) throw new Error("simulated_crash_after_accept");
+  });
+
+  const first = await bus.handleEvent(event({ eventId: "E-pending" }), sender);
+  assert.equal(first.ok, false);
+  assert.equal(first.accepted, true);
+  assert.equal(first.reason, "event_listener_failed");
+  assert.equal(store.getProcessed("E-pending").status, "accepted");
+  assert.equal(store.summary().pendingEvents, 1);
+
+  fail = false;
+  const replay = await bus.handleEvent(event({ eventId: "E-pending" }), sender);
+  assert.equal(replay.ok, true);
+  assert.equal(replay.duplicate, true);
+  assert.equal(replay.applied, true);
+  assert.equal(attempts, 2);
+  assert.equal(store.getProcessed("E-pending").status, "applied");
+  assert.equal(store.summary().pendingEvents, 0);
 });
