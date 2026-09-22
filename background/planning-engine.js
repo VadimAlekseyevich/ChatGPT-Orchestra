@@ -2,17 +2,30 @@
   "use strict";
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const NEXT = { DISCOVERY: "PLAN_V1", PLAN_V1: "CRITIQUE", CRITIQUE: "PLAN_V2", PLAN_V2: "DECOMPOSE", DECOMPOSE: "DAG_CRITIC" };
+  const RETRYABLE_ARTIFACT_FAILURES = new Set([
+    "stage_artifact_not_object",
+    "repository_access_status_missing",
+    "repository_inspection_evidence_missing",
+    "repository_commands_missing",
+    "plan_milestones_missing",
+    "completion_definition_missing",
+    "critique_findings_missing",
+    "revised_plan_milestones_missing",
+    "agents_md_proposal_invalid",
+    "task_graph_tasks_missing"
+  ]);
 
   function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
   function hasItems(value) { return Array.isArray(value) && value.length > 0; }
 
   class PlanningEngine {
-    constructor({ projectStore, registry, eventBus, sendPrompt, idFactory = null } = {}) {
+    constructor({ projectStore, registry, eventBus, sendPrompt, idFactory = null, logger = console } = {}) {
       this.projectStore = projectStore;
       this.registry = registry;
       this.eventBus = eventBus;
       this.sendPrompt = sendPrompt;
       this.idFactory = idFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      this.logger = logger;
       this.unsubscribers = [];
       this.initialized = false;
     }
@@ -52,12 +65,17 @@
       }
       return { ok: true, lead, details: ping || null };
     }
-    isRetryableLeadDeliveryFailure(project) {
-      return Boolean(project
-        && ["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))
-        && project.currentRunId
-        && project.lastError?.reason === "lead_prompt_failed");
+    planningRetryMode(project) {
+      if (!project
+        || !["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))
+        || !project.currentRunId) return null;
+      if (project.lastError?.reason === "lead_prompt_failed") return "same_run";
+      if (project.lastError?.details?.retryMode === "fresh_run") return "fresh_run";
+      if (RETRYABLE_ARTIFACT_FAILURES.has(String(project.lastError?.reason || ""))) return "fresh_run";
+      return null;
     }
+    isRetryableLeadDeliveryFailure(project) { return this.planningRetryMode(project) === "same_run"; }
+    canRetryCurrentStage() { return Boolean(this.planningRetryMode(this.projectStore.getActiveProject())); }
 
     async init() {
       if (this.initialized) return this.getPublicState();
@@ -98,14 +116,35 @@
 
     async resumeCurrentStage({ reason = "fresh_lead_replacement" } = {}) {
       let project = this.projectStore.getActiveProject();
-      const retryableDeliveryFailure = this.isRetryableLeadDeliveryFailure(project);
-      if (!project || (!retryableDeliveryFailure && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
+      const retryMode = this.planningRetryMode(project);
+      if (!project || (!retryMode && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
       const readiness = await this.ensureLeadPromptReady();
       if (!readiness.ok) return { ...readiness, retryable: true, project: this.getPublicState() };
       const lead = readiness.lead;
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
-      if (retryableDeliveryFailure) {
+
+      if (retryMode === "fresh_run") {
+        const previousRunId = project.currentRunId;
+        this.logger?.warn?.("planning_stage_retry_fresh_run", {
+          projectId: project.projectId,
+          stage,
+          previousRunId,
+          failure: project.lastError?.reason || null,
+          reason
+        });
+        const retried = await this.dispatchStage(project.projectId, stage, { lead, readinessChecked: true });
+        return {
+          ...retried,
+          resumed: Boolean(retried?.ok),
+          freshRun: true,
+          previousRunId,
+          runId: this.projectStore.getActiveProject()?.currentRunId || null,
+          reason: retried?.ok ? reason : retried?.reason
+        };
+      }
+
+      if (retryMode === "same_run") {
         await this.projectStore.clearError?.(project.projectId, "PLANNING");
         project = this.projectStore.getActiveProject();
       }
@@ -210,10 +249,27 @@
       const artifact = record?.source?.planningArtifact;
       const problem = this.artifactCheck(stage, artifact);
       if (problem) {
-        await this.projectStore.fail(project.projectId, problem, { stage });
+        this.logger?.warn?.("planning_stage_artifact_rejected", {
+          projectId: project.projectId,
+          stage,
+          runId: event.runId || project.currentRunId || null,
+          reason: problem,
+          retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem)
+        });
+        await this.projectStore.fail(project.projectId, problem, {
+          stage,
+          acceptedRunId: event.runId || project.currentRunId || null,
+          retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem),
+          retryMode: RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "fresh_run" : null
+        }, RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "PLANNING" : "NEEDS_USER");
         return;
       }
 
+      this.logger?.info?.("planning_stage_completed", {
+        projectId: project.projectId,
+        stage,
+        runId: event.runId || project.currentRunId || null
+      });
       await this.projectStore.completeStage(project.projectId, { stage, artifact });
       if (stage === "DAG_CRITIC") {
         const validation = root.validateTaskGraph(artifact);
@@ -230,7 +286,16 @@
         await this.projectStore.fail(project.projectId, "unknown_next_stage", { stage }, "FAILED");
         return;
       }
-      await this.dispatchStage(project.projectId, next);
+      this.logger?.info?.("planning_stage_advancing", { projectId: project.projectId, fromStage: stage, toStage: next });
+      const dispatched = await this.dispatchStage(project.projectId, next);
+      if (!dispatched?.ok) {
+        this.logger?.warn?.("planning_stage_advance_failed", {
+          projectId: project.projectId,
+          fromStage: stage,
+          toStage: next,
+          reason: dispatched?.reason || "unknown"
+        });
+      }
     }
 
     async handleBlocker(record) {
@@ -244,5 +309,5 @@
   }
 
   root.PlanningEngine = PlanningEngine;
-  if (typeof module !== "undefined" && module.exports) module.exports = { PlanningEngine, NEXT };
+  if (typeof module !== "undefined" && module.exports) module.exports = { PlanningEngine, NEXT, RETRYABLE_ARTIFACT_FAILURES };
 })();
