@@ -150,6 +150,7 @@
         this.unsubscribers.push(this.eventBus.subscribe("blocker", (record) => this.handleReviewFailureEvent(record)));
         this.unsubscribers.push(this.eventBus.subscribe("user", (record) => this.handleReviewFailureEvent(record)));
       }
+      await this.reconcileTerminalReviews();
       await this.restoreActiveReviews();
       this.initialized = true;
       return this.getPublicState();
@@ -187,6 +188,30 @@
           runId: review.reviewId
         });
       }
+    }
+
+    async reconcileTerminalReviews() {
+      const repaired = [];
+      for (const review of this.store.list()) {
+        if (!["APPROVED", "CHANGES_REQUIRED"].includes(review.status)) continue;
+        const task = this.schedulerStore.getTask(review.taskId);
+        if (!task) continue;
+        const belongsToCurrentWork = task.activeReviewId === review.reviewId
+          || task.lastRunId === review.workerRunId;
+        if (!belongsToCurrentWork) continue;
+
+        const alreadyApplied = review.status === "APPROVED"
+          ? task.status === "APPROVED" && task.lastReview?.reviewId === review.reviewId
+          : ["READY", "NEEDS_USER"].includes(task.status)
+            && task.lastReview?.reviewId === review.reviewId
+            && task.lastReview?.status === "CHANGES_REQUIRED";
+        if (alreadyApplied) continue;
+
+        const applied = await this.applyReviewResult(review, review.status === "APPROVED" ? "REVIEW_APPROVED" : "CHANGES_REQUIRED", review.result || {}, { reconciled: true });
+        if (applied?.ok === false) return { ok: false, repaired, reason: applied.reason, reviewId: review.reviewId };
+        repaired.push(review.reviewId);
+      }
+      return { ok: true, repaired };
     }
 
     async recoverReviewableTasks() {
@@ -361,64 +386,108 @@
       return this.tickPromise;
     }
 
-    matchesActiveReview(record) {
+    reviewForRecord(record, { allowTerminal = false } = {}) {
       const event = record?.event;
       if (!event || event.projectId !== this.store.summary().projectId) return null;
       const review = this.store.get(event.runId);
       if (!review || review.taskId !== event.taskId || review.reviewerAgentId !== event.agentId) return null;
       if (review.reviewerAgentId === review.authorAgentId) return null;
-      if (!["ASSIGNED", "REVIEWING"].includes(review.status)) return null;
+      const allowed = allowTerminal
+        ? ["ASSIGNED", "REVIEWING", "APPROVED", "CHANGES_REQUIRED"]
+        : ["ASSIGNED", "REVIEWING"];
+      if (!allowed.includes(review.status)) return null;
       return review;
     }
 
-    async handleReviewEvent(record) {
-      const review = this.matchesActiveReview(record);
-      if (!review || !["REVIEW_APPROVED", "CHANGES_REQUIRED"].includes(record.event.event)) return;
-      const task = this.schedulerStore.getTask(review.taskId);
-      const validation = validateReviewPayload(record.event.event, record.event.payload || {}, task);
-      if (!validation.ok) {
-        await this.registry.clearProtocolContext(review.reviewerAgentId);
-        await this.store.fail(review.reviewId, validation.reason, validation);
-        await this.schedulerStore.logDecision("review_payload_invalid", { reviewId: review.reviewId, taskId: review.taskId, reason: validation.reason, details: validation });
-        await this.escalate(validation.reason, review.taskId, validation);
-        return;
-      }
-      await this.store.complete(review.reviewId, record.event.event, validation.review);
-      await this.registry.clearProtocolContext(review.reviewerAgentId);
+    matchesActiveReview(record) {
+      return this.reviewForRecord(record, { allowTerminal: false });
+    }
 
-      if (record.event.event === "REVIEW_APPROVED") {
+    async applyReviewResult(review, eventType, reviewResult, { reconciled = false } = {}) {
+      const task = this.schedulerStore.getTask(review.taskId);
+      if (!task) return { ok: false, reason: "review_task_missing" };
+
+      if (eventType === "REVIEW_APPROVED") {
+        if (task.status === "APPROVED" && task.lastReview?.reviewId === review.reviewId) {
+          return { ok: true, duplicate: true, task };
+        }
         const approved = await this.schedulerStore.markReviewApproved?.(review.taskId, {
           reviewId: review.reviewId,
           reviewerAgentId: review.reviewerAgentId,
           workerRunId: review.workerRunId,
           iteration: review.iteration,
-          result: validation.review
+          result: reviewResult
         });
-        await this.schedulerStore.logDecision("review_approved", { reviewId: review.reviewId, taskId: review.taskId, reviewerAgentId: review.reviewerAgentId, iteration: review.iteration });
-        if (!approved) return this.escalate("review_approval_persist_failed", review.taskId);
+        if (!approved) return this.escalate("review_approval_persist_failed", review.taskId, { reviewId: review.reviewId, reconciled });
+        await this.schedulerStore.logDecision(reconciled ? "review_approval_reconciled" : "review_approved", {
+          reviewId: review.reviewId,
+          taskId: review.taskId,
+          reviewerAgentId: review.reviewerAgentId,
+          iteration: review.iteration
+        });
       } else {
+        if (["READY", "NEEDS_USER"].includes(task.status)
+          && task.lastReview?.reviewId === review.reviewId
+          && task.lastReview?.status === "CHANGES_REQUIRED") {
+          return { ok: true, duplicate: true, task };
+        }
         const changed = await this.schedulerStore.markChangesRequired?.(review.taskId, {
           reviewId: review.reviewId,
           reviewerAgentId: review.reviewerAgentId,
           workerRunId: review.workerRunId,
           iteration: review.iteration,
-          result: validation.review,
+          result: reviewResult,
           maxReviewIterations: this.store.summary().settings.maxReviewIterations
         });
-        await this.schedulerStore.logDecision("changes_required", {
+        if (!changed) return this.escalate("review_changes_persist_failed", review.taskId, { reviewId: review.reviewId, reconciled });
+        await this.schedulerStore.logDecision(reconciled ? "changes_required_reconciled" : "changes_required", {
           reviewId: review.reviewId,
           taskId: review.taskId,
           reviewerAgentId: review.reviewerAgentId,
           iteration: review.iteration,
           nextStatus: changed?.status || null,
-          requiredChanges: validation.review.requiredChanges
+          requiredChanges: reviewResult.requiredChanges || []
         });
         if (changed?.status === "NEEDS_USER") {
           await this.escalate("max_review_iterations_exhausted", review.taskId, { reviewId: review.reviewId, iteration: review.iteration });
-          return;
+          return { ok: false, reason: "max_review_iterations_exhausted", task: changed };
         }
       }
-      await this.onSchedulerTick?.({ reason: record.event.event === "REVIEW_APPROVED" ? "review_approved" : "changes_required" });
+
+      await this.onSchedulerTick?.({ reason: reconciled ? "review_terminal_reconciled" : (eventType === "REVIEW_APPROVED" ? "review_approved" : "changes_required") });
+      return { ok: true, task: this.schedulerStore.getTask(review.taskId) };
+    }
+
+    async handleReviewEvent(record) {
+      const event = record?.event;
+      if (!event || !["REVIEW_APPROVED", "CHANGES_REQUIRED"].includes(event.event)) return;
+      const review = this.reviewForRecord(record, { allowTerminal: true });
+      if (!review) return;
+      const terminalStatus = event.event === "REVIEW_APPROVED" ? "APPROVED" : "CHANGES_REQUIRED";
+      if (["APPROVED", "CHANGES_REQUIRED"].includes(review.status) && review.status !== terminalStatus) {
+        return this.escalate("review_terminal_event_mismatch", review.taskId, {
+          reviewId: review.reviewId,
+          storedStatus: review.status,
+          receivedEvent: event.event
+        });
+      }
+
+      const task = this.schedulerStore.getTask(review.taskId);
+      const validation = validateReviewPayload(event.event, event.payload || {}, task);
+      if (!validation.ok) {
+        await this.registry.clearProtocolContext(review.reviewerAgentId);
+        if (["ASSIGNED", "REVIEWING"].includes(review.status)) await this.store.fail(review.reviewId, validation.reason, validation);
+        await this.schedulerStore.logDecision("review_payload_invalid", { reviewId: review.reviewId, taskId: review.taskId, reason: validation.reason, details: validation });
+        await this.escalate(validation.reason, review.taskId, validation);
+        return;
+      }
+
+      if (["ASSIGNED", "REVIEWING"].includes(review.status)) {
+        const completed = await this.store.complete(review.reviewId, event.event, validation.review);
+        if (!completed) return this.escalate("review_completion_persist_failed", review.taskId, { reviewId: review.reviewId });
+      }
+      await this.registry.clearProtocolContext(review.reviewerAgentId);
+      return this.applyReviewResult(review, event.event, validation.review);
     }
 
     async handleReviewFailureEvent(record) {
