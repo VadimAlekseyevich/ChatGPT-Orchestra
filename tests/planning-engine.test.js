@@ -374,3 +374,65 @@ test("planning retry preserves the persisted failed run until Lead readiness ret
   assert.equal(persisted.lastError.reason, "lead_prompt_failed");
   assert.equal(persisted.lastError.details.reason, "composer_unavailable");
 });
+
+
+test("persisted DONE advances after restart even when Lead registers after PlanningEngine init", async () => {
+  const storage = fakeStorage();
+  const seed = new ProjectStore({ storageArea: storage, idFactory: () => "P-late-lead" });
+  await seed.load();
+  await seed.createProject({
+    goal: "Recover a durable planning completion before the Lead session is rebound.",
+    repositoryUrl: "https://github.com/acme/widget"
+  });
+  await seed.beginStage("P-late-lead", { stage: "DISCOVERY", runId: "planning-discovery-durable" });
+
+  const accepted = {
+    event: {
+      v: 1,
+      event: "DONE",
+      projectId: "P-late-lead",
+      taskId: "planning:discovery",
+      runId: "planning-discovery-durable",
+      agentId: "A-late",
+      eventId: "planning-discovery-durable-final",
+      sequence: 1,
+      payload: { stage: "DISCOVERY" }
+    },
+    source: { planningArtifact: discoveryArtifact() }
+  };
+
+  let lead = null;
+  const registry = {
+    listAgents() { return lead ? [{ ...lead }] : []; },
+    isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    async setProtocolContext(agentId, context) {
+      assert.equal(agentId, "A-late");
+      lead.protocolContext = { ...context };
+      return { ...lead };
+    },
+    async clearProtocolContext() {}
+  };
+  const prompts = [];
+  const engine = new PlanningEngine({
+    projectStore: new ProjectStore({ storageArea: storage, idFactory: () => "unused" }),
+    registry,
+    eventBus: new FakeEventBus([accepted]),
+    idFactory: () => "NEXT-LATE",
+    sendPrompt: async (agentId, prompt) => { prompts.push({ agentId, prompt }); return { ok: true }; }
+  });
+
+  await engine.init();
+  let project = engine.projectStore.getActiveProject();
+  assert.equal(project.stage, "DISCOVERY");
+  assert.ok(project.stageHistory.some((entry) => entry.runId === "planning-discovery-durable" && entry.status === "completed"));
+  assert.equal(prompts.length, 0);
+
+  lead = { agentId: "A-late", role: "lead", status: "IDLE", tabId: null };
+  const resumed = await engine.resumeCurrentStage({ reason: "lead_registered_after_boot" });
+  assert.equal(resumed.ok, true);
+  project = engine.projectStore.getActiveProject();
+  assert.equal(project.stage, "PLAN_V1");
+  assert.notEqual(project.currentRunId, "planning-discovery-durable");
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0].prompt, /planning stage PLAN_V1/);
+});
