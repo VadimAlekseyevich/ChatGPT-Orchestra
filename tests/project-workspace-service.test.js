@@ -77,7 +77,7 @@ test("project catalog lists the live project together with archived slots", asyn
     stateStore,
     portableStateManager: { async capture() { return { ok: true, snapshot: {} }; }, async import() { return { ok: true }; } },
     projectStore: { getActiveProject: () => project("P2") },
-    recoveryController: { getPublicState: () => ({ status: "RECOVERY_REQUIRED" }) },
+    recoveryController: { getPublicState: () => ({ status: "RECOVERY_REQUIRED", safePoint: { reached: true } }) },
     portableStateKeys: ["a"]
   });
 
@@ -108,7 +108,7 @@ test("prepareNewProject archives current state and removes only portable namespa
       async import() { throw new Error("unexpected_import"); }
     },
     projectStore: { getActiveProject: () => active },
-    recoveryController: { getPublicState: () => ({ status: "STOPPED" }) },
+    recoveryController: { getPublicState: () => ({ status: "STOPPED", safePoint: { reached: true } }) },
     portableStateKeys: ["portableA", "portableB"],
     clock: () => 100
   });
