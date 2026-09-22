@@ -2,6 +2,7 @@
   "use strict";
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const NEXT = { DISCOVERY: "PLAN_V1", PLAN_V1: "CRITIQUE", CRITIQUE: "PLAN_V2", PLAN_V2: "DECOMPOSE", DECOMPOSE: "DAG_CRITIC" };
+  const PLANNING_RUN_TIMEOUT_MS = 35 * 60 * 1000;
   const RETRYABLE_ARTIFACT_FAILURES = new Set([
     "stage_artifact_not_object",
     "repository_access_status_missing",
@@ -19,12 +20,23 @@
   function hasItems(value) { return Array.isArray(value) && value.length > 0; }
 
   class PlanningEngine {
-    constructor({ projectStore, registry, eventBus, sendPrompt, idFactory = null, logger = console } = {}) {
+    constructor({
+      projectStore,
+      registry,
+      eventBus,
+      sendPrompt,
+      idFactory = null,
+      clock = () => Date.now(),
+      runTimeoutMs = PLANNING_RUN_TIMEOUT_MS,
+      logger = console
+    } = {}) {
       this.projectStore = projectStore;
       this.registry = registry;
       this.eventBus = eventBus;
       this.sendPrompt = sendPrompt;
       this.idFactory = idFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      this.clock = clock;
+      this.runTimeoutMs = Math.max(60_000, Number(runTimeoutMs) || PLANNING_RUN_TIMEOUT_MS);
       this.logger = logger;
       this.unsubscribers = [];
       this.initialized = false;
@@ -65,17 +77,45 @@
       }
       return { ok: true, lead, details: ping || null };
     }
+
     planningRetryMode(project) {
       if (!project
         || !["PLANNING", "NEEDS_USER"].includes(String(project.status || ""))
         || !project.currentRunId) return null;
-      if (project.lastError?.reason === "lead_prompt_failed") return "same_run";
+      if (project.lastError?.reason === "lead_prompt_failed") {
+        return project.lastError?.details?.promptAccepted === true ? "fresh_run" : "same_run";
+      }
+      if (project.lastError?.reason === "lead_unavailable") return "same_run";
+      if (project.lastError?.reason === "planning_timeout") return "fresh_run";
       if (project.lastError?.details?.retryMode === "fresh_run") return "fresh_run";
       if (RETRYABLE_ARTIFACT_FAILURES.has(String(project.lastError?.reason || ""))) return "fresh_run";
       return null;
     }
     isRetryableLeadDeliveryFailure(project) { return this.planningRetryMode(project) === "same_run"; }
     canRetryCurrentStage() { return Boolean(this.planningRetryMode(this.projectStore.getActiveProject())); }
+
+    currentRunCompleted(project) {
+      if (!project?.currentRunId || !project?.stage) return false;
+      return (project.stageHistory || []).some((entry) => (
+        entry?.stage === project.stage
+        && entry?.runId === project.currentRunId
+        && entry?.status === "completed"
+      ));
+    }
+
+    persistedCompletion(project) {
+      if (!project?.projectId || !project?.currentRunId || !project?.stage) return null;
+      const taskId = `planning:${String(project.stage).toLowerCase()}`;
+      const events = this.eventBus?.allEvents?.() || this.eventBus?.recent?.(200)?.events || [];
+      return [...events].reverse().find((record) => (
+        record?.event?.event === "DONE"
+        && record?.event?.projectId === project.projectId
+        && record?.event?.taskId === taskId
+        && record?.event?.runId === project.currentRunId
+        && String(record?.event?.payload?.stage || "").toUpperCase() === String(project.stage).toUpperCase()
+        && record?.source?.planningArtifact
+      )) || null;
+    }
 
     async init() {
       if (this.initialized) return this.getPublicState();
@@ -85,23 +125,7 @@
         this.unsubscribers.push(this.eventBus.subscribe("blocker", (record) => this.handleBlocker(record)));
         this.unsubscribers.push(this.eventBus.subscribe("user", (record) => this.handleBlocker(record)));
       }
-      const project = this.projectStore.getActiveProject();
-      const lead = this.getLead();
-      if (project?.status === "PLANNING" && project.currentRunId && lead) {
-        await this.registry.setProtocolContext(lead.agentId, {
-          projectId: project.projectId,
-          taskId: `planning:${project.stage.toLowerCase()}`,
-          runId: project.currentRunId
-        });
-        const recent = this.eventBus.recent(200).events || [];
-        const accepted = [...recent].reverse().find((record) => (
-          record?.event?.projectId === project.projectId
-          && record?.event?.taskId === `planning:${project.stage.toLowerCase()}`
-          && record?.event?.runId === project.currentRunId
-          && record?.source?.planningArtifact
-        ));
-        if (accepted) await this.handleCompletion(accepted);
-      }
+      await this.recoverPersistedCompletion({ reason: "planning_init" });
       this.initialized = true;
       return this.getPublicState();
     }
@@ -114,15 +138,43 @@
       return this.dispatchStage(created.project.projectId, "DISCOVERY", { lead: readiness.lead, readinessChecked: true });
     }
 
+    async recoverPersistedCompletion({ reason = "planning_recovery" } = {}) {
+      const project = this.projectStore.getActiveProject();
+      if (!project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || "")) || !project.currentRunId) {
+        return { ok: true, ignored: true };
+      }
+      if (this.currentRunCompleted(project)) {
+        return this.advanceCompletedStage(project, { reason });
+      }
+      const accepted = this.persistedCompletion(project);
+      if (!accepted) return { ok: true, waiting: true, reason: "planning_completion_not_persisted" };
+      const result = await this.handleCompletion(accepted, { recovered: true });
+      return { ...(result || { ok: true }), recovered: true };
+    }
+
     async resumeCurrentStage({ reason = "fresh_lead_replacement" } = {}) {
       let project = this.projectStore.getActiveProject();
+      if (!project || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
+
+      const recovered = await this.recoverPersistedCompletion({ reason });
+      const afterRecovery = this.projectStore.getActiveProject();
+      if (afterRecovery?.projectId === project.projectId
+        && (afterRecovery.stage !== project.stage || afterRecovery.currentRunId !== project.currentRunId || afterRecovery.status === "READY")) {
+        return { ...recovered, ok: recovered?.ok !== false, resumed: true, recoveredCompletion: true, project: this.getPublicState() };
+      }
+      project = afterRecovery || project;
+
       const retryMode = this.planningRetryMode(project);
-      if (!project || (!retryMode && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
+      if ((!retryMode && project.status !== "PLANNING") || !project.currentRunId) return { ok: false, reason: "planning_role_not_active" };
       const readiness = await this.ensureLeadPromptReady();
       if (!readiness.ok) return { ...readiness, retryable: true, project: this.getPublicState() };
       const lead = readiness.lead;
       const stage = String(project.stage || "").toUpperCase();
       if (!root.PlanningPrompts?.STAGES?.includes?.(stage)) return { ok: false, reason: "planning_stage_not_resumable", stage };
+
+      if (this.currentRunCompleted(project)) {
+        return this.advanceCompletedStage(project, { lead, readinessChecked: true, reason });
+      }
 
       if (retryMode === "fresh_run") {
         const previousRunId = project.currentRunId;
@@ -241,18 +293,67 @@
       return null;
     }
 
-    async handleCompletion(record) {
+    async advanceCompletedStage(project, { lead: readyLead = null, readinessChecked = false, reason = "stage_completed" } = {}) {
+      const current = this.projectStore.getProject(project?.projectId) || project;
+      if (!current || !this.currentRunCompleted(current)) return { ok: false, reason: "planning_stage_not_completed" };
+      const stage = String(current.stage || "").toUpperCase();
+      const artifact = current.artifacts?.[stage];
+      if (stage === "DAG_CRITIC") {
+        const validation = root.validateTaskGraph(artifact);
+        if (!validation.ok) {
+          await this.projectStore.fail(current.projectId, "dag_validation_failed", validation);
+          return { ok: false, reason: "dag_validation_failed", validation };
+        }
+        await this.projectStore.setReady(current.projectId, artifact, validation);
+        const lead = readyLead || this.getLead();
+        if (this.isConnected(lead)) {
+          await this.registry.setProtocolContext(lead.agentId, { projectId: current.projectId, taskId: "planning:complete", runId: "planning-complete" });
+        }
+        return { ok: true, ready: true, reason, project: this.getPublicState() };
+      }
+
+      const next = NEXT[stage];
+      if (!next) {
+        await this.projectStore.fail(current.projectId, "unknown_next_stage", { stage }, "FAILED");
+        return { ok: false, reason: "unknown_next_stage", stage };
+      }
+
+      let lead = readyLead || this.getLead();
+      if (!this.isConnected(lead)) {
+        return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason, project: this.getPublicState() };
+      }
+      if (!readinessChecked) {
+        const readiness = await this.ensureLeadPromptReady();
+        if (!readiness.ok) {
+          return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason: readiness.reason, project: this.getPublicState() };
+        }
+        lead = readiness.lead;
+        readinessChecked = true;
+      }
+      this.logger?.info?.("planning_stage_advancing", { projectId: current.projectId, fromStage: stage, toStage: next, reason });
+      return this.dispatchStage(current.projectId, next, { lead, readinessChecked });
+    }
+
+    async handleCompletion(record, { recovered = false } = {}) {
       const event = record?.event;
-      const project = this.projectStore.getActiveProject();
-      const lead = this.getLead();
-      if (!event || !project || project.status !== "PLANNING" || !lead) return;
-      if (event.agentId !== lead.agentId || event.projectId !== project.projectId) return;
+      let project = this.projectStore.getActiveProject();
+      if (!event || !project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || "")) || !project.currentRunId) return { ok: true, ignored: true };
+      const expectedTaskId = `planning:${String(project.stage || "").toLowerCase()}`;
+      if (event.event !== "DONE"
+        || event.projectId !== project.projectId
+        || event.runId !== project.currentRunId
+        || event.taskId !== expectedTaskId) return { ok: true, ignored: true };
 
       const stage = String(event.payload?.stage || "").toUpperCase();
       if (stage !== project.stage) {
         await this.projectStore.fail(project.projectId, "planning_stage_mismatch", { expected: project.stage, received: stage });
-        return;
+        return { ok: false, reason: "planning_stage_mismatch" };
       }
+
+      if (this.currentRunCompleted(project)) {
+        return this.advanceCompletedStage(project, { reason: recovered ? "replayed_completed_stage" : "duplicate_completed_stage" });
+      }
+
       const artifact = record?.source?.planningArtifact;
       const problem = this.artifactCheck(stage, artifact);
       if (problem) {
@@ -269,52 +370,79 @@
           retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem),
           retryMode: RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "fresh_run" : null
         }, RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "PLANNING" : "NEEDS_USER");
-        return;
+        return { ok: false, reason: problem, retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem) };
       }
 
       this.logger?.info?.("planning_stage_completed", {
         projectId: project.projectId,
         stage,
-        runId: event.runId || project.currentRunId || null
+        runId: event.runId || project.currentRunId || null,
+        recovered
       });
       await this.projectStore.completeStage(project.projectId, { stage, artifact });
-      if (stage === "DAG_CRITIC") {
-        const validation = root.validateTaskGraph(artifact);
-        if (!validation.ok) {
-          await this.projectStore.fail(project.projectId, "dag_validation_failed", validation);
-          return;
-        }
-        await this.projectStore.setReady(project.projectId, artifact, validation);
-        await this.registry.setProtocolContext(lead.agentId, { projectId: project.projectId, taskId: "planning:complete", runId: "planning-complete" });
-        return;
-      }
-      const next = NEXT[stage];
-      if (!next) {
-        await this.projectStore.fail(project.projectId, "unknown_next_stage", { stage }, "FAILED");
-        return;
-      }
-      this.logger?.info?.("planning_stage_advancing", { projectId: project.projectId, fromStage: stage, toStage: next });
-      const dispatched = await this.dispatchStage(project.projectId, next);
-      if (!dispatched?.ok) {
-        this.logger?.warn?.("planning_stage_advance_failed", {
-          projectId: project.projectId,
-          fromStage: stage,
-          toStage: next,
-          reason: dispatched?.reason || "unknown"
-        });
-      }
+      await this.projectStore.clearError?.(project.projectId, "PLANNING");
+      project = this.projectStore.getProject(project.projectId);
+      return this.advanceCompletedStage(project, { reason: recovered ? "persisted_completion_replayed" : "stage_completed" });
     }
 
     async handleBlocker(record) {
       const event = record?.event;
       const project = this.projectStore.getActiveProject();
       const lead = this.getLead();
-      if (!event || !project || project.status !== "PLANNING" || !lead) return;
-      if (event.agentId !== lead.agentId || event.projectId !== project.projectId) return;
+      if (!event || !project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || "")) || !lead) return;
+      if (event.agentId !== lead.agentId
+        || event.projectId !== project.projectId
+        || event.runId !== project.currentRunId
+        || event.taskId !== `planning:${String(project.stage || "").toLowerCase()}`) return;
       await this.projectStore.fail(project.projectId, `lead_${String(event.event || "blocked").toLowerCase()}`, event.payload || null);
+    }
+
+    async handleAgentUnavailable(agentId, reason = "lead_unavailable") {
+      const project = this.projectStore.getActiveProject();
+      const lead = this.getLead();
+      if (!project || project.status !== "PLANNING" || !project.currentRunId || !lead || lead.agentId !== agentId) {
+        return { ok: true, ignored: true };
+      }
+      await this.registry.clearProtocolContext?.(agentId);
+      await this.projectStore.fail(project.projectId, "lead_unavailable", {
+        reason: String(reason || "lead_unavailable"),
+        retryable: true,
+        retryMode: "same_run"
+      }, "PLANNING");
+      return { ok: true, handled: true, project: this.getPublicState() };
+    }
+
+    async checkWatchdog() {
+      const project = this.projectStore.getActiveProject();
+      if (!project || project.status !== "PLANNING" || !project.currentRunId || this.currentRunCompleted(project)) {
+        return { ok: true, ignored: true };
+      }
+      const started = [...(project.stageHistory || [])].reverse().find((entry) => (
+        entry?.stage === project.stage && entry?.runId === project.currentRunId && entry?.status === "started"
+      ));
+      const startedAt = Number(started?.at) || 0;
+      if (!startedAt || this.clock() - startedAt < this.runTimeoutMs) return { ok: true, pending: true };
+      const lead = this.getLead();
+      if (lead?.agentId) await this.registry.clearProtocolContext?.(lead.agentId);
+      await this.projectStore.fail(project.projectId, "planning_timeout", {
+        stage: project.stage,
+        runId: project.currentRunId,
+        timeoutMs: this.runTimeoutMs,
+        retryable: true,
+        retryMode: "fresh_run"
+      }, "PLANNING");
+      this.logger?.warn?.("planning_run_timeout", {
+        projectId: project.projectId,
+        stage: project.stage,
+        runId: project.currentRunId,
+        timeoutMs: this.runTimeoutMs
+      });
+      return { ok: false, reason: "planning_timeout", retryable: true, project: this.getPublicState() };
     }
   }
 
   root.PlanningEngine = PlanningEngine;
-  if (typeof module !== "undefined" && module.exports) module.exports = { PlanningEngine, NEXT, RETRYABLE_ARTIFACT_FAILURES };
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { PlanningEngine, NEXT, RETRYABLE_ARTIFACT_FAILURES, PLANNING_RUN_TIMEOUT_MS };
+  }
 })();
