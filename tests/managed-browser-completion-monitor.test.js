@@ -172,3 +172,42 @@ test("completion monitor fails after repeated snapshot bridge errors", async () 
   assert.equal(errors.length, 1);
   assert.equal(errors[0].reason, "agent_preload_timeout");
 });
+
+
+test("completion monitor survives transient preload snapshot failures and still publishes final DONE", async () => {
+  const { runtime } = runtimeHarness();
+  const sequence = [
+    snapshot(),
+    { ok: false, reason: "agent_preload_timeout" },
+    { ok: false, reason: "agent_preload_timeout" },
+    { ok: false, reason: "agent_preload_send_failed" },
+    snapshot({ text: "partial", fingerprint: "p1", messageCount: 1, availability: "generating", generating: true }),
+    snapshot({ text: "final", fingerprint: "f1", messageCount: 1 }),
+    snapshot({ text: "final", fingerprint: "f1", messageCount: 1 })
+  ];
+  const driver = { async readAssistantSnapshot() { return sequence.shift() || snapshot({ text: "final", fingerprint: "f1", messageCount: 1 }); } };
+  const completions = [];
+  const errors = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver,
+    protocolAdapter: {
+      async publishCompletion(_runtime, agentId, value) { completions.push({ agentId, value }); return { ok: true }; },
+      async publishProtocolError(_runtime, agentId, value, payload) { errors.push({ agentId, value, payload }); return { ok: true }; }
+    },
+    maxSnapshotErrors: 10,
+    snapshotErrorGraceMs: 10_000,
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 3000,
+    sleep: async () => {}
+  });
+
+  const prepared = await monitor.prepare(runtime, "A1");
+  assert.equal(prepared.ok, true);
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].value.fingerprint, "f1");
+  assert.equal(errors.length, 0);
+});
