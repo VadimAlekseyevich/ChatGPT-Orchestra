@@ -382,18 +382,32 @@ class ManagedBrowserAgentRuntime {
     const agent = this.getAgentBySessionId(sessionId);
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
-    if (payload.generating === true || payload.availability === "generating") mutable.status = "BUSY";
-    else if (payload.availability === "ready") mutable.status = "IDLE";
+    const availability = String(payload.availability || "unknown");
+    if (payload.generating === true || availability === "generating") mutable.status = "BUSY";
+    else if (availability === "ready") mutable.status = "IDLE";
+    else if (availability === "error" || availability === "unavailable") mutable.status = "ERROR";
+    else if (mutable.status !== "OFFLINE") mutable.status = "CONNECTING";
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
-    mutable.lastError = null;
+    mutable.lastError = mutable.status === "ERROR"
+      ? String(payload.reason || payload.error || availability || "chat_unavailable")
+      : null;
+    mutable.chatState = {
+      generating: Boolean(payload.generating),
+      availability,
+      composerOccupied: payload.composerOccupied === null || payload.composerOccupied === undefined
+        ? null
+        : Boolean(payload.composerOccupied),
+      pathname: String(payload.pathname || "")
+    };
     if (url) mutable.chatUrl = String(url);
     this.updatedAt = mutable.updatedAt;
     this.logger?.debug?.("managed_browser_agent_heartbeat", {
       agentId: mutable.agentId,
       status: mutable.status,
-      availability: payload.availability || null,
-      generating: payload.generating === true
+      availability,
+      generating: payload.generating === true,
+      composerOccupied: mutable.chatState.composerOccupied
     });
     return this.getAgent(agent.agentId);
   }
@@ -404,16 +418,35 @@ class ManagedBrowserAgentRuntime {
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
     const startedAt = this.clock();
+
+    const markUnready = (reason) => {
+      const mutable = this.agents.get(agent.agentId);
+      if (!mutable) return null;
+      const now = this.clock();
+      mutable.status = "ERROR";
+      mutable.lastError = String(reason || "agent_unreachable");
+      mutable.updatedAt = now;
+      mutable.chatState = {
+        generating: false,
+        availability: "unavailable",
+        composerOccupied: null,
+        pathname: ""
+      };
+      this.updatedAt = now;
+      return this.getAgent(agent.agentId);
+    };
+
     try {
       const result = await this.driver.pingSession(sessionId);
       if (!result?.ok) {
+        const updated = markUnready(result?.reason || "agent_unreachable");
         this.logger?.warn?.("managed_browser_agent_ping_failed", {
           agentId: agent.agentId,
           sessionId,
           reason: result?.reason || "ping_failed",
           durationMs: Math.max(0, this.clock() - startedAt)
         });
-        return { ...result, agentId: agent.agentId };
+        return { ...(result || {}), ok: false, agent: updated, agentId: agent.agentId };
       }
       const updated = await this.updateHeartbeat(sessionId, result, result.url || agent.chatUrl || "");
       this.logger?.debug?.("managed_browser_agent_ping_completed", {
@@ -425,13 +458,14 @@ class ManagedBrowserAgentRuntime {
       });
       return { ...result, ok: true, agent: updated || this.getAgent(agent.agentId), agentId: agent.agentId };
     } catch (error) {
+      const updated = markUnready("agent_unreachable");
       this.logger?.error?.("managed_browser_agent_ping_error", {
         agentId: agent.agentId,
         sessionId,
         durationMs: Math.max(0, this.clock() - startedAt),
         error
       });
-      return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
+      return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agent: updated, agentId: agent.agentId };
     }
   }
 
