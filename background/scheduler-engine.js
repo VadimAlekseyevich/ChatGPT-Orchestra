@@ -22,6 +22,12 @@
     return ({ low: 0, medium: 1, high: 2, critical: 3 })[normalized] ?? 1;
   }
 
+  function liveAgent(registry, agent) {
+    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
+    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
+    return Number.isInteger(agent.tabId);
+  }
+
   class SchedulerEngine {
     constructor({ store, projectStore, registry, eventBus, gitProvider = null, reviewEngine = null, sendPrompt, clock = () => Date.now(), idFactory = null, logger = console } = {}) {
       this.store = store;
@@ -71,7 +77,7 @@
     async restoreActiveContexts() {
       for (const run of this.store.activeRuns()) {
         const agent = this.registry.getAgent(run.agentId);
-        if (!agent || !Number.isInteger(agent.tabId) || ["OFFLINE", "ERROR"].includes(agent.status)) {
+        if (!liveAgent(this.registry, agent)) {
           const result = await this.store.markFailure(run.runId, "agent_unavailable_after_restart", { retryable: true });
           await this.store.logDecision("recovered_agent_unavailable", { runId: run.runId, taskId: run.taskId, agentId: run.agentId });
           if (result?.task?.status === "NEEDS_USER") {
@@ -196,7 +202,7 @@
       for (const agentId of this.reviewEngine?.activeReviewerAgentIds?.() || []) activeAgentIds.add(agentId);
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && Number.isInteger(agent.tabId)
+        && liveAgent(this.registry, agent)
         && agent.status === "IDLE"
         && !activeAgentIds.has(agent.agentId)
       ));
