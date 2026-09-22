@@ -43,3 +43,47 @@ test("DesktopHost boots the real Core behind injected portable adapters", async 
   await timerRuntime.fire(WATCHDOG_NAME);
   await host.close();
 });
+
+
+test("DesktopHost traces init, API and watchdog lifecycle without logging payload values", async () => {
+  const entries = [];
+  const logger = {
+    child() { return this; },
+    debug(event, details) { entries.push({ level: "debug", event, details }); },
+    info(event, details) { entries.push({ level: "info", event, details }); },
+    warn(event, details) { entries.push({ level: "warn", event, details }); },
+    error(event, details) { entries.push({ level: "error", event, details }); },
+    log(event, details) { entries.push({ level: "info", event, details }); }
+  };
+  const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-desktop-host-logs-"));
+  const stateStore = new TransactionalStateStore({ store: new MemoryStateStore() });
+  const timerRuntime = new DeterministicTimerRuntime();
+  const host = new DesktopHost({
+    dataDirectory,
+    stateStore,
+    agentRuntime: new FakeAgentRuntime(),
+    timerRuntime,
+    logger
+  });
+
+  await host.init();
+  await host.query("dashboard", { eventLimit: 1, diagnosticNote: "payload-value-must-not-log" });
+  await host.execute("exportDebugBundle", { eventLimit: 1, diagnosticNote: "command-value-must-not-log" });
+  await timerRuntime.fire(WATCHDOG_NAME);
+  await host.close();
+
+  const events = entries.map((entry) => entry.event);
+  assert.ok(events.includes("desktop_host_starting"));
+  assert.ok(events.includes("desktop_init_phase_completed"));
+  assert.ok(events.includes("desktop_api_query_started"));
+  assert.ok(events.includes("desktop_api_query_completed"));
+  assert.ok(events.includes("desktop_api_command_started"));
+  assert.ok(events.includes("desktop_api_command_completed"));
+  assert.ok(events.includes("desktop_watchdog_completed"));
+  assert.ok(events.includes("desktop_host_closed"));
+
+  const serialized = JSON.stringify(entries);
+  assert.equal(serialized.includes("payload-value-must-not-log"), false);
+  assert.equal(serialized.includes("command-value-must-not-log"), false);
+  assert.equal(serialized.includes("diagnosticNote"), true, "payload key names remain useful for diagnostics");
+});
