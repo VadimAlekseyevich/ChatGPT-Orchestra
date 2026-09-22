@@ -130,7 +130,8 @@ class DesktopHost {
       projectStore: this.projectStore,
       registry: this.agentRuntime,
       eventBus: this.eventBus,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt)
+      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
+      logger: this.componentLogger("planning")
     });
     this.reviewEngine = new LocalReviewEngine({
       store: this.reviewStore,
