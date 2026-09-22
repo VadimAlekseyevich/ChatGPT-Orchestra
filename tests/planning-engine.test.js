@@ -276,6 +276,8 @@ test("rejected planning artifact stays retryable and restarts the same stage wit
   assert.equal(project.lastError, undefined);
   assert.equal(prompts.length, 3);
   assert.match(prompts.at(-1).prompt, /planning stage PLAN_V1/);
+  assert.match(prompts.at(-1).prompt, /plan_milestones_missing/);
+  assert.match(prompts.at(-1).prompt, /RETRY CORRECTION/);
 });
 
 test("Start Project refuses stale IDLE Lead when a fresh readiness check reports no composer", async () => {
