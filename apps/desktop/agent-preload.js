@@ -32,6 +32,33 @@ function stopButton(selectors) { return queryFirst(selectors.stopButtons, visibl
 function sendButton(selectors) { return queryFirst(selectors.sendButtons, (element) => visible(element) && !element.disabled); }
 function errorIndicator(selectors) { return queryFirst(selectors.errorIndicators); }
 
+function normalizeAssistantElement(element) {
+  if (!element) return null;
+  try {
+    return element.closest?.('[data-testid^="conversation-turn-"], article[data-turn="assistant"], section[data-turn="assistant"]') || element;
+  } catch (_) {
+    return element;
+  }
+}
+
+function assistantMessages(selectors) {
+  const messages = [];
+  const seen = new Set();
+  for (const selector of Array.isArray(selectors?.assistantMessages) ? selectors.assistantMessages : []) {
+    if (typeof selector !== "string" || !selector) continue;
+    let current = [];
+    try { current = Array.from(document.querySelectorAll(selector)); } catch (_) { current = []; }
+    for (const element of current) {
+      const normalized = normalizeAssistantElement(element);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      messages.push(normalized);
+    }
+  }
+  return messages;
+}
+
+
 function composerText(element) {
   if (!element) return "";
   if (typeof element.value === "string") return element.value;
@@ -51,28 +78,20 @@ function availability(selectors) {
 }
 
 function status(selectors) {
-  let messageCount = 0;
-  for (const selector of selectors.assistantMessages || []) {
-    const messages = Array.from(document.querySelectorAll(selector));
-    if (messages.length) { messageCount = messages.length; break; }
-  }
+  const messages = assistantMessages(selectors);
   return {
     ok: true,
     availability: availability(selectors),
     generating: Boolean(stopButton(selectors)),
     composerOccupied: composerOccupied(selectors),
-    messageCount,
+    messageCount: messages.length,
     pathname: String(location.pathname || ""),
     url: String(location.href || "")
   };
 }
 
 function readAssistant(selectors) {
-  let messages = [];
-  for (const selector of selectors.assistantMessages || []) {
-    const current = Array.from(document.querySelectorAll(selector));
-    if (current.length) { messages = current; break; }
-  }
+  const messages = assistantMessages(selectors);
   const last = messages.at(-1) || null;
   let body = null;
   if (last) {
