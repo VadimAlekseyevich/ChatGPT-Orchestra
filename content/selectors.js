@@ -13,11 +13,18 @@
     ]),
     assistantMessages: Object.freeze([
       '[data-message-author-role="assistant"]',
+      '[data-role="assistant"]',
+      '[data-message-author="assistant"]',
+      '[data-testid^="conversation-turn-"][data-turn="assistant"]',
+      '[data-testid^="conversation-turn-"][data-message-author-role="assistant"]',
+      '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"])',
       'article[data-turn="assistant"]',
+      'section[data-turn="assistant"]',
       'article[data-message-author-role="assistant"]'
     ]),
     assistantBodies: Object.freeze([
       '.markdown',
+      '.prose',
       '[class*="markdown"]',
       '[data-message-content]'
     ]),
