@@ -11,12 +11,33 @@
       this.locationRef = locationRef;
     }
 
-    getMessages() {
-      for (const selector of SELECTORS.assistantMessages) {
-        const messages = Array.from(this.documentRef?.querySelectorAll?.(selector) || []);
-        if (messages.length) return messages;
+    normalizeMessageElement(element) {
+      if (!element) return null;
+      try {
+        return element.closest?.('[data-testid^="conversation-turn-"], article[data-turn="assistant"], section[data-turn="assistant"]') || element;
+      } catch (_) {
+        return element;
       }
-      return [];
+    }
+
+    getMessages() {
+      const messages = [];
+      const seen = new Set();
+      for (const selector of SELECTORS.assistantMessages) {
+        let current = [];
+        try {
+          current = Array.from(this.documentRef?.querySelectorAll?.(selector) || []);
+        } catch (_) {
+          current = [];
+        }
+        for (const element of current) {
+          const normalized = this.normalizeMessageElement(element);
+          if (!normalized || seen.has(normalized)) continue;
+          seen.add(normalized);
+          messages.push(normalized);
+        }
+      }
+      return messages;
     }
 
     getLastMessageElement() {
