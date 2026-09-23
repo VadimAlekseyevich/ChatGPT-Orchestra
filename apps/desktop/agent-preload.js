@@ -55,6 +55,15 @@ function assistantMessages(selectors) {
       messages.push(normalized);
     }
   }
+  messages.sort((left, right) => {
+    if (left === right || typeof left?.compareDocumentPosition !== "function") return 0;
+    try {
+      const position = left.compareDocumentPosition(right);
+      if (position & 4) return -1;
+      if (position & 2) return 1;
+    } catch (_) {}
+    return 0;
+  });
   return messages;
 }
 
