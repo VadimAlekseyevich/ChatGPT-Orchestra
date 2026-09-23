@@ -46,3 +46,38 @@ test("normalizes zero-width characters and CRLF in assistant text", () => {
 
   assert.equal(reader.getLastAssistantText(), "Hello\nDONE");
 });
+
+
+test("merges mixed assistant selector variants so a newer fallback turn is not hidden by an older primary match", () => {
+  const oldTurn = {
+    innerText: "old PLAN_V1 response",
+    textContent: "old PLAN_V1 response",
+    querySelector() { return null; },
+    closest() { return this; }
+  };
+  const oldRoleNode = {
+    closest() { return oldTurn; }
+  };
+  const newTurn = {
+    innerText: "new CRITIQUE response",
+    textContent: "new CRITIQUE response",
+    querySelector() { return null; },
+    closest() { return this; }
+  };
+  const documentRef = {
+    querySelectorAll(selector) {
+      if (selector === '[data-message-author-role="assistant"]') return [oldRoleNode];
+      if (selector === '[data-testid^="conversation-turn-"][data-turn="assistant"]') return [oldTurn, newTurn];
+      return [];
+    }
+  };
+  const reader = new AssistantMessageReader({
+    documentRef,
+    locationRef: { pathname: "/c/example" }
+  });
+
+  const snapshot = reader.getSnapshot();
+  assert.equal(snapshot.text, "new CRITIQUE response");
+  assert.equal(snapshot.messageCount, 2);
+  assert.ok(snapshot.fingerprint);
+});
