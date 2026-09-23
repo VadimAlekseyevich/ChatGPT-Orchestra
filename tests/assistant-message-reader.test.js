@@ -48,25 +48,38 @@ test("normalizes zero-width characters and CRLF in assistant text", () => {
 });
 
 
-test("merges mixed assistant selector variants so a newer fallback turn is not hidden by an older primary match", () => {
-  const oldTurn = {
+test("merges mixed assistant selector variants in DOM order instead of selector discovery order", () => {
+  let oldTurn;
+  let newTurn;
+  const position = (self, other) => {
+    if (self === other) return 0;
+    if (self === oldTurn && other === newTurn) return 4;
+    if (self === newTurn && other === oldTurn) return 2;
+    return 0;
+  };
+  oldTurn = {
     innerText: "old PLAN_V1 response",
     textContent: "old PLAN_V1 response",
     querySelector() { return null; },
-    closest() { return this; }
+    closest() { return this; },
+    compareDocumentPosition(other) { return position(this, other); }
   };
-  const oldRoleNode = {
-    closest() { return oldTurn; }
-  };
-  const newTurn = {
+  newTurn = {
     innerText: "new CRITIQUE response",
     textContent: "new CRITIQUE response",
     querySelector() { return null; },
-    closest() { return this; }
+    closest() { return this; },
+    compareDocumentPosition(other) { return position(this, other); }
+  };
+  const newRoleNode = {
+    closest() { return newTurn; }
   };
   const documentRef = {
     querySelectorAll(selector) {
-      if (selector === '[data-message-author-role="assistant"]') return [oldRoleNode];
+      // Deliberately discover the newest turn first through the primary selector.
+      // Without a DOM-order sort the fallback then appends the old turn last and
+      // getSnapshot() incorrectly returns the old response.
+      if (selector === '[data-message-author-role="assistant"]') return [newRoleNode];
       if (selector === '[data-testid^="conversation-turn-"][data-turn="assistant"]') return [oldTurn, newTurn];
       return [];
     }
