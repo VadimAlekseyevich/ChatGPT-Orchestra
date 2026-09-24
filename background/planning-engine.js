@@ -16,8 +16,34 @@
     "task_graph_tasks_missing"
   ]);
 
+  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "sessionId", "dispatchKind", "startedAt"];
+
   function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
   function hasItems(value) { return Array.isArray(value) && value.length > 0; }
+  function utf8Bytes(value) {
+    const text = String(value ?? "");
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+    return unescape(encodeURIComponent(text)).length;
+  }
+  function traceContext(value = null, fallback = {}) {
+    const source = isObject(value?.trace) ? value.trace : (isObject(value) ? value : {});
+    const base = isObject(fallback?.trace) ? fallback.trace : (isObject(fallback) ? fallback : {});
+    const merged = { ...base, ...source };
+    const trace = {};
+    for (const field of TRACE_FIELDS) {
+      if (field === "startedAt") {
+        const numeric = Number(merged[field]);
+        if (Number.isFinite(numeric) && numeric > 0) trace[field] = numeric;
+        continue;
+      }
+      const text = merged[field] === null || merged[field] === undefined ? "" : String(merged[field]);
+      if (text) trace[field] = text;
+    }
+    return trace;
+  }
+  function traced(trace, details = {}) {
+    return { ...traceContext(trace), ...(isObject(details) ? details : { value: details }) };
+  }
 
   class PlanningEngine {
     constructor({
@@ -26,6 +52,7 @@
       eventBus,
       sendPrompt,
       idFactory = null,
+      traceIdFactory = null,
       clock = () => Date.now(),
       runTimeoutMs = PLANNING_RUN_TIMEOUT_MS,
       logger = console
@@ -35,6 +62,7 @@
       this.eventBus = eventBus;
       this.sendPrompt = sendPrompt;
       this.idFactory = idFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      this.traceIdFactory = traceIdFactory || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
       this.clock = clock;
       this.runTimeoutMs = Math.max(60_000, Number(runTimeoutMs) || PLANNING_RUN_TIMEOUT_MS);
       this.logger = logger;
@@ -45,6 +73,31 @@
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
     isConnected(agent) { return Boolean(agent && this.registry?.isAgentConnected?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
+
+    createTrace({ projectId, taskId, runId, agentId, stage, sessionId = null, dispatchKind = "normal" } = {}) {
+      return traceContext({
+        traceId: `trace-${this.traceIdFactory()}`,
+        projectId,
+        taskId,
+        runId,
+        agentId,
+        stage,
+        sessionId,
+        dispatchKind,
+        startedAt: this.clock()
+      });
+    }
+
+    recordTrace(record) {
+      return traceContext(record?.source?.trace || record?.agent?.protocolContext, {
+        projectId: record?.event?.projectId,
+        taskId: record?.event?.taskId,
+        runId: record?.event?.runId,
+        agentId: record?.event?.agentId,
+        stage: record?.event?.payload?.stage,
+        sessionId: record?.runtimeSource?.sessionId
+      });
+    }
 
     async ensureLeadPromptReady() {
       let lead = this.getLead();
@@ -188,7 +241,8 @@
         const retried = await this.dispatchStage(project.projectId, stage, {
           lead,
           readinessChecked: true,
-          correctionReason: project.lastError?.reason || "planning_artifact_invalid"
+          correctionReason: project.lastError?.reason || "planning_artifact_invalid",
+          dispatchKind: "fresh_run_corrective_retry"
         });
         return {
           ...retried,
@@ -206,7 +260,22 @@
       }
       const taskId = `planning:${stage.toLowerCase()}`;
       const runId = project.currentRunId;
-      await this.registry.setProtocolContext(lead.agentId, { projectId: project.projectId, taskId, runId });
+      const dispatchKind = retryMode === "same_run" ? "same_run_retry" : "recovery";
+      const trace = this.createTrace({
+        projectId: project.projectId,
+        taskId,
+        runId,
+        agentId: lead.agentId,
+        stage,
+        sessionId: this.registry?.sessionIdForAgent?.(lead),
+        dispatchKind
+      });
+      await this.registry.setProtocolContext(lead.agentId, {
+        projectId: project.projectId,
+        taskId,
+        runId,
+        ...trace
+      });
       const prompt = root.PlanningPrompts.buildPlanningPrompt({
         stage,
         project,
@@ -214,11 +283,23 @@
         runId,
         replacement: true
       });
-      const sent = await this.sendPrompt(lead.agentId, prompt);
+      this.logger?.info?.("planning_stage_dispatch_started", traced(trace, {
+        promptBytes: utf8Bytes(prompt),
+        planningStatus: project.status || null,
+        dispatchKind
+      }));
+      const sent = await this.sendPrompt(lead.agentId, prompt, { trace });
       if (!sent?.ok) {
+        this.logger?.error?.("planning_stage_dispatch_failed", traced(trace, {
+          promptBytes: utf8Bytes(prompt),
+          planningStatus: project.status || null,
+          dispatchKind,
+          reason: sent?.reason || "lead_replacement_prompt_failed",
+          promptAccepted: sent?.accepted === true || sent?.promptAccepted === true
+        }));
         await this.registry.clearProtocolContext?.(lead.agentId);
         await this.projectStore.fail(project.projectId, "lead_prompt_failed", sent || null, "PLANNING");
-        return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState() };
+        return { ok: false, reason: "lead_replacement_prompt_failed", retryable: true, details: sent || null, project: this.getPublicState(), traceId: trace.traceId };
       }
       await this.projectStore.clearError?.(project.projectId);
       return {
@@ -230,22 +311,47 @@
         stage,
         runId,
         agentId: lead.agentId,
+        traceId: trace.traceId,
         project: this.getPublicState()
       };
     }
 
-    async dispatchStage(projectId, stage, { lead: readyLead = null, readinessChecked = false, correctionReason = null } = {}) {
+    async dispatchStage(projectId, stage, {
+      lead: readyLead = null,
+      readinessChecked = false,
+      correctionReason = null,
+      dispatchKind = null
+    } = {}) {
       const project = this.projectStore.getProject(projectId);
       if (!project) return { ok: false, reason: "unknown_project" };
+      const resolvedDispatchKind = dispatchKind || (correctionReason ? "fresh_run_corrective_retry" : "normal");
       let lead = readyLead || this.getLead();
       if (!readinessChecked) {
         const readiness = await this.ensureLeadPromptReady();
         if (!readiness.ok) {
           const failedRunId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
+          const failedTaskId = `planning:${stage.toLowerCase()}`;
+          const trace = this.createTrace({
+            projectId,
+            taskId: failedTaskId,
+            runId: failedRunId,
+            agentId: lead?.agentId || null,
+            stage,
+            sessionId: lead ? this.registry?.sessionIdForAgent?.(lead) : null,
+            dispatchKind: resolvedDispatchKind
+          });
           await this.projectStore.beginStage(projectId, { stage, runId: failedRunId });
+          this.logger?.error?.("planning_stage_dispatch_failed", traced(trace, {
+            promptBytes: 0,
+            planningStatus: project.status || null,
+            dispatchKind: resolvedDispatchKind,
+            reason: readiness.reason || "lead_not_ready",
+            beforeRuntimeDelivery: true,
+            promptAccepted: false
+          }));
           if (lead?.agentId) await this.registry.clearProtocolContext?.(lead.agentId);
           await this.projectStore.fail(projectId, "lead_prompt_failed", readiness, "PLANNING");
-          return { ok: false, reason: "lead_prompt_failed", retryable: true, details: readiness };
+          return { ok: false, reason: "lead_prompt_failed", retryable: true, details: readiness, traceId: trace.traceId };
         }
         lead = readiness.lead;
       }
@@ -254,19 +360,40 @@
       const runId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
       const taskId = `planning:${stage.toLowerCase()}`;
       await this.projectStore.beginStage(projectId, { stage, runId });
-      await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId });
+      const trace = this.createTrace({
+        projectId,
+        taskId,
+        runId,
+        agentId: lead.agentId,
+        stage,
+        sessionId: this.registry?.sessionIdForAgent?.(lead),
+        dispatchKind: resolvedDispatchKind
+      });
+      await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId, ...trace });
       const current = this.projectStore.getProject(projectId);
       let prompt = root.PlanningPrompts.buildPlanningPrompt({ stage, project: current, agentId: lead.agentId, runId });
       if (correctionReason) {
         prompt = `${prompt}\n\nRETRY CORRECTION:\n- The previous response for this same planning stage was received but rejected by Orchestra validation: ${String(correctionReason)}.\n- Produce a new artifact that exactly satisfies the requested stage schema.\n- Use only the new protocol identity/runId in this prompt; do not reuse any previous eventId or runId.`;
       }
-      const result = await this.sendPrompt(lead.agentId, prompt);
+      this.logger?.info?.("planning_stage_dispatch_started", traced(trace, {
+        promptBytes: utf8Bytes(prompt),
+        planningStatus: current?.status || null,
+        dispatchKind: resolvedDispatchKind
+      }));
+      const result = await this.sendPrompt(lead.agentId, prompt, { trace });
       if (!result?.ok) {
+        this.logger?.error?.("planning_stage_dispatch_failed", traced(trace, {
+          promptBytes: utf8Bytes(prompt),
+          planningStatus: current?.status || null,
+          dispatchKind: resolvedDispatchKind,
+          reason: result?.reason || "lead_prompt_failed",
+          promptAccepted: result?.accepted === true || result?.promptAccepted === true
+        }));
         await this.registry.clearProtocolContext?.(lead.agentId);
         await this.projectStore.fail(projectId, "lead_prompt_failed", result || null, "PLANNING");
-        return { ok: false, reason: "lead_prompt_failed", retryable: true, details: result || null };
+        return { ok: false, reason: "lead_prompt_failed", retryable: true, details: result || null, traceId: trace.traceId };
       }
-      return { ok: true, project: this.getPublicState() };
+      return { ok: true, traceId: trace.traceId, project: this.getPublicState() };
     }
 
     artifactCheck(stage, artifact) {
@@ -293,96 +420,167 @@
       return null;
     }
 
-    async advanceCompletedStage(project, { lead: readyLead = null, readinessChecked = false, reason = "stage_completed" } = {}) {
+    async advanceCompletedStage(project, {
+      lead: readyLead = null,
+      readinessChecked = false,
+      reason = "stage_completed",
+      trace = null
+    } = {}) {
       const current = this.projectStore.getProject(project?.projectId) || project;
-      if (!current || !this.currentRunCompleted(current)) return { ok: false, reason: "planning_stage_not_completed" };
+      if (!current || !this.currentRunCompleted(current)) return { ok: false, reason: "planning_stage_not_completed", planningAdvanced: false };
       const stage = String(current.stage || "").toUpperCase();
       const artifact = current.artifacts?.[stage];
       if (stage === "DAG_CRITIC") {
         const validation = root.validateTaskGraph(artifact);
         if (!validation.ok) {
           await this.projectStore.fail(current.projectId, "dag_validation_failed", validation);
-          return { ok: false, reason: "dag_validation_failed", validation };
+          return { ok: false, reason: "dag_validation_failed", validation, planningAdvanced: false };
         }
         await this.projectStore.setReady(current.projectId, artifact, validation);
         const lead = readyLead || this.getLead();
         if (this.isConnected(lead)) {
           await this.registry.setProtocolContext(lead.agentId, { projectId: current.projectId, taskId: "planning:complete", runId: "planning-complete" });
         }
-        return { ok: true, ready: true, reason, project: this.getPublicState() };
+        this.logger?.info?.("planning_stage_advancing", traced(trace, {
+          projectId: current.projectId,
+          fromStage: stage,
+          toStage: "READY",
+          reason
+        }));
+        return { ok: true, ready: true, reason, planningAdvanced: true, project: this.getPublicState() };
       }
 
       const next = NEXT[stage];
       if (!next) {
         await this.projectStore.fail(current.projectId, "unknown_next_stage", { stage }, "FAILED");
-        return { ok: false, reason: "unknown_next_stage", stage };
+        return { ok: false, reason: "unknown_next_stage", stage, planningAdvanced: false };
       }
 
       let lead = readyLead || this.getLead();
       if (!this.isConnected(lead)) {
-        return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason, project: this.getPublicState() };
+        return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason, planningAdvanced: false, project: this.getPublicState() };
       }
       if (!readinessChecked) {
         const readiness = await this.ensureLeadPromptReady();
         if (!readiness.ok) {
-          return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason: readiness.reason, project: this.getPublicState() };
+          return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason: readiness.reason, planningAdvanced: false, project: this.getPublicState() };
         }
         lead = readiness.lead;
         readinessChecked = true;
       }
-      this.logger?.info?.("planning_stage_advancing", { projectId: current.projectId, fromStage: stage, toStage: next, reason });
-      return this.dispatchStage(current.projectId, next, { lead, readinessChecked });
+      this.logger?.info?.("planning_stage_advancing", traced(trace, {
+        projectId: current.projectId,
+        fromStage: stage,
+        toStage: next,
+        reason
+      }));
+      const dispatched = await this.dispatchStage(current.projectId, next, { lead, readinessChecked });
+      return { ...dispatched, planningAdvanced: Boolean(dispatched?.ok) };
     }
 
     async handleCompletion(record, { recovered = false } = {}) {
       const event = record?.event;
       let project = this.projectStore.getActiveProject();
-      if (!event || !project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || "")) || !project.currentRunId) return { ok: true, ignored: true };
+      const trace = this.recordTrace(record);
+      if (!event || !project || !["PLANNING", "NEEDS_USER"].includes(String(project.status || "")) || !project.currentRunId) {
+        if (event) {
+          this.logger?.warn?.("planning_completion_ignored", traced(trace, {
+            reason: "planning_not_active",
+            receivedProjectId: event.projectId || null,
+            receivedTaskId: event.taskId || null,
+            receivedRunId: event.runId || null
+          }));
+        }
+        return { ok: true, ignored: true, planningConsumed: false, planningAdvanced: false };
+      }
       const expectedTaskId = `planning:${String(project.stage || "").toLowerCase()}`;
-      if (event.event !== "DONE"
-        || event.projectId !== project.projectId
-        || event.runId !== project.currentRunId
-        || event.taskId !== expectedTaskId) return { ok: true, ignored: true };
+      let mismatchReason = null;
+      if (event.event !== "DONE") mismatchReason = "event_type_mismatch";
+      else if (event.projectId !== project.projectId) mismatchReason = "project_id_mismatch";
+      else if (event.runId !== project.currentRunId) mismatchReason = "run_id_mismatch";
+      else if (event.taskId !== expectedTaskId) mismatchReason = "task_id_mismatch";
+      if (mismatchReason) {
+        this.logger?.warn?.("planning_completion_ignored", traced(trace, {
+          reason: mismatchReason,
+          expectedProjectId: project.projectId,
+          receivedProjectId: event.projectId || null,
+          expectedTaskId,
+          receivedTaskId: event.taskId || null,
+          expectedRunId: project.currentRunId,
+          receivedRunId: event.runId || null,
+          expectedEvent: "DONE",
+          receivedEvent: event.event || null
+        }));
+        return { ok: true, ignored: true, planningConsumed: false, planningAdvanced: false };
+      }
 
       const stage = String(event.payload?.stage || "").toUpperCase();
       if (stage !== project.stage) {
+        this.logger?.warn?.("planning_completion_ignored", traced(trace, {
+          reason: "planning_stage_mismatch",
+          expectedStage: project.stage,
+          receivedStage: stage
+        }));
         await this.projectStore.fail(project.projectId, "planning_stage_mismatch", { expected: project.stage, received: stage });
-        return { ok: false, reason: "planning_stage_mismatch" };
+        return { ok: false, reason: "planning_stage_mismatch", planningConsumed: false, planningAdvanced: false };
       }
 
+      this.logger?.info?.("planning_completion_consumed", traced(trace, {
+        eventId: event.eventId || null,
+        projectId: project.projectId,
+        taskId: expectedTaskId,
+        runId: event.runId,
+        stage,
+        recovered
+      }));
+
       if (this.currentRunCompleted(project)) {
-        return this.advanceCompletedStage(project, { reason: recovered ? "replayed_completed_stage" : "duplicate_completed_stage" });
+        const advanced = await this.advanceCompletedStage(project, {
+          reason: recovered ? "replayed_completed_stage" : "duplicate_completed_stage",
+          trace
+        });
+        return { ...advanced, planningConsumed: true };
       }
 
       const artifact = record?.source?.planningArtifact;
       const problem = this.artifactCheck(stage, artifact);
       if (problem) {
-        this.logger?.warn?.("planning_stage_artifact_rejected", {
+        this.logger?.warn?.("planning_stage_artifact_rejected", traced(trace, {
           projectId: project.projectId,
           stage,
           runId: event.runId || project.currentRunId || null,
           reason: problem,
           retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem)
-        });
+        }));
         await this.projectStore.fail(project.projectId, problem, {
           stage,
           acceptedRunId: event.runId || project.currentRunId || null,
           retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem),
           retryMode: RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "fresh_run" : null
         }, RETRYABLE_ARTIFACT_FAILURES.has(problem) ? "PLANNING" : "NEEDS_USER");
-        return { ok: false, reason: problem, retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem) };
+        return {
+          ok: false,
+          reason: problem,
+          retryable: RETRYABLE_ARTIFACT_FAILURES.has(problem),
+          planningConsumed: true,
+          planningAdvanced: false
+        };
       }
 
-      this.logger?.info?.("planning_stage_completed", {
+      this.logger?.info?.("planning_stage_completed", traced(trace, {
         projectId: project.projectId,
         stage,
         runId: event.runId || project.currentRunId || null,
         recovered
-      });
+      }));
       await this.projectStore.completeStage(project.projectId, { stage, artifact });
       await this.projectStore.clearError?.(project.projectId, "PLANNING");
       project = this.projectStore.getProject(project.projectId);
-      return this.advanceCompletedStage(project, { reason: recovered ? "persisted_completion_replayed" : "stage_completed" });
+      const advanced = await this.advanceCompletedStage(project, {
+        reason: recovered ? "persisted_completion_replayed" : "stage_completed",
+        trace
+      });
+      return { ...advanced, planningConsumed: true };
     }
 
     async handleBlocker(record) {
