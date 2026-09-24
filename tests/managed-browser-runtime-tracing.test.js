@@ -257,6 +257,24 @@ test("protocol and EventBus rejection paths keep trace correlation without raw p
     sessionIdForAgent(value) { return value?.sessionId || null; },
     async publishRuntimeMessage(message) { messages.push(message); return { ok: true }; }
   };
+  const missingTrace = trace("trace-protocol-missing");
+  const missing = await adapter.publishCompletion(runtime, "A1", {
+    text: "Finished without an Orchestra envelope.",
+    fingerprint: "fp-missing",
+    messageCount: 1,
+    pathname: "/c/x",
+    url: "https://chatgpt.com/c/x",
+    availability: "ready",
+    generating: false
+  }, missingTrace);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "protocol_event_missing");
+  assert.equal(logger.records.some((record) => (
+    record.event === "managed_browser_protocol_parse_failed"
+    && record.details.traceId === missingTrace.traceId
+    && record.details.reason === "protocol_event_missing"
+  )), true);
+
   const parserSentinel = "TRACE_PARSER_SENTINEL";
   const parseTrace = trace("trace-parser-reject");
   const parsed = await adapter.publishCompletion(runtime, "A1", {
