@@ -1,12 +1,12 @@
 # Phase 19 Desktop Reliability and Security Policy
 
-Phase 19 defines the native desktop control plane with the browser extension bridge as the default product path, while retaining the direct managed-browser runtime as an explicit alternate path.
+Phase 19 promotes the direct managed-browser runtime to the default desktop product path and keeps ChatGPT interaction inside the native application.
 
 ## Runtime policy
 
-- `electron .` starts the native desktop control plane backed by the Chrome/Edge extension bridge.
-- `--managed-browser` explicitly selects the embedded direct managed-browser runtime.
-- `--companion` remains a compatibility alias for the native extension-bridge runtime.
+- `electron .` starts the direct managed-browser runtime.
+- `--managed-browser` explicitly selects the same embedded runtime.
+- `--companion` is retained only as a legacy compatibility/testing mode and is not part of the normal product flow.
 - `--desktop-shell` is an explicit development/test-only fake-runtime shell.
 - Ambiguous multi-runtime selections fail closed.
 - One Lead plus up to four Worker slots is the release concurrency ceiling.
