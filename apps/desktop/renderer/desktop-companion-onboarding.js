@@ -53,10 +53,10 @@
       const prepared = this.prepared;
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-companion-onboarding">
         <div class="dashboard-section-head">
-          <h3>${escapeHtml(this.tr("companion.title", "Chrome / Edge fallback"))}</h3>
+          <h3>${escapeHtml(this.tr("companion.title", "Chrome / Edge extension bridge"))}</h3>
           <span>COMPANION</span>
         </div>
-        <p><strong>${escapeHtml(this.tr("companion.summary", "Use your normal browser for sign-in providers that reject embedded Electron windows."))}</strong></p>
+        <p><strong>${escapeHtml(this.tr("companion.summary", "The native Orchestra app uses the browser extension to control signed-in ChatGPT tabs through Native Messaging."))}</strong></p>
         <ol class="desktop-companion-steps">
           <li>${escapeHtml(this.tr("companion.step1", "Prepare the Orchestra extension and Native Messaging bridge."))}</li>
           <li>${escapeHtml(this.tr("companion.step2", "In Chrome or Edge, enable Developer mode and load the prepared folder as an unpacked extension."))}</li>
@@ -65,17 +65,17 @@
         </ol>
         ${this.lastError ? `<div class="dashboard-error">${escapeHtml(this.lastError)}</div>` : ""}
         ${prepared ? `<div class="dashboard-evidence">
-          <strong>${escapeHtml(this.tr("companion.ready", "Fallback prepared"))}</strong>
+          <strong>${escapeHtml(this.tr("companion.ready", "Extension bridge prepared"))}</strong>
           <div><code>${escapeHtml(prepared.extensionDirectory)}</code></div>
           <div>${escapeHtml(this.tr("companion.extensionId", "Extension ID: {id}", { id: prepared.extensionId }))}</div>
         </div>` : ""}
         <div class="dashboard-task-controls">
-          <button data-companion-action="prepare" ${this.busy ? "disabled" : ""}>${escapeHtml(this.tr("companion.prepare", "Prepare Chrome / Edge fallback"))}</button>
+          <button data-companion-action="prepare" ${this.busy ? "disabled" : ""}>${escapeHtml(this.tr("companion.prepare", "Prepare browser extension bridge"))}</button>
           <button class="secondary" data-companion-action="open-folder" ${!prepared ? "disabled" : ""}>${escapeHtml(this.tr("companion.openFolder", "Open extension folder"))}</button>
           <button class="secondary" data-companion-action="open-chatgpt">${escapeHtml(this.tr("companion.openChatGPT", "Open ChatGPT in browser"))}</button>
-          <button class="secondary" data-companion-action="managed">${escapeHtml(this.tr("companion.backManaged", "Back to managed browser"))}</button>
+          <button class="secondary" data-companion-action="managed">${escapeHtml(this.tr("companion.backManaged", "Use embedded managed browser"))}</button>
         </div>
-        ${!this.packaged ? `<p class="dashboard-muted">${escapeHtml(this.tr("companion.packagedHint", "Automatic Native Messaging setup requires the packaged Windows candidate. Build it with npm run desktop:dist:win, then run the packaged executable."))}</p>` : ""}
+        ${!this.packaged ? `<p class="dashboard-muted">${escapeHtml(this.tr("companion.packagedHint", "Automatic Native Messaging setup is performed by the packaged native app. Development builds can still prepare the extension manually."))}</p>` : ""}
       </section>`;
     }
 
