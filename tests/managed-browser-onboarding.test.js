@@ -78,7 +78,7 @@ test("onboarding offers Lead registration only after ChatGPT composer becomes re
 });
 
 
-test("managed-browser onboarding routes blocked Google auth into the packaged companion fallback", async () => {
+test("managed-browser onboarding routes blocked Google auth into the native extension runtime", async () => {
   const calls = [];
   const root = rootElement();
   const transport = {
@@ -112,14 +112,14 @@ test("managed-browser onboarding routes blocked Google auth into the packaged co
   const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
   await onboarding.refresh();
   assert.match(root.innerHTML, /Google sign-in must continue/);
-  assert.match(root.innerHTML, /Prepare and use Chrome \/ Edge fallback/);
+  assert.match(root.innerHTML, /Switch to Chrome \/ Edge extension runtime/);
 
   const result = await onboarding.handleAction("use-companion");
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ["prepare", ["switch", "companion"]]);
 });
 
-test("managed-browser onboarding fails closed when companion preparation is unavailable", async () => {
+test("managed-browser onboarding fails closed when extension runtime preparation is unavailable", async () => {
   const root = rootElement();
   const transport = {
     async query() { return { ok: true }; },
@@ -131,7 +131,7 @@ test("managed-browser onboarding fails closed when companion preparation is unav
   onboarding.status = { availability: "unavailable", loginRequired: true, leadRegistered: false, unsupportedAuthProvider: "google" };
   const result = await onboarding.handleAction("use-companion");
   assert.equal(result.ok, false);
-  assert.match(root.innerHTML, /packaged Windows candidate/);
+  assert.match(root.innerHTML, /packaged native application/);
 });
 
 
