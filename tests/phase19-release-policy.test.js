@@ -22,8 +22,8 @@ const schedulerDefaults = globalThis.ChatGPTOrchestra.SCHEDULER_DEFAULTS;
 const reviewSource = read("background/review-store.js");
 const integrationSource = read("background/integration-store.js");
 
-test("desktop-first alpha path defaults to direct managed browser while fallbacks stay explicit", () => {
-  assert.equal(resolveDesktopRuntimeMode([], {}), RUNTIME_MODES.MANAGED_BROWSER);
+test("desktop-first alpha path defaults to the native browser-extension bridge", () => {
+  assert.equal(resolveDesktopRuntimeMode([], {}), RUNTIME_MODES.COMPANION);
   assert.equal(resolveDesktopRuntimeMode(["--companion"], {}), RUNTIME_MODES.COMPANION);
   assert.equal(resolveDesktopRuntimeMode(["--desktop-shell"], {}), RUNTIME_MODES.DESKTOP);
   assert.equal(pkg.scripts["desktop:dev"], "electron .");
