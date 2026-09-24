@@ -20,21 +20,57 @@
       this.updatedAt = 0;
       this.agents = new Map();
       this.handshake = null;
+      this.readyPromise = null;
+      this.backgroundReadyPromise = null;
+      this.lastBootstrapError = null;
+      this.closed = false;
       this.hostHandlerDisposers = [];
     }
 
+    async bootstrap() {
+      if (this.handshake) return this.snapshot();
+      if (this.readyPromise) return this.readyPromise;
+      this.readyPromise = (async () => {
+        if (typeof this.rpc.transport?.waitForConnection === "function") await this.rpc.transport.waitForConnection();
+        const handshake = await this.rpc.request("companion.handshake", {
+          protocolVersion: Protocol.PROTOCOL_VERSION,
+          contractVersion: Contracts.CONTRACT_VERSION,
+          role: "desktop-control-plane"
+        });
+        Protocol.assertCompatibleVersion(handshake?.protocolVersion);
+        if (Number(handshake?.contractVersion) !== Number(Contracts.CONTRACT_VERSION)) throw new Error("companion_contract_version_mismatch");
+        this.handshake = clone(handshake);
+        this.lastBootstrapError = null;
+        this.applySnapshot(await this.rpc.request("agent.snapshot"));
+        return this.snapshot();
+      })();
+      try {
+        return await this.readyPromise;
+      } finally {
+        this.readyPromise = null;
+      }
+    }
+
+    async ensureReady() {
+      if (this.closed) throw new Error("desktop_bridge_closed");
+      return this.handshake ? this.snapshot() : this.bootstrap();
+    }
+
     async load() {
+      this.closed = false;
       await this.rpc.start();
-      if (typeof this.rpc.transport?.waitForConnection === "function") await this.rpc.transport.waitForConnection();
-      const handshake = await this.rpc.request("companion.handshake", {
-        protocolVersion: Protocol.PROTOCOL_VERSION,
-        contractVersion: Contracts.CONTRACT_VERSION,
-        role: "desktop-control-plane"
-      });
-      Protocol.assertCompatibleVersion(handshake?.protocolVersion);
-      if (Number(handshake?.contractVersion) !== Number(Contracts.CONTRACT_VERSION)) throw new Error("companion_contract_version_mismatch");
-      this.handshake = clone(handshake);
-      this.applySnapshot(await this.rpc.request("agent.snapshot"));
+      if (typeof this.rpc.transport?.waitForConnection !== "function") return this.bootstrap();
+
+      if (!this.backgroundReadyPromise) {
+        this.backgroundReadyPromise = this.bootstrap()
+          .catch((error) => {
+            if (!this.closed) this.lastBootstrapError = error?.message || String(error);
+            return null;
+          })
+          .finally(() => {
+            this.backgroundReadyPromise = null;
+          });
+      }
       return this.snapshot();
     }
 
@@ -103,7 +139,10 @@
       });
     }
 
-    async remote(method, payload = {}) { return this.rpc.request(`agent.${method}`, payload); }
+    async remote(method, payload = {}) {
+      await this.ensureReady();
+      return this.rpc.request(`agent.${method}`, payload);
+    }
 
     async setRuntimeStatus(status) {
       const snapshot = await this.remote("setRuntimeStatus", { status });
@@ -171,8 +210,12 @@
     }
 
     async close() {
+      this.closed = true;
       this.unbindHostHandlers();
       await this.rpc.stop();
+      this.handshake = null;
+      this.readyPromise = null;
+      this.backgroundReadyPromise = null;
     }
   }
 
