@@ -54,7 +54,7 @@
       this.rootElement.innerHTML = `<section class="dashboard-section desktop-companion-onboarding">
         <div class="dashboard-section-head">
           <h3>${escapeHtml(this.tr("companion.title", "Chrome / Edge extension bridge"))}</h3>
-          <span>COMPANION</span>
+          <span>EXTENSION</span>
         </div>
         <p><strong>${escapeHtml(this.tr("companion.summary", "The native Orchestra app uses the browser extension to control signed-in ChatGPT tabs through Native Messaging."))}</strong></p>
         <ol class="desktop-companion-steps">
