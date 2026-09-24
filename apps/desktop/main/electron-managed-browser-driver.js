@@ -128,15 +128,11 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
-    const redirectUnsupportedAuth = (rawUrl) => {
+    const blockUnsupportedAuth = (rawUrl) => {
       const provider = unsupportedEmbeddedAuthProvider(rawUrl);
       if (!provider) return false;
       const entry = this.entry(id);
       if (entry) entry.unsupportedAuthProvider = provider;
-      window.hide?.();
-      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(DEFAULT_CHATGPT_URL)).catch((error) => {
-        this.emit({ type: "navigation-blocked", sessionId: id, reason: `external_auth_open_failed:${asError(error)}` });
-      });
       this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
       return true;
     };
@@ -149,7 +145,7 @@ class ElectronManagedBrowserDriver {
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
     window.webContents?.on?.("will-navigate", (event, url) => {
-      if (redirectUnsupportedAuth(url)) {
+      if (blockUnsupportedAuth(url)) {
         event?.preventDefault?.();
         return;
       }
@@ -176,7 +172,7 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
-      if (redirectUnsupportedAuth(rawUrl)) return { action: "deny" };
+      if (blockUnsupportedAuth(rawUrl)) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
