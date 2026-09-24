@@ -191,6 +191,27 @@ if (registrationRequest) {
   async function createMainWindow() {
     const dataDirectory = orchestraDataDirectory();
     const runtimeMode = resolveDesktopRuntimeMode();
+    if (runtimeMode === RUNTIME_MODES.COMPANION && app.isPackaged) {
+      const extensionDirectory = resolveCompanionExtensionDirectory({
+        isPackaged: true,
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      });
+      try {
+        const prepared = prepareCompanionFallback({
+          extensionDirectory,
+          dataDirectory,
+          hostPath: process.execPath,
+          browsers: ["edge", "chrome"]
+        });
+        console.info("[ChatGPT Orchestra] browser_extension_bridge_prepared", {
+          extensionId: prepared.extensionId,
+          browsers: prepared.browsers
+        });
+      } catch (error) {
+        console.warn("[ChatGPT Orchestra] browser_extension_bridge_prepare_failed", error?.message || String(error));
+      }
+    }
     if (runtimeMode === RUNTIME_MODES.COMPANION) host = await createNativeCompanionDesktopHost({ dataDirectory });
     else if (runtimeMode === RUNTIME_MODES.MANAGED_BROWSER) host = await createManagedBrowserDesktopHost({ dataDirectory });
     else host = await createDesktopHost({ dataDirectory });
@@ -198,7 +219,7 @@ if (registrationRequest) {
     registerDesktopShellIpc({ runtimeMode, dataDirectory });
 
     const title = runtimeMode === RUNTIME_MODES.COMPANION
-      ? "ChatGPT Orchestra · Companion"
+      ? "ChatGPT Orchestra"
       : runtimeMode === RUNTIME_MODES.MANAGED_BROWSER
         ? "ChatGPT Orchestra · Managed Browser"
         : "ChatGPT Orchestra";
