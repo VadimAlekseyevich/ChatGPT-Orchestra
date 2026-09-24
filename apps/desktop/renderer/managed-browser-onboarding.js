@@ -124,10 +124,10 @@
       if (status?.unsupportedAuthProvider !== "google") return "";
       return `<div class="dashboard-error managed-auth-fallback">
         <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in must continue in Chrome or Edge"))}</strong>
-        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Orchestra opened the provider in your normal browser and can switch to its extension/companion fallback without copying credentials or cookies."))}</p>
-        ${this.fallbackError ? `<p>${escapeHtml(this.fallbackError === "companion_fallback_requires_packaged_runtime" ? this.tr("managed.packagedFallbackRequired", "This fallback must be prepared from the packaged Windows candidate. Build it, launch the packaged executable, then try again.") : this.fallbackError)}</p>` : ""}
+        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Switch to Orchestra's native browser-extension runtime to use your normal signed-in Chrome or Edge session without copying credentials or cookies."))}</p>
+        ${this.fallbackError ? `<p>${escapeHtml(this.fallbackError === "companion_fallback_requires_packaged_runtime" ? this.tr("managed.packagedFallbackRequired", "The browser-extension runtime must be prepared by the packaged native application. Build it, launch the packaged executable, then try again.") : this.fallbackError)}</p>` : ""}
         <div class="dashboard-task-controls">
-          <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Prepare and use Chrome / Edge fallback"))}</button>
+          <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Switch to Chrome / Edge extension runtime"))}</button>
           <button class="secondary" data-managed-browser-action="open-external">${escapeHtml(this.tr("managed.openExternal", "Open ChatGPT in normal browser"))}</button>
           <button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
         </div>
