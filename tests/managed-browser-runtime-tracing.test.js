@@ -536,6 +536,60 @@ test("protocol and EventBus failures end with deterministic terminal trace reaso
   });
 });
 
+test("same-run planning delivery retries use a fresh traceId without changing runId", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-retry-trace" });
+  await store.load();
+  await store.createProject({ goal: "trace same-run retries", repositoryUrl: "https://github.com/acme/widget" });
+  await store.beginStage("P-retry-trace", { stage: "DISCOVERY", runId: "R-existing" });
+  await store.fail("P-retry-trace", "lead_prompt_failed", { retryMode: "same_run" }, "PLANNING");
+
+  const lead = { agentId: "A1", role: "lead", status: "IDLE", sessionId: "S1" };
+  const traces = [];
+  const registry = {
+    listAgents() { return [{ ...lead }]; },
+    isAgentConnected() { return true; },
+    sessionIdForAgent() { return "S1"; },
+    async pingAgent() {
+      return {
+        ok: true,
+        availability: "ready",
+        generating: false,
+        composerOccupied: false,
+        agent: { ...lead, status: "IDLE", chatState: { availability: "ready", generating: false, composerOccupied: false } }
+      };
+    },
+    async setProtocolContext(_agentId, context) { lead.protocolContext = { ...context }; return { ...lead }; },
+    async clearProtocolContext() { lead.protocolContext = null; }
+  };
+  const traceIds = ["retry-a", "retry-b"];
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: { subscribe() { return () => {}; }, allEvents() { return []; }, recent() { return { events: [] }; } },
+    traceIdFactory: () => traceIds.shift(),
+    sendPrompt: async (_agentId, _prompt, options) => {
+      traces.push(options.trace);
+      return { ok: true, accepted: true };
+    },
+    logger: collectingLogger()
+  });
+
+  const first = await engine.resumeCurrentStage({ reason: "first_same_run_retry" });
+  assert.equal(first.ok, true);
+  assert.equal(first.runId, "R-existing");
+  await store.fail("P-retry-trace", "lead_prompt_failed", { retryMode: "same_run" }, "PLANNING");
+  const second = await engine.resumeCurrentStage({ reason: "second_same_run_retry" });
+  assert.equal(second.ok, true);
+  assert.equal(second.runId, "R-existing");
+
+  assert.equal(traces.length, 2);
+  assert.equal(traces[0].runId, "R-existing");
+  assert.equal(traces[1].runId, "R-existing");
+  assert.equal(traces[0].dispatchKind, "same_run_retry");
+  assert.equal(traces[1].dispatchKind, "same_run_retry");
+  assert.notEqual(traces[0].traceId, traces[1].traceId);
+});
+
 test("stale planning completion is explicitly ignored without advancing", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P1" });
   await store.load();
@@ -846,9 +900,12 @@ test("one managed-browser trace correlates dispatch through EventBus application
   for (const expected of [
     "planning_stage_dispatch_started",
     "managed_browser_completion_prepare_started",
+    "managed_browser_completion_prepare_completed",
     "managed_browser_prompt_send_started",
+    "managed_browser_prompt_send_completed",
     "managed_browser_generation_started",
     "managed_browser_assistant_change_detected",
+    "managed_browser_generation_stopped",
     "managed_browser_completion_candidate",
     "managed_browser_completion_stable",
     "managed_browser_protocol_parsed",
