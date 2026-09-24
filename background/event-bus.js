@@ -6,6 +6,28 @@
     || (typeof require === "function" ? require("../protocol/orchestra-protocol.js") : null);
   const StoreModule = typeof require === "function" ? require("./event-store.js") : null;
   const eventSignature = root.eventSignature || StoreModule?.eventSignature;
+  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "sessionId", "dispatchKind", "startedAt"];
+
+  function traceContext(value = null, fallback = {}) {
+    const source = value?.trace && typeof value.trace === "object" ? value.trace : (value && typeof value === "object" ? value : {});
+    const base = fallback?.trace && typeof fallback.trace === "object" ? fallback.trace : (fallback && typeof fallback === "object" ? fallback : {});
+    const merged = { ...base, ...source };
+    const trace = {};
+    for (const field of TRACE_FIELDS) {
+      if (field === "startedAt") {
+        const numeric = Number(merged[field]);
+        if (Number.isFinite(numeric) && numeric > 0) trace[field] = numeric;
+        continue;
+      }
+      const text = merged[field] === null || merged[field] === undefined ? "" : String(merged[field]);
+      if (text) trace[field] = text;
+    }
+    return trace;
+  }
+
+  function traced(trace, details = {}) {
+    return { ...traceContext(trace), ...(details && typeof details === "object" ? details : { value: details }) };
+  }
 
   class EventBus {
     constructor({ registry, store, logger = console } = {}) {
@@ -40,13 +62,24 @@
 
     async emit(route, record) {
       const listeners = [...(this.listeners.get(route) || []), ...(this.listeners.get("*") || [])];
-      if (!listeners.length) return { ok: false, reason: "event_listener_missing", delivered: 0, errors: [] };
+      if (!listeners.length) return {
+        ok: false,
+        reason: "event_listener_missing",
+        delivered: 0,
+        errors: [],
+        planningConsumed: false,
+        planningAdvanced: false
+      };
       const errors = [];
       let delivered = 0;
+      let planningConsumed = false;
+      let planningAdvanced = false;
       for (const listener of listeners) {
         try {
-          await listener(record);
+          const result = await listener(record);
           delivered += 1;
+          if (result?.planningConsumed === true) planningConsumed = true;
+          if (result?.planningAdvanced === true) planningAdvanced = true;
         } catch (error) {
           const message = error?.message || String(error);
           errors.push(message);
@@ -54,8 +87,8 @@
         }
       }
       return errors.length
-        ? { ok: false, reason: "event_listener_failed", delivered, errors }
-        : { ok: true, delivered, errors: [] };
+        ? { ok: false, reason: "event_listener_failed", delivered, errors, planningConsumed, planningAdvanced }
+        : { ok: true, delivered, errors: [], planningConsumed, planningAdvanced };
     }
 
     normalizeSender(sender = {}) {
@@ -68,8 +101,6 @@
           legacyTabId: Number.isInteger(sender.legacyTabId) ? sender.legacyTabId : null
         };
       }
-      // Temporary compatibility for Phase 3-9 tests/older callers. Extension runtime
-      // normalizes senders before EventBus in production Phase 10 composition.
       const tabId = sender?.tab?.id;
       const agent = Number.isInteger(tabId) ? this.registry?.getAgentByTabId?.(tabId) : null;
       return {
@@ -81,14 +112,29 @@
       };
     }
 
-    async reject(reason, { event = null, sender = null, details = null } = {}) {
+    async reject(reason, { event = null, sender = null, details = null, trace = null, route = null } = {}) {
       const context = this.normalizeSender(sender || {});
+      const normalizedTrace = traceContext(trace, {
+        projectId: event?.projectId,
+        taskId: event?.taskId,
+        runId: event?.runId,
+        agentId: event?.agentId || context.agentId,
+        sessionId: context.sessionId
+      });
       await this.store.reject(reason, {
         event,
         tabId: context.legacyTabId,
         runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
-        details
+        details: { ...(details || {}), trace: normalizedTrace }
       });
+      this.logger?.warn?.("orchestra_event_rejected", traced(normalizedTrace, {
+        eventId: event?.eventId || null,
+        route: route || (event ? Protocol.routeForEvent(event.event) : null),
+        reason,
+        cursor: details?.cursor ?? null,
+        duplicate: false,
+        replayed: false
+      }));
       return { ok: false, reason };
     }
 
@@ -118,13 +164,40 @@
       };
     }
 
+    recordTrace(record) {
+      return traceContext(record?.source?.trace || record?.agent?.protocolContext, {
+        projectId: record?.event?.projectId,
+        taskId: record?.event?.taskId,
+        runId: record?.event?.runId,
+        agentId: record?.event?.agentId || record?.runtimeSource?.agentId,
+        sessionId: record?.runtimeSource?.sessionId
+      });
+    }
+
     async applyRecord(record, { replayed = false } = {}) {
       const eventId = record?.event?.eventId;
       if (!eventId) return { ok: false, reason: "event_id_missing" };
+      const trace = this.recordTrace(record);
       const execute = async () => {
+        this.logger?.info?.("orchestra_event_apply_started", traced(trace, {
+          eventId,
+          route: record.route,
+          cursor: record.cursor ?? null,
+          replayed
+        }));
         const delivered = await this.emit(record.route, record);
         if (!delivered.ok) {
           await this.store.markDeliveryFailed?.(eventId, delivered.errors?.[0] || delivered.reason);
+          this.logger?.error?.("orchestra_event_apply_failed", traced(trace, {
+            eventId,
+            route: record.route,
+            cursor: record.cursor ?? null,
+            replayed,
+            reason: delivered.reason || "event_listener_failed",
+            delivered: delivered.delivered || 0,
+            planningConsumed: Boolean(delivered.planningConsumed),
+            planningAdvanced: Boolean(delivered.planningAdvanced)
+          }));
           return {
             ok: false,
             reason: delivered.reason || "event_listener_failed",
@@ -133,10 +206,21 @@
             route: record.route,
             replayed,
             delivered: delivered.delivered || 0,
-            errors: delivered.errors || []
+            errors: delivered.errors || [],
+            planningConsumed: Boolean(delivered.planningConsumed),
+            planningAdvanced: Boolean(delivered.planningAdvanced)
           };
         }
         await this.store.markApplied?.(eventId);
+        this.logger?.info?.("orchestra_event_applied", traced(trace, {
+          eventId,
+          route: record.route,
+          cursor: record.cursor ?? null,
+          replayed,
+          delivered: delivered.delivered || 0,
+          planningConsumed: Boolean(delivered.planningConsumed),
+          planningAdvanced: Boolean(delivered.planningAdvanced)
+        }));
         return {
           ok: true,
           applied: true,
@@ -144,7 +228,9 @@
           cursor: record.cursor,
           route: record.route,
           replayed,
-          delivered: delivered.delivered || 0
+          delivered: delivered.delivered || 0,
+          planningConsumed: Boolean(delivered.planningConsumed),
+          planningAdvanced: Boolean(delivered.planningAdvanced)
         };
       };
       const existing = this.inFlight.get(eventId);
@@ -177,52 +263,99 @@
     }
 
     async handleEvent(rawEvent, sender, source = {}) {
+      const sourceTrace = traceContext(source?.trace);
       const validation = Protocol.validateEnvelope(rawEvent);
       if (!validation.ok) {
         return this.reject(validation.reason, {
           sender,
+          trace: sourceTrace,
           details: { field: validation.field || null, received: validation.received ?? null }
         });
       }
       const event = validation.event;
       const context = this.normalizeSender(sender || {});
-      if (!context.agentId) return this.reject(context.sessionId ? "unregistered_sender" : "missing_sender_identity", { event, sender: context });
+      if (!context.agentId) {
+        return this.reject(context.sessionId ? "unregistered_sender" : "missing_sender_identity", {
+          event,
+          sender: context,
+          trace: sourceTrace
+        });
+      }
 
       const agent = this.registry.getAgent(context.agentId);
-      if (!agent) return this.reject("unregistered_sender", { event, sender: context });
+      const trace = traceContext(sourceTrace, {
+        ...(agent?.protocolContext || {}),
+        projectId: event.projectId,
+        taskId: event.taskId,
+        runId: event.runId,
+        agentId: event.agentId,
+        sessionId: context.sessionId
+      });
+      if (!agent) return this.reject("unregistered_sender", { event, sender: context, trace });
       if (event.agentId !== agent.agentId) {
-        return this.reject("agent_mismatch", { event, sender: context, details: { expectedAgentId: agent.agentId } });
+        return this.reject("agent_mismatch", {
+          event,
+          sender: context,
+          trace,
+          details: { expectedAgentId: agent.agentId }
+        });
       }
 
       const route = Protocol.routeForEvent(event.event);
-      if (!route) return this.reject("unknown_route", { event, sender: context });
+      if (!route) return this.reject("unknown_route", { event, sender: context, trace });
 
       const protocolContext = this.validateProtocolContext(agent, event);
       if (!protocolContext.ok) {
         return this.reject(protocolContext.reason, {
           event,
           sender: context,
+          trace,
+          route,
           details: { field: protocolContext.field, expected: protocolContext.expected, received: protocolContext.received }
         });
       }
       const privileged = route === "review" || route === "integration" || event.taskId === "integration";
       if (privileged && !agent.protocolContext) {
-        return this.reject(route === "review" ? "review_context_required" : "integration_context_required", { event, sender: context });
+        return this.reject(route === "review" ? "review_context_required" : "integration_context_required", {
+          event,
+          sender: context,
+          trace,
+          route
+        });
       }
 
       const existing = this.store.getProcessed(event.eventId);
       if (existing) {
         if (!existing.signature || existing.signature !== eventSignature(event)) {
-          return this.reject("event_id_collision", { event, sender: context });
+          return this.reject("event_id_collision", { event, sender: context, trace, route });
         }
         if (existing.status === "applied") {
-          return { ok: true, duplicate: true, applied: true, eventId: event.eventId, cursor: existing.cursor, route };
+          this.logger?.info?.("orchestra_event_accepted", traced(trace, {
+            eventId: event.eventId,
+            route,
+            cursor: existing.cursor ?? null,
+            duplicate: true,
+            replayed: true,
+            applied: true
+          }));
+          return {
+            ok: true,
+            duplicate: true,
+            applied: true,
+            eventId: event.eventId,
+            cursor: existing.cursor,
+            route,
+            planningConsumed: false,
+            planningAdvanced: false
+          };
         }
         const stored = this.store.getEvent?.(event.eventId);
         if (!stored) {
           return this.reject("pending_event_record_missing", {
             event,
             sender: context,
+            trace,
+            route,
             details: { cursor: existing.cursor || null }
           });
         }
@@ -233,7 +366,13 @@
       const runKey = `${event.projectId}:${event.taskId}:${event.runId}:${event.agentId}`;
       const lastSequence = this.store.getLastSequence(runKey);
       if (event.sequence <= lastSequence) {
-        return this.reject("stale_sequence", { event, sender: context, details: { lastSequence } });
+        return this.reject("stale_sequence", {
+          event,
+          sender: context,
+          trace,
+          route,
+          details: { lastSequence }
+        });
       }
 
       const runtimeSource = { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId };
@@ -241,8 +380,15 @@
         route,
         tabId: context.legacyTabId,
         runtimeSource,
-        source: { ...source, runtime: runtimeSource }
+        source: { ...source, trace, runtime: runtimeSource }
       });
+      this.logger?.info?.("orchestra_event_accepted", traced(trace, {
+        eventId: event.eventId,
+        route,
+        cursor: accepted.cursor ?? null,
+        duplicate: false,
+        replayed: false
+      }));
       const record = {
         cursor: accepted.cursor,
         route,
@@ -271,18 +417,31 @@
       const agent = this.registry.getAgent(context.agentId);
       if (!agent) return { ok: true, ignored: true, reason: "unregistered_sender" };
 
+      const trace = traceContext(payload?.trace || agent.protocolContext, {
+        agentId: agent.agentId,
+        sessionId: context.sessionId
+      });
       const reason = `content_protocol_error:${String(payload?.reason || "unknown")}`;
       await this.store.reject(reason, {
         tabId: context.legacyTabId,
         runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
         details: {
           agentId: agent.agentId,
-          lastLine: String(payload?.lastLine || "").slice(0, 512),
           field: payload?.field || null,
-          received: payload?.received ?? null,
-          responseFingerprint: payload?.responseFingerprint || ""
+          receivedMetadata: payload?.receivedMetadata || null,
+          lastLineMetadata: payload?.lastLineMetadata || null,
+          responseFingerprint: payload?.responseFingerprint || "",
+          trace
         }
       });
+      this.logger?.warn?.("orchestra_event_rejected", traced(trace, {
+        eventId: null,
+        route: "protocol-error",
+        cursor: null,
+        reason,
+        duplicate: false,
+        replayed: false
+      }));
       return { ok: false, reason };
     }
   }
