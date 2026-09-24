@@ -32,7 +32,7 @@
 - local commands запускаются только в explicitly trusted repository/workspace, через executable + argv (`shell:false`) с bounded runtime/output;
 - dirty abandoned worktrees salvage'ятся вместо destructive auto-cleanup;
 - managed-browser runtime использует dedicated profile и не извлекает cookies/credentials из обычного Edge/Chrome profile;
-- нативное приложение использует authenticated Chrome/Edge extension bridge как основной browser runtime; direct managed-browser остаётся явным альтернативным режимом;
+- нативное приложение использует direct managed-browser как основной browser runtime; ChatGPT-сессии остаются внутри Orchestra, а legacy extension bridge не входит в штатный пользовательский путь;
 - Stop Now отменяет active local verification и блокирует late state-machine effects;
 - Project Bundle/debug export redacts credentials и runtime identities;
 - final target-branch merge/push остаётся user-controlled по default alpha policy;
