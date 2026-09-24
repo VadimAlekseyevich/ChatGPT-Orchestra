@@ -37,9 +37,9 @@ function resolveDesktopRuntimeMode(argv = process.argv, env = process.env) {
   const desktopShell = desktopShellRequested(argv, env);
   const selected = [companion, managedBrowser, desktopShell].filter(Boolean).length;
   if (selected > 1) throw new Error("desktop_runtime_mode_conflict");
-  if (companion) return RUNTIME_MODES.COMPANION;
+  if (managedBrowser) return RUNTIME_MODES.MANAGED_BROWSER;
   if (desktopShell) return RUNTIME_MODES.DESKTOP;
-  return RUNTIME_MODES.MANAGED_BROWSER;
+  return RUNTIME_MODES.COMPANION;
 }
 
 module.exports = {
