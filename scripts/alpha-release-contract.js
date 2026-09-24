@@ -19,7 +19,7 @@ const ALPHA_SCENARIOS = Object.freeze([
   { id: "A13", title: "Stop Now + late event protection", evidence: ["tests/recovery-stop-guards.test.js", "tests/desktop-stop-hardening.test.js"], manualRequired: false },
   { id: "A14", title: "Local worktree salvage", evidence: ["tests/workspace-lifecycle-hardening.test.js"], manualRequired: false },
   { id: "A15", title: "Export/import project", evidence: ["tests/project-bundle.test.js", "tests/persistence-api.test.js", "tests/desktop-project-bundle-import.test.js"], manualRequired: false },
-  { id: "A16", title: "Extension-companion fallback", evidence: ["tests/companion-project-migration.test.js", "tests/desktop-runtime-mode.test.js"], manualRequired: false },
+  { id: "A16", title: "Native browser-extension bridge", evidence: ["tests/companion-project-migration.test.js", "tests/desktop-runtime-mode.test.js"], manualRequired: false },
   { id: "A17", title: "No duplicate irreversible side effects", evidence: ["tests/event-bus.test.js", "tests/system-git-integration.test.js", "tests/integration-recovery.test.js"], manualRequired: false }
 ]);
 
