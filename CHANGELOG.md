@@ -32,7 +32,7 @@
 - local commands запускаются только в explicitly trusted repository/workspace, через executable + argv (`shell:false`) с bounded runtime/output;
 - dirty abandoned worktrees salvage'ятся вместо destructive auto-cleanup;
 - managed-browser runtime использует dedicated profile и не извлекает cookies/credentials из обычного Edge/Chrome profile;
-- extension остаётся optional authenticated companion/fallback, а не primary orchestration runtime;
+- нативное приложение использует authenticated Chrome/Edge extension bridge как основной browser runtime; direct managed-browser остаётся явным альтернативным режимом;
 - Stop Now отменяет active local verification и блокирует late state-machine effects;
 - Project Bundle/debug export redacts credentials и runtime identities;
 - final target-branch merge/push остаётся user-controlled по default alpha policy;
