@@ -338,6 +338,17 @@ class ManagedBrowserCompletionMonitor {
           }));
           const published = await this.protocolAdapter.publishCompletion(runtime, agentId, snapshot, trace);
           const eventResult = published?.eventResult || {};
+          const parsedEvent = published?.parsed?.event || null;
+          const planningExpected = parsedEvent?.event === "DONE" && String(parsedEvent?.taskId || "").startsWith("planning:");
+          let traceSucceeded = Boolean(published?.ok);
+          let terminalReason = published?.reason || null;
+          if (traceSucceeded && planningExpected && !eventResult?.planningConsumed) {
+            traceSucceeded = false;
+            terminalReason = "planning_completion_not_consumed";
+          } else if (traceSucceeded && planningExpected && !eventResult?.planningAdvanced) {
+            traceSucceeded = false;
+            terminalReason = eventResult?.planningReason || "planning_not_advanced";
+          }
           const common = {
             totalDurationMs: traceDurationMs(trace, this.clock()),
             lastSuccessfulStage: eventResult?.planningAdvanced
@@ -349,14 +360,15 @@ class ManagedBrowserCompletionMonitor {
                   : published?.parsed?.kind === "orchestra_event"
                     ? "protocol_parsed"
                     : "completion_stable",
-            reason: published?.reason || null,
+            reason: terminalReason,
             protocolAccepted: Boolean(eventResult?.accepted || eventResult?.duplicate),
             protocolApplied: Boolean(eventResult?.applied),
             planningConsumed: Boolean(eventResult?.planningConsumed),
             planningAdvanced: Boolean(eventResult?.planningAdvanced),
-            eventId: eventResult?.eventId || published?.parsed?.event?.eventId || null
+            planningReason: eventResult?.planningReason || null,
+            eventId: eventResult?.eventId || parsedEvent?.eventId || null
           };
-          if (published?.ok) this.logger?.info?.("runtime_trace_completed", traceDetails(trace, common));
+          if (traceSucceeded) this.logger?.info?.("runtime_trace_completed", traceDetails(trace, common));
           else this.logger?.error?.("runtime_trace_failed", traceDetails(trace, common));
           return {
             ok: Boolean(published?.ok),
