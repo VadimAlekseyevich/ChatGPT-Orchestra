@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 require("../prompts/planning-prompts.js");
 require("../background/dag-validator.js");
@@ -11,9 +14,15 @@ const { EventStore } = require("../background/event-store.js");
 const { EventBus } = require("../background/event-bus.js");
 const { ProjectStore } = require("../background/project-store.js");
 const { PlanningEngine } = require("../background/planning-engine.js");
+const { ManagedBrowserAgentRuntime } = require("../apps/desktop/main/managed-browser-agent-runtime.js");
 const { CompletionAwareManagedBrowserRuntime } = require("../apps/desktop/main/completion-aware-managed-browser-runtime.js");
 const { ManagedBrowserCompletionMonitor } = require("../apps/desktop/main/managed-browser-completion-monitor.js");
 const { ManagedBrowserProtocolAdapter } = require("../apps/desktop/main/managed-browser-protocol-adapter.js");
+const { StructuredLogger } = require("../apps/desktop/main/structured-logger.js");
+
+function silentConsole() {
+  return { log() {}, debug() {}, info() {}, warn() {}, error() {} };
+}
 
 function collectingLogger() {
   const records = [];
@@ -162,6 +171,76 @@ test("runtime trace localizes baseline, prompt-send and monitor-start failures",
   }
 });
 
+
+test("structured JSONL trace omits prompt, assistant and parser sentinel content", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-runtime-trace-"));
+  const filename = path.join(directory, "orchestra.jsonl");
+  const logger = new StructuredLogger({
+    filename,
+    consoleTarget: silentConsole(),
+    instanceId: "trace-privacy-test",
+    component: "desktop"
+  });
+  const promptSentinel = "TRACE_JSONL_PROMPT_SENTINEL";
+  const assistantSentinel = "TRACE_JSONL_ASSISTANT_SENTINEL";
+  const parserSentinel = "TRACE_JSONL_PARSER_SENTINEL";
+
+  const runtime = new ManagedBrowserAgentRuntime({
+    driver: runtimeDriver(),
+    profileDirectory: process.cwd(),
+    logger
+  });
+  await runtime.load();
+  const session = await runtime.createSession({ url: "https://chatgpt.com/", active: true });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
+  await runtime.sendPrompt(agent.agentId, promptSentinel, {
+    trace: { ...trace("trace-jsonl-prompt"), agentId: agent.agentId, sessionId: session.id }
+  });
+  await runtime.close();
+
+  const adapter = new ManagedBrowserProtocolAdapter({ logger });
+  const protocolAgent = {
+    agentId: "A1",
+    sessionId: "S1",
+    chatUrl: "https://chatgpt.com/c/privacy",
+    protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" }
+  };
+  const protocolRuntime = {
+    getAgent(id) { return id === "A1" ? { ...protocolAgent } : null; },
+    sessionIdForAgent(value) { return value?.sessionId || null; },
+    async publishRuntimeMessage() { return { ok: true }; }
+  };
+
+  await adapter.publishCompletion(protocolRuntime, "A1", {
+    text: assistantSentinel,
+    fingerprint: "fp-assistant-privacy",
+    messageCount: 1,
+    pathname: "/c/privacy",
+    url: "https://chatgpt.com/c/privacy?token=must-not-log#fragment",
+    availability: "ready",
+    generating: false
+  }, trace("trace-jsonl-assistant"));
+
+  await adapter.publishCompletion(protocolRuntime, "A1", {
+    text: `@@ORCH {"broken":"${parserSentinel}"`,
+    fingerprint: "fp-parser-privacy",
+    messageCount: 2,
+    pathname: "/c/privacy",
+    url: "https://chatgpt.com/c/privacy",
+    availability: "ready",
+    generating: false
+  }, trace("trace-jsonl-parser"));
+
+  const serialized = fs.readFileSync(filename, "utf8");
+  assert.equal(serialized.includes(promptSentinel), false);
+  assert.equal(serialized.includes(assistantSentinel), false);
+  assert.equal(serialized.includes(parserSentinel), false);
+  assert.equal(serialized.includes("must-not-log"), false);
+  assert.match(serialized, /trace-jsonl-prompt/);
+  assert.match(serialized, /trace-jsonl-assistant/);
+  assert.match(serialized, /trace-jsonl-parser/);
+});
+
 test("completion monitor emits bounded transition logs and terminal timeout/failure records", async () => {
   const agent = { agentId: "A1", sessionId: "S1" };
   const runtime = {
@@ -239,6 +318,7 @@ test("completion monitor emits bounded transition logs and terminal timeout/fail
     const timedOut = terminal(logger.records, traceValue.traceId);
     assert.equal(timedOut.length, 1);
     assert.equal(timedOut[0].event, "runtime_trace_timed_out");
+    assert.equal(logger.records.length, 1, "unchanged polling must not emit one log record per poll");
   }
 });
 
@@ -342,6 +422,120 @@ test("protocol and EventBus rejection paths keep trace correlation without raw p
   assert.equal(failureLogger.records.some((record) => record.event === "orchestra_event_apply_failed" && record.details.traceId === failedTrace.traceId), true);
 });
 
+
+test("protocol and EventBus failures end with deterministic terminal trace reasons", async () => {
+  async function runCase({ name, text, expectedReason, agentContext, eventBusSetup = null }) {
+    const logger = collectingLogger();
+    const agent = {
+      agentId: "A1",
+      sessionId: "S1",
+      chatUrl: "https://chatgpt.com/c/failure",
+      protocolContext: agentContext
+    };
+    let bus = null;
+    if (eventBusSetup) {
+      const registry = { getAgent(id) { return id === "A1" ? agent : null; } };
+      bus = new EventBus({ registry, store: new EventStore({ stateStore: new MemoryStateStore() }), logger });
+      await bus.load();
+      eventBusSetup(bus);
+    }
+    const runtime = {
+      getAgent(id) { return id === "A1" ? agent : null; },
+      sessionIdForAgent(value) { return value?.sessionId || null; },
+      async publishRuntimeMessage(message, sender) {
+        if (message.type === MESSAGE_TYPES.ORCHESTRA_EVENT && bus) {
+          const payload = message.payload || {};
+          return bus.handleEvent(payload.event, sender, {
+            responseFingerprint: payload.responseFingerprint || "",
+            pathname: payload.pathname || "",
+            messageCount: payload.messageCount || 0,
+            planningArtifact: payload.planningArtifact || null,
+            workerArtifact: payload.workerArtifact || null,
+            trace: payload.trace || null
+          });
+        }
+        return { ok: true };
+      }
+    };
+    const adapter = new ManagedBrowserProtocolAdapter({ logger });
+    const monitor = new ManagedBrowserCompletionMonitor({
+      driver: {
+        async readAssistantSnapshot() {
+          return {
+            ok: true,
+            text,
+            fingerprint: `fp-${name}`,
+            messageCount: 1,
+            pathname: "/c/failure",
+            url: "https://chatgpt.com/c/failure",
+            availability: "ready",
+            generating: false
+          };
+        }
+      },
+      protocolAdapter: adapter,
+      pollMs: 100,
+      quietMs: 100,
+      timeoutMs: 1000,
+      sleep: async () => {},
+      logger
+    });
+    const traceValue = {
+      ...trace(`trace-${name}`),
+      taskId: agentContext?.taskId || "T1",
+      runId: agentContext?.runId || "R1"
+    };
+    monitor.start(runtime, "A1", {
+      ok: true,
+      agentId: "A1",
+      sessionId: "S1",
+      baseline: { ok: true, text: "", fingerprint: "", messageCount: 0, availability: "ready", generating: false },
+      trace: traceValue
+    });
+    const result = await monitor.waitFor("A1");
+    assert.equal(result.reason, expectedReason, name);
+    const outcomes = terminal(logger.records, traceValue.traceId);
+    assert.equal(outcomes.length, 1, name);
+    assert.equal(outcomes[0].event, "runtime_trace_failed", name);
+    assert.equal(outcomes[0].details.reason, expectedReason, name);
+  }
+
+  await runCase({
+    name: "protocol-missing-terminal",
+    text: "response without protocol envelope",
+    expectedReason: "protocol_event_missing",
+    agentContext: { projectId: "P1", taskId: "T1", runId: "R1" }
+  });
+  await runCase({
+    name: "parser-reject-terminal",
+    text: '@@ORCH {"broken":',
+    expectedReason: "invalid_json",
+    agentContext: { projectId: "P1", taskId: "T1", runId: "R1" }
+  });
+  await runCase({
+    name: "context-reject-terminal",
+    text: `@@ORCH ${JSON.stringify({
+      v: 1, event: "DONE", projectId: "P1", taskId: "T-other", runId: "R1",
+      agentId: "A1", eventId: "E-context-terminal", sequence: 1, payload: {}
+    })}`,
+    expectedReason: "taskId_mismatch",
+    agentContext: { projectId: "P1", taskId: "T-bound", runId: "R1" },
+    eventBusSetup() {}
+  });
+  await runCase({
+    name: "listener-fail-terminal",
+    text: `@@ORCH ${JSON.stringify({
+      v: 1, event: "DONE", projectId: "P1", taskId: "T1", runId: "R1",
+      agentId: "A1", eventId: "E-listener-terminal", sequence: 1, payload: {}
+    })}`,
+    expectedReason: "event_listener_failed",
+    agentContext: { projectId: "P1", taskId: "T1", runId: "R1" },
+    eventBusSetup(bus) {
+      bus.subscribe("completion", async () => { throw new Error("synthetic listener failure"); });
+    }
+  });
+});
+
 test("stale planning completion is explicitly ignored without advancing", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P1" });
   await store.load();
@@ -380,6 +574,114 @@ test("stale planning completion is explicitly ignored without advancing", async 
   const ignored = logger.records.find((record) => record.event === "planning_completion_ignored");
   assert.equal(ignored.details.traceId, staleTrace.traceId);
   assert.equal(ignored.details.reason, "run_id_mismatch");
+});
+
+
+test("accepted stale planning completion terminates as not consumed", async () => {
+  const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-stale-terminal" });
+  await store.load();
+  await store.createProject({ goal: "trace stale completion terminal", repositoryUrl: "https://github.com/acme/widget" });
+  await store.beginStage("P-stale-terminal", { stage: "DISCOVERY", runId: "R-current" });
+
+  const logger = collectingLogger();
+  const agent = { agentId: "A1", role: "lead", status: "IDLE", sessionId: "S1", protocolContext: null };
+  const registry = {
+    getAgent(id) { return id === "A1" ? agent : null; },
+    listAgents() { return [agent]; },
+    isAgentConnected() { return true; },
+    sessionIdForAgent(value) { return value?.sessionId || null; },
+    async setProtocolContext(_agentId, context) { agent.protocolContext = { ...context }; return agent; },
+    async clearProtocolContext() { agent.protocolContext = null; }
+  };
+  const bus = new EventBus({ registry, store: new EventStore({ stateStore: new MemoryStateStore() }), logger });
+  await bus.load();
+  const engine = new PlanningEngine({
+    projectStore: store,
+    registry,
+    eventBus: bus,
+    sendPrompt: async () => ({ ok: true }),
+    logger
+  });
+  await engine.init();
+
+  const staleEvent = {
+    v: 1,
+    event: "DONE",
+    projectId: "P-stale-terminal",
+    taskId: "planning:discovery",
+    runId: "R-stale",
+    agentId: "A1",
+    eventId: "E-stale-terminal",
+    sequence: 1,
+    payload: { stage: "DISCOVERY" }
+  };
+  const response = [
+    "@@ORCH_ARTIFACT_BEGIN",
+    JSON.stringify(discoveryArtifact()),
+    "@@ORCH_ARTIFACT_END",
+    `@@ORCH ${JSON.stringify(staleEvent)}`
+  ].join("\n");
+  const adapter = new ManagedBrowserProtocolAdapter({ logger });
+  const runtime = {
+    getAgent(id) { return registry.getAgent(id); },
+    sessionIdForAgent(value) { return value?.sessionId || null; },
+    async publishRuntimeMessage(message, sender) {
+      if (message.type === MESSAGE_TYPES.ORCHESTRA_EVENT) {
+        const payload = message.payload || {};
+        return bus.handleEvent(payload.event, sender, {
+          responseFingerprint: payload.responseFingerprint || "",
+          pathname: payload.pathname || "",
+          messageCount: payload.messageCount || 0,
+          planningArtifact: payload.planningArtifact || null,
+          trace: payload.trace || null
+        });
+      }
+      return { ok: true };
+    }
+  };
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: {
+      async readAssistantSnapshot() {
+        return {
+          ok: true, text: response, fingerprint: "fp-stale-terminal", messageCount: 1,
+          pathname: "/c/stale", url: "https://chatgpt.com/c/stale", availability: "ready", generating: false
+        };
+      }
+    },
+    protocolAdapter: adapter,
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 1000,
+    sleep: async () => {},
+    logger
+  });
+  const traceValue = {
+    traceId: "trace-stale-terminal",
+    projectId: staleEvent.projectId,
+    taskId: staleEvent.taskId,
+    runId: staleEvent.runId,
+    agentId: staleEvent.agentId,
+    stage: "DISCOVERY",
+    sessionId: "S1",
+    dispatchKind: "normal",
+    startedAt: Date.now()
+  };
+  monitor.start(runtime, "A1", {
+    ok: true,
+    agentId: "A1",
+    sessionId: "S1",
+    baseline: { ok: true, text: "", fingerprint: "", messageCount: 0, availability: "ready", generating: false },
+    trace: traceValue
+  });
+  const result = await monitor.waitFor("A1");
+  assert.equal(result.ok, true, "EventBus application remains behaviorally successful");
+  const outcomes = terminal(logger.records, traceValue.traceId);
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].event, "runtime_trace_failed");
+  assert.equal(outcomes[0].details.reason, "planning_completion_not_consumed");
+  assert.equal(outcomes[0].details.protocolApplied, true);
+  assert.equal(outcomes[0].details.planningConsumed, false);
+  assert.equal(store.getActiveProject().stage, "DISCOVERY");
 });
 
 test("one managed-browser trace correlates dispatch through EventBus application and planning advancement", async () => {
