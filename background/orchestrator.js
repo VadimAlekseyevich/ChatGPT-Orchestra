@@ -181,7 +181,8 @@
         pathname: payload.pathname || "",
         messageCount: payload.messageCount || 0,
         planningArtifact: payload.planningArtifact || null,
-        planningArtifactSignature: payload.planningArtifactSignature || ""
+        planningArtifactSignature: payload.planningArtifactSignature || "",
+        trace: payload.trace || null
       });
     }
 

@@ -3,7 +3,7 @@
   "name": "ChatGPT Orchestra",
   "version": "2.0.0",
   "version_name": "2.0.0-alpha.20",
-  "description": "Optional extension companion/fallback for the ChatGPT Orchestra desktop-first alpha.",
+  "description": "Legacy compatibility browser bridge for ChatGPT Orchestra desktop development and migration.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1xrszfXmsF6tsXSRrxmFB6/ZF0NDpuhyq8x9KBO+9/JH5xAw1yNwszfjamWZ2Z2IICLQBpP/R0vlEkJ9YdFDvD18M4SuHLlE0oZjXUHfTLimP6AiHrWBm/P5hUVoloJzj2/PUIrxIRliZSIuDnjM67CkZRTvPQoIfJs1faZoodF4h7jBWGxul6Bnq1D/kSAyiSQHBne4LaVE/FisQ/AgtdeKBbKyLXXpHFijHxSY53RCi8S6xYRRs+GWEbKdii/qt3tcVYGXt5m8ahZN+MvfhXBDJ2/lDmzxW13Y1Ut/kkjEjncParRVMRH+WwcpBi8plrU+0sMUnqcsX/MD6IAyMwIDAQAB",
   "permissions": ["storage", "tabs", "alarms", "nativeMessaging"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://api.github.com/*"],

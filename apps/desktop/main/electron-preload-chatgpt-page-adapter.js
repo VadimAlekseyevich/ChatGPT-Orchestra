@@ -2,6 +2,7 @@
 
 const SELECTORS = require("../../../content/selectors.js");
 const Utils = require("../../../content/utils.js");
+const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-trace.js");
 
 const COMMAND_CHANNEL = "orchestra:agent:command";
 const RESPONSE_CHANNEL = "orchestra:agent:response";
@@ -234,7 +235,38 @@ class ElectronPreloadChatGPTPageAdapter {
     return originalResult;
   }
 
-  async sendPrompt(webContents, prompt) {
+  async sendPrompt(webContents, prompt, options = {}) {
+    const trace = normalizeTraceContext(options?.trace);
+    const promptBytes = byteLength(prompt);
+    const startedAt = Date.now();
+    this.logger?.info?.("managed_browser_preload_prompt_send_started", traceDetails(trace, { promptBytes }));
+    try {
+      const result = await this.sendPromptInternal(webContents, prompt);
+      const details = traceDetails(trace, {
+        promptBytes,
+        ok: result?.ok !== false,
+        accepted: result?.accepted === true || result?.ok === true,
+        confirmed: result?.confirmed === true,
+        method: result?.method || null,
+        recoveredFrom: result?.recoveredFrom || null,
+        reason: result?.reason || null,
+        durationMs: Math.max(0, Date.now() - startedAt)
+      });
+      if (result?.ok === false) this.logger?.warn?.("managed_browser_preload_prompt_send_failed", details);
+      else this.logger?.info?.("managed_browser_preload_prompt_send_completed", details);
+      return result;
+    } catch (error) {
+      this.logger?.error?.("managed_browser_preload_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "preload_prompt_send_error",
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error
+      }));
+      throw error;
+    }
+  }
+
+  async sendPromptInternal(webContents, prompt) {
     const initialUrl = currentUrl(webContents);
     const navigation = this.navigationSignal(webContents, initialUrl);
     let result;

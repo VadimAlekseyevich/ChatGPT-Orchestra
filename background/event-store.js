@@ -55,6 +55,17 @@
     const agentId = value.agentId ? String(value.agentId).slice(0, 256) : null;
     return kind || sessionId || agentId ? { kind: kind || "unknown", sessionId, agentId } : null;
   }
+  function normalizeTraceSource(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const trace = {};
+    for (const field of ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "sessionId", "dispatchKind"]) {
+      const text = value[field] === null || value[field] === undefined ? "" : String(value[field]).slice(0, 256);
+      if (text) trace[field] = text;
+    }
+    const startedAt = Number(value.startedAt);
+    if (Number.isFinite(startedAt) && startedAt > 0) trace.startedAt = startedAt;
+    return Object.keys(trace).length ? trace : null;
+  }
   function normalizeSource(source = {}) {
     return {
       responseFingerprint: String(source?.responseFingerprint || "").slice(0, 256),
@@ -62,7 +73,8 @@
       messageCount: Math.max(0, Number(source?.messageCount) || 0),
       planningArtifact: normalizePlanningArtifact(source?.planningArtifact),
       workerArtifact: normalizeWorkerArtifact(source?.workerArtifact),
-      runtime: normalizeRuntimeSource(source?.runtime)
+      runtime: normalizeRuntimeSource(source?.runtime),
+      trace: normalizeTraceSource(source?.trace)
     };
   }
   function defaultState() {

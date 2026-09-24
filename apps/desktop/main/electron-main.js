@@ -91,6 +91,7 @@ if (registrationRequest) {
   let host = null;
   let unregisterIpc = null;
   let mainWindow = null;
+  let browserExtensionBridge = null;
 
   function registerDesktopShellIpc({ runtimeMode, dataDirectory }) {
     for (const channel of [
@@ -126,7 +127,8 @@ if (registrationRequest) {
     ipcMain.handle(IPC_RUNTIME_MODE, async () => ({
       ok: true,
       mode: runtimeMode,
-      packaged: Boolean(app.isPackaged)
+      packaged: Boolean(app.isPackaged),
+      extensionBridge: browserExtensionBridge
     }));
     ipcMain.handle(IPC_SWITCH_RUNTIME, async (_event, requestedMode) => {
       const mode = String(requestedMode || "");
@@ -158,12 +160,13 @@ if (registrationRequest) {
         return { ok: false, reason: "companion_fallback_requires_packaged_runtime", extensionDirectory };
       }
       try {
-        return prepareCompanionFallback({
+        browserExtensionBridge = prepareCompanionFallback({
           extensionDirectory,
           dataDirectory,
           hostPath: process.execPath,
           browsers: ["edge", "chrome"]
         });
+        return browserExtensionBridge;
       } catch (error) {
         const reason = String(error?.message || error || "companion_fallback_prepare_failed");
         return { ok: false, reason: /^[a-z0-9_:-]+$/i.test(reason) ? reason : "companion_fallback_prepare_failed" };
@@ -191,6 +194,27 @@ if (registrationRequest) {
   async function createMainWindow() {
     const dataDirectory = orchestraDataDirectory();
     const runtimeMode = resolveDesktopRuntimeMode();
+    if (runtimeMode === RUNTIME_MODES.COMPANION && app.isPackaged) {
+      const extensionDirectory = resolveCompanionExtensionDirectory({
+        isPackaged: true,
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath()
+      });
+      try {
+        browserExtensionBridge = prepareCompanionFallback({
+          extensionDirectory,
+          dataDirectory,
+          hostPath: process.execPath,
+          browsers: ["edge", "chrome"]
+        });
+        console.info("[ChatGPT Orchestra] browser_extension_bridge_prepared", {
+          extensionId: browserExtensionBridge.extensionId,
+          browsers: browserExtensionBridge.browsers
+        });
+      } catch (error) {
+        console.warn("[ChatGPT Orchestra] browser_extension_bridge_prepare_failed", error?.message || String(error));
+      }
+    }
     if (runtimeMode === RUNTIME_MODES.COMPANION) host = await createNativeCompanionDesktopHost({ dataDirectory });
     else if (runtimeMode === RUNTIME_MODES.MANAGED_BROWSER) host = await createManagedBrowserDesktopHost({ dataDirectory });
     else host = await createDesktopHost({ dataDirectory });
@@ -198,7 +222,7 @@ if (registrationRequest) {
     registerDesktopShellIpc({ runtimeMode, dataDirectory });
 
     const title = runtimeMode === RUNTIME_MODES.COMPANION
-      ? "ChatGPT Orchestra · Companion"
+      ? "ChatGPT Orchestra"
       : runtimeMode === RUNTIME_MODES.MANAGED_BROWSER
         ? "ChatGPT Orchestra · Managed Browser"
         : "ChatGPT Orchestra";

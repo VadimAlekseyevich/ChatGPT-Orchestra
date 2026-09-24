@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const Contracts = require("../platform/contracts.js");
-require("../platform/companion-protocol.js");
+const Protocol = require("../platform/companion-protocol.js");
 const { CompanionRpcPeer } = require("../platform/companion-rpc.js");
 const { createLoopbackCompanionPair } = require("../platform/companion-loopback.js");
 const { FakeAgentRuntime } = require("../platform/fake-runtime.js");
@@ -49,4 +49,68 @@ test("DesktopBridgeAgentRuntime controls an extension-side AgentRuntime through 
     await runtime.close();
     await endpoint.stop();
   }
+});
+
+test("DesktopBridgeAgentRuntime startup stays non-blocking until the browser companion connects", async () => {
+  let releaseConnection;
+  const connection = new Promise((resolve) => { releaseConnection = resolve; });
+  const requests = [];
+  const rpc = {
+    transport: {
+      waitForConnection() { return connection; }
+    },
+    async start() { return { connected: false }; },
+    async request(method) {
+      requests.push(method);
+      if (method === "companion.handshake") {
+        return {
+          protocolVersion: Protocol.PROTOCOL_VERSION,
+          contractVersion: Contracts.CONTRACT_VERSION,
+          role: "extension-companion"
+        };
+      }
+      if (method === "agent.snapshot") {
+        return {
+          runtimeStatus: "pool_active",
+          updatedAt: 123,
+          agents: {
+            "lead-late": {
+              agentId: "lead-late",
+              role: "lead",
+              status: "IDLE",
+              sessionId: "41",
+              chatUrl: "https://chatgpt.com/"
+            }
+          }
+        };
+      }
+      if (method === "agent.getActiveSession") {
+        return { id: "41", url: "https://chatgpt.com/", active: true };
+      }
+      throw new Error(`unexpected_rpc_request:${method}`);
+    },
+    onRequest() { return () => {}; },
+    async stop() {}
+  };
+  const runtime = new DesktopBridgeAgentRuntime({ rpc });
+
+  const startup = await Promise.race([
+    runtime.load(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("desktop_bridge_startup_blocked")), 100))
+  ]);
+
+  assert.equal(startup.runtimeStatus, "idle");
+  assert.equal(runtime.handshake, null);
+  assert.deepEqual(requests, []);
+
+  const activeSession = runtime.getActiveSession();
+  assert.deepEqual(requests, []);
+  releaseConnection({ connected: true });
+
+  assert.deepEqual(await activeSession, { id: "41", url: "https://chatgpt.com/", active: true });
+  assert.equal(runtime.handshake.role, "extension-companion");
+  assert.equal(runtime.getAgent("lead-late").status, "IDLE");
+  assert.deepEqual(requests, ["companion.handshake", "agent.snapshot", "agent.getActiveSession"]);
+
+  await runtime.close();
 });

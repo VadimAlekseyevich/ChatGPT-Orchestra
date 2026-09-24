@@ -132,7 +132,7 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
 });
 
-test("Google auth is opened in the normal browser instead of the embedded Electron window", async () => {
+test("Google auth stays inside Orchestra and never opens the system browser", async () => {
   const { driver, externalUrls, profileDirectory } = harness();
   const events = [];
   await driver.start({ profileDirectory });
@@ -147,8 +147,8 @@ test("Google auth is opened in the normal browser instead of the embedded Electr
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login");
-  assert.equal(win.isVisible(), false);
-  assert.deepEqual(externalUrls, ["https://chatgpt.com/"]);
+  assert.equal(win.isVisible(), true);
+  assert.deepEqual(externalUrls, []);
   assert.ok(events.some((event) => event.type === "unsupported-auth-provider" && event.provider === "google"));
 
   const ping = await driver.pingSession(session.id);

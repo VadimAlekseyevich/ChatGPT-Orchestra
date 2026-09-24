@@ -52,7 +52,8 @@ function createLocalOrchestrator(BaseOrchestrator) {
         planningArtifact: payload.planningArtifact || null,
         planningArtifactSignature: payload.planningArtifactSignature || "",
         workerArtifact,
-        workerArtifactSignature: payload.workerArtifactSignature || ""
+        workerArtifactSignature: payload.workerArtifactSignature || "",
+        trace: payload.trace || null
       });
     }
   };

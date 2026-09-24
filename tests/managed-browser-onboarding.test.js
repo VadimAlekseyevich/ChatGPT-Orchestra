@@ -78,7 +78,7 @@ test("onboarding offers Lead registration only after ChatGPT composer becomes re
 });
 
 
-test("managed-browser onboarding routes blocked Google auth into the packaged companion fallback", async () => {
+test("managed-browser onboarding keeps blocked Google auth inside Orchestra", async () => {
   const calls = [];
   const root = rootElement();
   const transport = {
@@ -95,45 +95,21 @@ test("managed-browser onboarding routes blocked Google auth into the packaged co
       if (name === "managedBrowserValidation") return { ok: true, validation: null };
       return { ok: false, reason: "unknown" };
     },
-    async execute() { return { ok: true }; },
-    async prepareCompanionFallback() {
-      calls.push("prepare");
-      return { ok: true, extensionId: "fixed", extensionDirectory: "C:/fallback" };
-    },
-    async switchRuntime(mode) {
-      calls.push(["switch", mode]);
-      return { ok: true, restarting: true, mode };
-    },
-    async openChatGPTExternal() {
-      calls.push("external");
-      return { ok: true };
-    }
+    async execute(name) { calls.push(name); return { ok: true }; },
+    async openChatGPTExternal() { throw new Error("external_browser_must_not_open"); },
+    async switchRuntime() { throw new Error("runtime_must_not_switch"); }
   };
   const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
   await onboarding.refresh();
-  assert.match(root.innerHTML, /Google sign-in must continue/);
-  assert.match(root.innerHTML, /Prepare and use Chrome \/ Edge fallback/);
 
-  const result = await onboarding.handleAction("use-companion");
-  assert.equal(result.ok, true);
-  assert.deepEqual(calls, ["prepare", ["switch", "companion"]]);
+  assert.match(root.innerHTML, /Google sign-in is unavailable inside embedded browsers/);
+  assert.match(root.innerHTML, /will not open an external browser/);
+  assert.doesNotMatch(root.innerHTML, /Chrome \/ Edge extension runtime/);
+
+  const result = await onboarding.handleAction("open");
+  assert.equal(result?.ok, undefined);
+  assert.deepEqual(calls, ["openManagedBrowser"]);
 });
-
-test("managed-browser onboarding fails closed when companion preparation is unavailable", async () => {
-  const root = rootElement();
-  const transport = {
-    async query() { return { ok: true }; },
-    async execute() { return { ok: true }; },
-    async prepareCompanionFallback() { return { ok: false, reason: "companion_fallback_requires_packaged_runtime" }; },
-    async switchRuntime() { throw new Error("must_not_switch"); }
-  };
-  const onboarding = new ManagedBrowserOnboarding({ rootElement: root, transport });
-  onboarding.status = { availability: "unavailable", loginRequired: true, leadRegistered: false, unsupportedAuthProvider: "google" };
-  const result = await onboarding.handleAction("use-companion");
-  assert.equal(result.ok, false);
-  assert.match(root.innerHTML, /packaged Windows candidate/);
-});
-
 
 test("diagnostics disclosure remains open across polling renders", () => {
   const root = rootElement();

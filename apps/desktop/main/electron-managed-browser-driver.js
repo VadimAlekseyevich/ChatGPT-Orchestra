@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-trace.js");
 
 const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
 const DEFAULT_AGENT_PRELOAD = path.join(__dirname, "..", "agent-preload.js");
@@ -127,15 +128,11 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
-    const redirectUnsupportedAuth = (rawUrl) => {
+    const blockUnsupportedAuth = (rawUrl) => {
       const provider = unsupportedEmbeddedAuthProvider(rawUrl);
       if (!provider) return false;
       const entry = this.entry(id);
       if (entry) entry.unsupportedAuthProvider = provider;
-      window.hide?.();
-      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(DEFAULT_CHATGPT_URL)).catch((error) => {
-        this.emit({ type: "navigation-blocked", sessionId: id, reason: `external_auth_open_failed:${asError(error)}` });
-      });
       this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
       return true;
     };
@@ -148,7 +145,7 @@ class ElectronManagedBrowserDriver {
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
     window.webContents?.on?.("will-navigate", (event, url) => {
-      if (redirectUnsupportedAuth(url)) {
+      if (blockUnsupportedAuth(url)) {
         event?.preventDefault?.();
         return;
       }
@@ -175,7 +172,7 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
-      if (redirectUnsupportedAuth(rawUrl)) return { action: "deny" };
+      if (blockUnsupportedAuth(rawUrl)) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
@@ -302,12 +299,50 @@ class ElectronManagedBrowserDriver {
     return this.pageAdapter.readAssistantSnapshot(entry.window.webContents);
   }
 
-  async sendPrompt(sessionId, prompt) {
+  async sendPrompt(sessionId, prompt, options = {}) {
     this.ensureStarted();
     const entry = this.entry(sessionId);
-    if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
-    if (typeof this.pageAdapter?.sendPrompt !== "function") return { ok: false, reason: "chatgpt_page_adapter_unavailable" };
-    return this.pageAdapter.sendPrompt(entry.window.webContents, String(prompt || ""));
+    const trace = normalizeTraceContext(options?.trace, { sessionId: String(sessionId || "") });
+    const promptBytes = byteLength(prompt);
+    if (!entry?.window || entry.window.isDestroyed?.()) {
+      this.logger?.warn?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "session_unavailable"
+      }));
+      return { ok: false, reason: "session_unavailable" };
+    }
+    if (typeof this.pageAdapter?.sendPrompt !== "function") {
+      this.logger?.warn?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "chatgpt_page_adapter_unavailable"
+      }));
+      return { ok: false, reason: "chatgpt_page_adapter_unavailable" };
+    }
+    const startedAt = Date.now();
+    this.logger?.info?.("managed_browser_driver_prompt_send_started", traceDetails(trace, { promptBytes }));
+    try {
+      const result = await this.pageAdapter.sendPrompt(entry.window.webContents, String(prompt || ""), { trace });
+      const details = traceDetails(trace, {
+        promptBytes,
+        ok: result?.ok !== false,
+        accepted: result?.accepted === true || result?.ok === true,
+        confirmed: result?.confirmed === true,
+        method: result?.method || null,
+        reason: result?.reason || null,
+        durationMs: Math.max(0, Date.now() - startedAt)
+      });
+      if (result?.ok === false) this.logger?.warn?.("managed_browser_driver_prompt_send_failed", details);
+      else this.logger?.info?.("managed_browser_driver_prompt_send_completed", details);
+      return result;
+    } catch (error) {
+      this.logger?.error?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "driver_prompt_send_error",
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error
+      }));
+      throw error;
+    }
   }
 
   async stopGeneration(sessionId) {
