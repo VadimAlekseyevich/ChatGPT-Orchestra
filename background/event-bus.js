@@ -74,11 +74,15 @@
       let delivered = 0;
       let planningConsumed = false;
       let planningAdvanced = false;
+      let planningReason = null;
       for (const listener of listeners) {
         try {
           const result = await listener(record);
           delivered += 1;
-          if (result?.planningConsumed === true) planningConsumed = true;
+          if (result?.planningConsumed === true) {
+            planningConsumed = true;
+            if (result?.planningAdvanced !== true && result?.reason && !planningReason) planningReason = String(result.reason);
+          }
           if (result?.planningAdvanced === true) planningAdvanced = true;
         } catch (error) {
           const message = error?.message || String(error);
@@ -87,8 +91,8 @@
         }
       }
       return errors.length
-        ? { ok: false, reason: "event_listener_failed", delivered, errors, planningConsumed, planningAdvanced }
-        : { ok: true, delivered, errors: [], planningConsumed, planningAdvanced };
+        ? { ok: false, reason: "event_listener_failed", delivered, errors, planningConsumed, planningAdvanced, planningReason }
+        : { ok: true, delivered, errors: [], planningConsumed, planningAdvanced, planningReason };
     }
 
     normalizeSender(sender = {}) {
@@ -196,7 +200,8 @@
             reason: delivered.reason || "event_listener_failed",
             delivered: delivered.delivered || 0,
             planningConsumed: Boolean(delivered.planningConsumed),
-            planningAdvanced: Boolean(delivered.planningAdvanced)
+            planningAdvanced: Boolean(delivered.planningAdvanced),
+            planningReason: delivered.planningReason || null
           }));
           return {
             ok: false,
@@ -208,7 +213,8 @@
             delivered: delivered.delivered || 0,
             errors: delivered.errors || [],
             planningConsumed: Boolean(delivered.planningConsumed),
-            planningAdvanced: Boolean(delivered.planningAdvanced)
+            planningAdvanced: Boolean(delivered.planningAdvanced),
+            planningReason: delivered.planningReason || null
           };
         }
         await this.store.markApplied?.(eventId);
@@ -219,7 +225,8 @@
           replayed,
           delivered: delivered.delivered || 0,
           planningConsumed: Boolean(delivered.planningConsumed),
-          planningAdvanced: Boolean(delivered.planningAdvanced)
+          planningAdvanced: Boolean(delivered.planningAdvanced),
+          planningReason: delivered.planningReason || null
         }));
         return {
           ok: true,
@@ -230,7 +237,8 @@
           replayed,
           delivered: delivered.delivered || 0,
           planningConsumed: Boolean(delivered.planningConsumed),
-          planningAdvanced: Boolean(delivered.planningAdvanced)
+          planningAdvanced: Boolean(delivered.planningAdvanced),
+          planningReason: delivered.planningReason || null
         };
       };
       const existing = this.inFlight.get(eventId);
