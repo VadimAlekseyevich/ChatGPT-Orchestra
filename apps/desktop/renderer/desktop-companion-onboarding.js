@@ -41,6 +41,7 @@
       const response = await this.transport.runtimeMode();
       this.mode = response?.ok ? response.mode : null;
       this.packaged = Boolean(response?.packaged);
+      if (response?.extensionBridge?.ok) this.prepared = response.extensionBridge;
       this.render();
       return response;
     }
