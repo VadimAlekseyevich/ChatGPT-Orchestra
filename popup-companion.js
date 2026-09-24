@@ -12,8 +12,8 @@
   section.innerHTML = `
     <div class="section-heading">
       <div>
-        <h2 id="companionTitle">Desktop Companion</h2>
-        <p id="companionStatus">Companion: loading…</p>
+        <h2 id="companionTitle">Desktop Bridge</h2>
+        <p id="companionStatus">Desktop bridge: loading…</p>
         <p id="companionMigrationStatus">Migration: not staged</p>
       </div>
     </div>
@@ -23,7 +23,7 @@
       <button id="reconnectCompanion" class="secondary" type="button">Open / Reconnect</button>
       <button id="disableCompanion" class="secondary" type="button">Use Extension</button>
     </div>
-    <p class="hint">For an existing extension project: pause/stop to a safe point, start desktop with <code>npm run desktop:companion</code>, stage the migration, restart desktop so SQLite applies it, then enable Desktop. Bridge loss is fail-closed and never silently reactivates Chrome-storage orchestration.</p>
+    <p class="hint">For an existing extension project: pause/stop to a safe point, start the native desktop app, stage the migration, restart desktop so SQLite applies it, then enable Desktop. Bridge loss is fail-closed and never silently reactivates Chrome-storage orchestration.</p>
   `;
   header.insertAdjacentElement("afterend", section);
 
@@ -47,7 +47,7 @@
     const state = companion.state || (companion.enabled ? "DISCONNECTED" : "DISABLED");
     const transport = companion.transport?.kind ? ` · ${companion.transport.kind}` : "";
     const error = companion.lastError ? ` · ${companion.lastError}` : "";
-    statusEl.textContent = `Companion: ${state}${transport}${error}`;
+    statusEl.textContent = `Desktop bridge: ${state}${transport}${error}`;
     migrateButton.disabled = companion.enabled === true;
     enableButton.disabled = companion.enabled === true;
     reconnectButton.disabled = companion.enabled !== true;
@@ -57,7 +57,7 @@
   async function refresh() {
     const response = await send(TYPES.COMPANION_GET_STATUS);
     if (!response?.ok) {
-      statusEl.textContent = `Companion error: ${response?.reason || "unknown"}`;
+      statusEl.textContent = `Desktop bridge error: ${response?.reason || "unknown"}`;
       return response;
     }
     render(response);
@@ -66,13 +66,13 @@
 
   async function act(button, type) {
     button.disabled = true;
-    statusEl.textContent = "Companion: updating…";
+    statusEl.textContent = "Desktop bridge: updating…";
     const response = await send(type);
     if (response?.ok) render(response);
     else if (response?.reason === "companion_enable_requires_project_migration") {
-      statusEl.textContent = "Companion: project migration required before cutover";
+      statusEl.textContent = "Desktop bridge: project migration required before cutover";
     } else {
-      statusEl.textContent = `Companion error: ${response?.reason || response?.message || "unknown"}`;
+      statusEl.textContent = `Desktop bridge error: ${response?.reason || response?.message || "unknown"}`;
     }
     await refresh();
     return response;
