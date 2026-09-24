@@ -1122,7 +1122,7 @@ Desktop-first alpha нельзя выпускать без успешных сц
 13. Stop Now + late event protection;
 14. local worktree salvage;
 15. export/import project;
-16. extension-companion fallback;
+16. native browser-extension bridge;
 17. no duplicate irreversible side effects.
 
 Automated evidence для всех 17 сценариев входит в `npm run test:phase20` / `npm run test:alpha`. A01 и A11 дополнительно требуют реального manual evidence на одном exact build commit; финальный Windows prerelease требует `Authenticode=Valid` и публикации только через strict `Alpha Release Validation` workflow.
