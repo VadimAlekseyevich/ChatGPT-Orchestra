@@ -2,7 +2,7 @@
   "name": "chatgpt-orchestra",
   "version": "2.0.0-alpha.20",
   "private": true,
-  "description": "Native ChatGPT Orchestra desktop control plane with Chrome/Edge extension agents, local Git worktrees, recovery and portable orchestration contracts.",
+  "description": "Native ChatGPT Orchestra desktop app with embedded managed-browser agents, local Git worktrees, recovery and portable orchestration contracts.",
   "author": "VadimAlekseyevich",
   "main": "apps/desktop/main/electron-main.js",
   "scripts": {
