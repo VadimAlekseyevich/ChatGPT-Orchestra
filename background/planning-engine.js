@@ -273,8 +273,7 @@
       await this.registry.setProtocolContext(lead.agentId, {
         projectId: project.projectId,
         taskId,
-        runId,
-        ...trace
+        runId
       });
       const prompt = root.PlanningPrompts.buildPlanningPrompt({
         stage,
@@ -369,7 +368,7 @@
         sessionId: this.registry?.sessionIdForAgent?.(lead),
         dispatchKind: resolvedDispatchKind
       });
-      await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId, ...trace });
+      await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId });
       const current = this.projectStore.getProject(projectId);
       let prompt = root.PlanningPrompts.buildPlanningPrompt({ stage, project: current, agentId: lead.agentId, runId });
       if (correctionReason) {
