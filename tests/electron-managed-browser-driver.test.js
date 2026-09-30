@@ -164,6 +164,40 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
 });
 
+test("Google auth server redirects are blocked before the embedded page leaves ChatGPT", async () => {
+  const { driver, profileDirectory, logs } = harness();
+  const events = [];
+  await driver.start({ profileDirectory });
+  driver.subscribe((event) => events.push(event));
+  const session = await driver.createSession({ url: "https://chatgpt.com/auth/login_with", active: true });
+  const win = FakeBrowserWindow.instances[0];
+  let prevented = false;
+
+  win.webContents.emit(
+    "will-redirect",
+    { preventDefault() { prevented = true; } },
+    "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fauth.openai.com"
+  );
+
+  assert.equal(prevented, true);
+  assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login_with");
+  assert.ok(events.some((event) =>
+    event.type === "unsupported-auth-provider"
+    && event.sessionId === session.id
+    && event.provider === "google"
+  ));
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_auth_provider_blocked"
+    && item.details.provider === "google"
+    && item.details.source === "will-redirect"
+    && item.details.origin === "https://accounts.google.com"
+  ));
+
+  const ping = await driver.pingSession(session.id);
+  assert.equal(ping.unsupportedAuthProvider, "google");
+  await driver.close();
+});
+
 test("Google auth stays inside Orchestra and never opens the system browser", async () => {
   const { driver, externalUrls, profileDirectory } = harness();
   const events = [];

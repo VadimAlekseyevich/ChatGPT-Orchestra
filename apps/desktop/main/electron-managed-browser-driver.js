@@ -128,11 +128,19 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
-    const blockUnsupportedAuth = (rawUrl) => {
+    const blockUnsupportedAuth = (rawUrl, source = "navigation") => {
       const provider = unsupportedEmbeddedAuthProvider(rawUrl);
       if (!provider) return false;
       const entry = this.entry(id);
       if (entry) entry.unsupportedAuthProvider = provider;
+      this.logger?.warn?.("managed_browser_auth_provider_blocked", {
+        sessionId: id,
+        provider,
+        source,
+        origin: (() => {
+          try { return new URL(String(rawUrl || "")).origin; } catch (_) { return ""; }
+        })()
+      });
       this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
       return true;
     };
@@ -144,8 +152,8 @@ class ElectronManagedBrowserDriver {
       }
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
-    window.webContents?.on?.("will-navigate", (event, url) => {
-      if (blockUnsupportedAuth(url)) {
+    const guardNavigation = (source) => (event, url) => {
+      if (blockUnsupportedAuth(url, source)) {
         event?.preventDefault?.();
         return;
       }
@@ -153,7 +161,12 @@ class ElectronManagedBrowserDriver {
         event?.preventDefault?.();
         this.emit({ type: "navigation-blocked", sessionId: id, url: String(url || ""), reason: asError(error) });
       }
-    });
+    };
+    window.webContents?.on?.("will-navigate", guardNavigation("will-navigate"));
+    // Server-side redirects (ChatGPT -> Google OAuth) do not reliably surface as
+    // will-navigate. Intercept them before commit so the managed page never lands
+    // on Google's embedded-user-agent flow.
+    window.webContents?.on?.("will-redirect", guardNavigation("will-redirect"));
     window.webContents?.on?.("did-navigate", onNavigation);
     window.webContents?.on?.("did-navigate-in-page", onNavigation);
     window.webContents?.on?.("did-start-loading", () => {
@@ -209,7 +222,7 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
-      if (blockUnsupportedAuth(rawUrl)) return { action: "deny" };
+      if (blockUnsupportedAuth(rawUrl, "window-open")) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
