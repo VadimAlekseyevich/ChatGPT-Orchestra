@@ -11,14 +11,6 @@ const {
   printValidationResult
 } = require("./validate-issue70-runtime-trace.js");
 
-function projectSummary(state) {
-  const projects = state && state.projects && typeof state.projects === "object" ? state.projects : {};
-  return {
-    activeProjectId: state && state.activeProjectId || null,
-    projects
-  };
-}
-
 async function waitForExit(child) {
   return new Promise((resolve, reject) => {
     child.once("error", reject);
@@ -36,11 +28,14 @@ async function main() {
     throw new Error("No persisted Orchestra database exists at " + databaseFile + ". Run an existing project first; do not clear app data.");
   }
 
-  const baselineState = loadPersistedProjectState(databaseFile);
-  const baseline = projectSummary(baselineState);
+  const baseline = loadPersistedProjectState(databaseFile);
   const projectIds = Object.keys(baseline.projects);
   if (!projectIds.length) {
-    throw new Error("No persisted projects exist before acceptance. Issue #70 requires an existing persisted project.");
+    const checked = "checked " + [
+      "orchestra.projects.v1",
+      "orchestra.desktop.project-catalog.v1"
+    ].join(" and ");
+    throw new Error("No persisted projects exist before acceptance (" + checked + "). Open Orchestra once and save/continue a project before rerunning issue #70 acceptance.");
   }
 
   const startedAt = Date.now();
@@ -50,6 +45,11 @@ async function main() {
   console.log("data directory: " + dataRoot);
   console.log("active project before launch: " + (baseline.activeProjectId || "(none)"));
   console.log("persisted projects before launch: " + projectIds.length);
+  console.log("active namespace projects: " + Number(baseline.sources?.activeProjectCount || 0));
+  console.log("catalog projects: " + Number(baseline.sources?.catalogProjectCount || 0));
+  if (!baseline.activeProjectId && Number(baseline.sources?.catalogProjectCount || 0) > 0) {
+    console.log("no active project is loaded; choose one of the existing saved projects in Orchestra before continuing");
+  }
   console.log("acceptance window starts: " + startedIso);
   console.log("");
   console.log("Orchestra will start now.");

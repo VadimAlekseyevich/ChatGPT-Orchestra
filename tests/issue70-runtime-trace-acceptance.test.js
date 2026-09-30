@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  collectPersistedProjectState,
   validateIssue70Trace,
   REQUIRED_EVENTS
 } = require("../scripts/validate-issue70-runtime-trace.js");
@@ -73,6 +74,49 @@ function successfulTrace({ traceId = "trace-good", projectId = "project-existing
   });
   return rows;
 }
+
+
+test("issue #70 persisted-project inventory includes archived catalog projects when active namespace is absent", () => {
+  const state = collectPersistedProjectState(null, {
+    schemaVersion: 1,
+    projects: {
+      "project-archived": {
+        projectId: "project-archived",
+        archivedAt: BASE - 10_000,
+        metadata: {
+          projectId: "project-archived",
+          createdAt: BASE - 120_000,
+          updatedAt: BASE - 10_000,
+          status: "READY",
+          stage: "READY"
+        },
+        snapshot: {
+          namespaces: {
+            projects: {
+              activeProjectId: "project-archived",
+              projects: {
+                "project-archived": {
+                  projectId: "project-archived",
+                  createdAt: BASE - 120_000,
+                  updatedAt: BASE - 10_000,
+                  status: "READY",
+                  stage: "READY"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(state.activeProjectId, null);
+  assert.equal(Object.keys(state.projects).length, 1);
+  assert.equal(state.projects["project-archived"].persistenceSource, "catalog");
+  assert.equal(state.projects["project-archived"].createdAt, BASE - 120_000);
+  assert.equal(state.sources.activeNamespacePresent, false);
+  assert.equal(state.sources.catalogPresent, true);
+});
 
 test("issue #70 acceptance validator passes one fresh complete trace from a pre-existing persisted project", () => {
   const records = successfulTrace();

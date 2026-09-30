@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PROJECT_STATE_KEY = "orchestra.projects.v1";
+const PROJECT_CATALOG_KEY = "orchestra.desktop.project-catalog.v1";
 const TERMINAL_EVENTS = new Set([
   "runtime_trace_completed",
   "runtime_trace_failed",
@@ -97,6 +98,60 @@ function loadJsonlRecords(logFile) {
   return sortRecords(records);
 }
 
+function parseStoredJson(row, key) {
+  if (!row || typeof row.value !== "string") return null;
+  try {
+    const value = JSON.parse(row.value);
+    return value && typeof value === "object" ? value : null;
+  } catch (error) {
+    throw new Error("issue70_persisted_json_invalid: " + key + ": " + error.message);
+  }
+}
+
+function collectPersistedProjectState(projectState = null, catalog = null) {
+  const projects = {};
+  const activeProjects = projectState && projectState.projects && typeof projectState.projects === "object"
+    ? projectState.projects
+    : {};
+  for (const [projectId, project] of Object.entries(activeProjects)) {
+    if (!project || typeof project !== "object") continue;
+    projects[projectId] = { ...project, projectId: String(project.projectId || projectId), persistenceSource: "active" };
+  }
+
+  const catalogProjects = catalog && catalog.projects && typeof catalog.projects === "object"
+    ? catalog.projects
+    : {};
+  for (const [slotId, slot] of Object.entries(catalogProjects)) {
+    if (!slot || typeof slot !== "object") continue;
+    const projectId = String(slot.projectId || slotId || "").trim();
+    if (!projectId || projects[projectId]) continue;
+    const snapshotProject = slot.snapshot?.namespaces?.projects?.projects?.[projectId];
+    const metadata = slot.metadata && typeof slot.metadata === "object" ? slot.metadata : null;
+    const source = snapshotProject && typeof snapshotProject === "object"
+      ? snapshotProject
+      : metadata;
+    if (!source || typeof source !== "object") continue;
+    projects[projectId] = {
+      ...source,
+      projectId,
+      createdAt: Number(source.createdAt || metadata?.createdAt || slot.archivedAt || 0),
+      updatedAt: Number(source.updatedAt || metadata?.updatedAt || slot.archivedAt || 0),
+      persistenceSource: "catalog"
+    };
+  }
+
+  return {
+    activeProjectId: String(projectState?.activeProjectId || "") || null,
+    projects,
+    sources: {
+      activeNamespacePresent: Boolean(projectState),
+      catalogPresent: Boolean(catalog),
+      activeProjectCount: Object.keys(activeProjects).length,
+      catalogProjectCount: Object.keys(catalogProjects).length
+    }
+  };
+}
+
 function loadPersistedProjectState(databaseFile) {
   if (!fs.existsSync(databaseFile)) {
     throw new Error("issue70_state_database_not_found: " + databaseFile);
@@ -113,15 +168,10 @@ function loadPersistedProjectState(databaseFile) {
 
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
-    const row = db.prepare("SELECT value FROM orchestra_kv WHERE key = ?").get(PROJECT_STATE_KEY);
-    if (!row || typeof row.value !== "string") {
-      throw new Error("issue70_persisted_project_state_missing");
-    }
-    const state = JSON.parse(row.value);
-    if (!state || typeof state !== "object" || !state.projects || typeof state.projects !== "object") {
-      throw new Error("issue70_persisted_project_state_invalid");
-    }
-    return state;
+    const statement = db.prepare("SELECT value FROM orchestra_kv WHERE key = ?");
+    const projectState = parseStoredJson(statement.get(PROJECT_STATE_KEY), PROJECT_STATE_KEY);
+    const catalog = parseStoredJson(statement.get(PROJECT_CATALOG_KEY), PROJECT_CATALOG_KEY);
+    return collectPersistedProjectState(projectState, catalog);
   } finally {
     db.close();
   }
@@ -339,11 +389,13 @@ function printValidationResult(result) {
 
 module.exports = {
   PROJECT_STATE_KEY,
+  PROJECT_CATALOG_KEY,
   TERMINAL_EVENTS,
   REQUIRED_EVENTS,
   ORDERED_EVENTS,
   collectLogFiles,
   loadJsonlRecords,
+  collectPersistedProjectState,
   loadPersistedProjectState,
   validateIssue70Trace,
   printValidationResult
