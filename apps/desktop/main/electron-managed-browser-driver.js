@@ -156,8 +156,45 @@ class ElectronManagedBrowserDriver {
     });
     window.webContents?.on?.("did-navigate", onNavigation);
     window.webContents?.on?.("did-navigate-in-page", onNavigation);
+    window.webContents?.on?.("did-start-loading", () => {
+      const entry = this.entry(id);
+      if (entry) entry.lastLoadError = null;
+      this.logger?.info?.("managed_browser_page_load_started", {
+        sessionId: id,
+        url: String(window.webContents?.getURL?.() || entry?.url || "")
+      });
+    });
+    window.webContents?.on?.("did-finish-load", () => {
+      const entry = this.entry(id);
+      if (entry) entry.lastLoadError = null;
+      this.logger?.info?.("managed_browser_page_load_completed", {
+        sessionId: id,
+        url: String(window.webContents?.getURL?.() || entry?.url || ""),
+        title: String(window.webContents?.getTitle?.() || "")
+      });
+    });
+    window.webContents?.on?.("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame === false) return;
+      const entry = this.entry(id);
+      const failure = {
+        errorCode: Number(errorCode) || 0,
+        errorDescription: String(errorDescription || "unknown"),
+        url: String(validatedURL || window.webContents?.getURL?.() || entry?.url || "")
+      };
+      if (entry) entry.lastLoadError = failure;
+      this.logger?.warn?.("managed_browser_page_load_failed", {
+        sessionId: id,
+        ...failure
+      });
+    });
     window.webContents?.on?.("render-process-gone", (_event, details = {}) => {
       if (!this.sessions.has(id)) return;
+      this.logger?.error?.("managed_browser_renderer_gone", {
+        sessionId: id,
+        reason: String(details.reason || "unknown"),
+        exitCode: Number(details.exitCode) || 0,
+        url: String(window.webContents?.getURL?.() || "")
+      });
       this.sessions.delete(id);
       this.emit({ type: "session-removed", sessionId: id, reason: `render_process_gone:${String(details.reason || "unknown")}` });
     });
@@ -218,7 +255,7 @@ class ElectronManagedBrowserDriver {
         devTools: false
       }
     });
-    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null });
+    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null, lastLoadError: null });
     this.attachWindow(id, window);
     try {
       await window.loadURL(targetUrl);
@@ -286,7 +323,23 @@ class ElectronManagedBrowserDriver {
     if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
     if (typeof this.pageAdapter?.ping === "function") {
       const result = await this.pageAdapter.ping(entry.window.webContents);
-      return { ...result, unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
+      const availability = String(result?.availability || "unavailable");
+      if (result?.ok === false || availability === "unavailable" || availability === "error") {
+        this.logger?.warn?.("managed_browser_page_status_unavailable", {
+          sessionId: id,
+          reason: result?.reason || entry.lastLoadError?.errorDescription || null,
+          availability,
+          url: String(result?.url || entry.window.webContents?.getURL?.() || entry.url || ""),
+          loadErrorCode: entry.lastLoadError?.errorCode || null
+        });
+      }
+      return {
+        ...result,
+        ...(result?.ok === false && entry.lastLoadError
+          ? { reason: result.reason || "managed_browser_page_load_failed", loadError: { ...entry.lastLoadError } }
+          : {}),
+        unsupportedAuthProvider: entry.unsupportedAuthProvider || null
+      };
     }
     return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || ""), unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
   }

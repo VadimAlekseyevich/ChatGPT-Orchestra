@@ -74,6 +74,12 @@ function harness() {
     }
   };
   const pageCalls = [];
+  const logs = [];
+  const logger = {
+    info(event, details) { logs.push({ level: "info", event, details }); },
+    warn(event, details) { logs.push({ level: "warn", event, details }); },
+    error(event, details) { logs.push({ level: "error", event, details }); }
+  };
   const pageAdapter = {
     async ping(webContents) {
       pageCalls.push({ type: "ping", url: webContents.getURL() });
@@ -88,10 +94,10 @@ function harness() {
       return { ok: true, stopped: true, url: webContents.getURL() };
     }
   };
-  const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter });
+  const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter, logger });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory };
+  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory, logs };
 }
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
@@ -111,6 +117,32 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   assert.equal(win.options.webPreferences.devTools, false);
   assert.deepEqual(win.webContents.windowOpenHandler({ url: "https://example.com" }), { action: "deny" });
   assert.equal(session.active, true);
+  await driver.close();
+});
+
+
+test("managed browser records main-frame load failures and renderer exits for real-runtime diagnosis", async () => {
+  const { driver, profileDirectory, logs } = harness();
+  await driver.start({ profileDirectory });
+  const session = await driver.createSession({ url: "https://chatgpt.com/", active: true });
+  const win = FakeBrowserWindow.instances[0];
+
+  win.webContents.emit("did-start-loading");
+  win.webContents.emit("did-fail-load", {}, -105, "NAME_NOT_RESOLVED", "https://chatgpt.com/", true);
+
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_page_load_failed"
+    && item.details.sessionId === session.id
+    && item.details.errorCode === -105
+    && item.details.errorDescription === "NAME_NOT_RESOLVED"
+  ));
+
+  win.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 139 });
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_renderer_gone"
+    && item.details.reason === "crashed"
+    && item.details.exitCode === 139
+  ));
   await driver.close();
 });
 
