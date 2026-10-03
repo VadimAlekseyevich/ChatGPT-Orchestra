@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { FakeAgentRuntime } = require("../platform/fake-runtime.js");
+const { FakeRuntimeControl } = require("./helpers/fake-runtime-control.js");
 const { createLoopbackCompanionPair } = require("../platform/companion-loopback.js");
 const { CompanionRpcPeer } = require("../platform/companion-rpc.js");
 const { ExtensionCompanionEndpoint } = require("../platform/extension-companion-endpoint.js");
@@ -11,7 +11,7 @@ async function createFixture() {
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop, requestTimeoutMs: 1000 });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension, requestTimeoutMs: 1000 });
-  const extensionRuntime = new FakeAgentRuntime({
+  const extensionRuntime = new FakeRuntimeControl({
     agents: [{ agentId: "lead-1", role: "lead", status: "IDLE", sessionId: "42" }]
   });
   const extensionEndpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: extensionRuntime });
