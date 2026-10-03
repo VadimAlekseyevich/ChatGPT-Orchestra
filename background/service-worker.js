@@ -401,7 +401,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (isPortableImport && result?.ok && result?.reloadRequired) return result;
 
     if (logicalAgentId) {
-      const agent = agentRuntime.getAgent(logicalAgentId);
+      const agent = coreAgentRuntime.getAgent(logicalAgentId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
     await recoveryController.tick({ reason: genericCommand || message?.type || "runtime_message" });
@@ -452,7 +452,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     const updated = await agentPool.handleBindingUpdated(sessionId, changeInfo, session);
     if (updated?.agentId) {
       await orchestrator.handleAgentStateChanged(updated.agentId);
-      const agent = agentRuntime.getAgent(updated.agentId);
+      const agent = coreAgentRuntime.getAgent(updated.agentId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
     await recoveryController.tick({ reason: "runtime_binding_updated" });
