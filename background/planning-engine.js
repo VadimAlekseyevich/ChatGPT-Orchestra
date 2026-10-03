@@ -72,6 +72,7 @@
 
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
     isReady(agent) { return Boolean(agent && this.registry?.isAgentReady?.(agent)); }
+    isAvailable(agent) { return Boolean(agent && this.registry?.isAgentAvailable?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
 
     createTrace({ projectId, taskId, runId, agentId, stage, sessionId = null, dispatchKind = "normal" } = {}) {
@@ -354,7 +355,7 @@
         }
         lead = readiness.lead;
       }
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      if (!this.isReady(lead)) return { ok: false, reason: "lead_not_ready", lifecycle: this.registry?.getAgentLifecycle?.(lead?.agentId) || null };
 
       const runId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
       const taskId = `planning:${stage.toLowerCase()}`;
@@ -437,7 +438,7 @@
         }
         await this.projectStore.setReady(current.projectId, artifact, validation);
         const lead = readyLead || this.getLead();
-        if (this.isConnected(lead)) {
+        if (this.isAvailable(lead)) {
           await this.registry.setProtocolContext(lead.agentId, { projectId: current.projectId, taskId: "planning:complete", runId: "planning-complete" });
         }
         this.logger?.info?.("planning_stage_advancing", traced(trace, {
@@ -456,7 +457,7 @@
       }
 
       let lead = readyLead || this.getLead();
-      if (!this.isConnected(lead)) {
+      if (!this.isAvailable(lead)) {
         return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason, planningAdvanced: false, project: this.getPublicState() };
       }
       if (!readinessChecked) {
