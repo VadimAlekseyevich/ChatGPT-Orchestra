@@ -24,6 +24,9 @@ function harness() {
       getAgent(agentId) { return agentId === "A1" ? { ...agent } : null; },
       getAgentBySessionId(sessionId) { return sessionId === "S1" ? { ...agent } : null; }
     },
+    coreAgentRuntime: {
+      getAgent(agentId) { return agentId === "A1" ? { agentId: "A1", status: "IDLE", lifecycleState: "READY" } : null; }
+    },
     agentPool: {
       portableSender(sender) { return { agentId: sender.agentId || null, runtimeKind: "managed", bindingPresent: Boolean(sender.sessionId) }; },
       async handleContentMessage(message, sender) { calls.push(["adapter-message", message.type, sender.sessionId]); return { ok: true, agentId: "A1" }; },
