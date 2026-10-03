@@ -105,7 +105,8 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     }
     const availability = String(page?.availability || lead?.chatState?.availability || "unavailable");
     const loginReady = Boolean(page?.ok && ["ready", "generating"].includes(availability));
-    const leadReady = Boolean(lead?.agentId && lead?.status === "IDLE" && availability === "ready");
+    const lifecycle = lead?.agentId ? this.agentRuntime.getAgentLifecycle?.(lead.agentId) || null : null;
+    const leadReady = Boolean(lead?.agentId && this.agentRuntime.isAgentReady?.(lead));
     return {
       ok: true,
       managedBrowser: {
@@ -124,6 +125,8 @@ class ManagedBrowserDesktopHost extends DesktopHost {
         leadReady,
         leadAgentId: lead?.agentId || null,
         leadStatus: lead?.status || null,
+        leadLifecycleState: lifecycle?.lifecycleState || lead?.lifecycleState || null,
+        leadLifecycleReason: lifecycle?.lifecycleReason || lead?.lifecycleReason || null,
         pageError: page?.ok === false ? String(page.reason || "managed_browser_page_unavailable") : null
       }
     };
