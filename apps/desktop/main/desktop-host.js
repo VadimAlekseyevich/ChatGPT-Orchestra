@@ -14,6 +14,8 @@ const { createLocalOrchestrator } = require("./local-orchestrator.js");
 const { createDesktopRuntimeEvidence } = require("./runtime-evidence.js");
 const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
+const { FakeAgentPool } = require("../../../platform/fake-agent-pool.js");
+const { RuntimeAgentPool } = require("../../../platform/runtime-agent-pool.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
 const { DesktopProjectWorkspaceService } = require("./project-workspace-service.js");
 
@@ -52,6 +54,7 @@ class DesktopHost {
     paths = null,
     stateStore = null,
     agentRuntime = null,
+    agentPool = null,
     timerRuntime = null,
     gitProvider = null,
     repositoryService = null,
@@ -73,6 +76,13 @@ class DesktopHost {
     this.persistenceBackend = stateStore ? "injected" : "sqlite";
     this.stateStore = stateStore || new SQLiteStateStore({ filename: this.paths.stateDatabase, clock });
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
+    this.agentPool = agentPool || (this.agentRuntime instanceof FakeAgentRuntime
+      ? new FakeAgentPool({ runtime: this.agentRuntime })
+      : new RuntimeAgentPool({
+          runtime: this.agentRuntime,
+          runtimeKind: this.agentRuntime?.snapshot?.()?.runtimeKind || "desktop-runtime",
+          logger: this.componentLogger("agent-pool")
+        }));
     this.timerRuntime = timerRuntime || new NodeTimerRuntime({ logger: this.componentLogger("timer") });
     this.repositoryService = repositoryService || new DesktopRepositoryService({ stateStore: this.stateStore, paths: this.paths, clock, logger: this.componentLogger("repository") });
     this.remoteGitProvider = gitProvider || new this.root.GitProvider.GitHubRestProvider({ logger: this.componentLogger("git-remote"), clock });
@@ -165,6 +175,7 @@ class DesktopHost {
     });
     this.orchestrator = new LocalOrchestrator({
       agentRuntime: this.agentRuntime,
+      agentPool: this.agentPool,
       eventBus: this.eventBus,
       planningEngine: this.planningEngine,
       schedulerEngine: this.schedulerEngine,
@@ -197,7 +208,7 @@ class DesktopHost {
     this.recoveryController.setActions({
       stopAgent: (agentId) => this.agentRuntime.stopAgent(agentId),
       createWorkers: (count) => this.orchestrator.createWorkers(count),
-      reconcileTabs: () => this.orchestrator.reconcileRegisteredSessions()
+      reconcileRuntime: () => this.orchestrator.reconcileAgents()
     });
 
     this.observabilityService = new root.ObservabilityService({
@@ -358,8 +369,8 @@ class DesktopHost {
     if (!this.autoSeedFakeLead || !(this.agentRuntime instanceof this.root.FakeAgentRuntime)) return null;
     const existing = this.agentRuntime.listAgents().find((agent) => agent.role === "lead");
     if (existing) return existing;
-    const session = await this.agentRuntime.createSession({ url: "https://chatgpt.com/", active: true });
-    return this.agentRuntime.createAgentForSession({ role: "lead", session, chatUrl: session.url, label: "Lead", status: "IDLE" });
+    const result = await this.agentPool.registerActiveLead();
+    return result?.agent || null;
   }
 
   async readyFakeWorkers(reason = "desktop_fake_runtime") {
