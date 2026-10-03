@@ -13,6 +13,7 @@ importScripts(
   "../platform/runtime-heartbeat.js",
   "../platform/runtime-control-contract.js",
   "../platform/runtime-agent-pool.js",
+  "../platform/portable-agent-runtime.js",
   "../platform/extension-runtime.js",
   "../platform/companion-protocol.js",
   "../platform/companion-rpc.js",
@@ -74,6 +75,8 @@ agentRuntime.activateAgent = async (agentId) => {
 };
 root.PlatformContracts.assertAgentRuntime(agentRuntime);
 root.RuntimeControlContract.assertRuntimeControl(agentRuntime);
+const coreAgentRuntime = new root.PortableAgentRuntime({ runtime: agentRuntime, runtimeKind: "extension" });
+root.PlatformContracts.assertAgentRuntime(coreAgentRuntime);
 const agentPool = new root.RuntimeAgentPool({
   runtime: agentRuntime,
   runtimeKind: "extension",
@@ -81,7 +84,7 @@ const agentPool = new root.RuntimeAgentPool({
 });
 
 const eventStore = new root.EventStore({ stateStore });
-const eventBus = new root.EventBus({ registry: agentRuntime, store: eventStore });
+const eventBus = new root.EventBus({ registry: coreAgentRuntime, store: eventStore });
 const projectStore = new root.ProjectStore({ storageArea: stateStore });
 const schedulerStore = new root.SchedulerStore({ storageArea: stateStore });
 const reviewStore = new root.ReviewStore({ storageArea: stateStore });
@@ -117,40 +120,40 @@ root.ContextPackets.setDefaultService(contextPackets);
 let schedulerEngine = null;
 const planningEngine = new root.PlanningEngine({
   projectStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   eventBus,
-  sendPrompt: (agentId, prompt, sendOptions) => agentRuntime.sendPrompt(agentId, prompt, sendOptions)
+  sendPrompt: (agentId, prompt, sendOptions) => coreAgentRuntime.sendPrompt(agentId, prompt, sendOptions)
 });
 const reviewEngine = new root.ReviewEngine({
   store: reviewStore,
   schedulerStore,
   projectStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   eventBus,
   gitProvider,
-  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt),
+  sendPrompt: (agentId, prompt) => coreAgentRuntime.sendPrompt(agentId, prompt),
   onSchedulerTick: (options) => schedulerEngine?.tick(options)
 });
 const integrationEngine = new root.RecoverableIntegrationEngine({
   store: integrationStore,
   schedulerStore,
   projectStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   eventBus,
   gitProvider,
-  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
+  sendPrompt: (agentId, prompt) => coreAgentRuntime.sendPrompt(agentId, prompt)
 });
 schedulerEngine = new root.SchedulerEngine({
   store: schedulerStore,
   projectStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   eventBus,
   gitProvider,
   reviewEngine,
-  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
+  sendPrompt: (agentId, prompt) => coreAgentRuntime.sendPrompt(agentId, prompt)
 });
 const orchestrator = new root.ServiceWorkerOrchestrator({
-  agentRuntime,
+  agentRuntime: coreAgentRuntime,
   agentPool,
   eventBus,
   planningEngine,
@@ -163,7 +166,7 @@ const recoveryController = new root.RecoveryController({
   schedulerStore,
   reviewStore,
   integrationStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   planningEngine,
   schedulerEngine,
   reviewEngine,
@@ -182,7 +185,7 @@ const observabilityService = new root.ObservabilityService({
   schedulerStore,
   reviewStore,
   integrationStore,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   eventBus,
   recoveryController,
   persistenceInfo
@@ -193,7 +196,7 @@ const taskControlService = new root.TaskControlService({
   reviewStore,
   reviewEngine,
   integrationEngine,
-  registry: agentRuntime,
+  registry: coreAgentRuntime,
   recoveryController
 });
 
