@@ -16,6 +16,7 @@ const { SQLiteStateStore } = require("../../../platform/sqlite-state-store.js");
 const { FakeAgentRuntime } = require("../../../platform/fake-runtime.js");
 const { FakeAgentPool } = require("../../../platform/fake-agent-pool.js");
 const { RuntimeAgentPool } = require("../../../platform/runtime-agent-pool.js");
+const { PortableAgentRuntime } = require("../../../platform/portable-agent-runtime.js");
 const { NodeTimerRuntime } = require("../../../platform/node-timer-runtime.js");
 const { DesktopProjectWorkspaceService } = require("./project-workspace-service.js");
 
@@ -76,6 +77,12 @@ class DesktopHost {
     this.persistenceBackend = stateStore ? "injected" : "sqlite";
     this.stateStore = stateStore || new SQLiteStateStore({ filename: this.paths.stateDatabase, clock });
     this.agentRuntime = agentRuntime || new FakeAgentRuntime({ clock });
+    this.coreAgentRuntime = this.agentRuntime instanceof FakeAgentRuntime
+      ? this.agentRuntime
+      : new PortableAgentRuntime({
+          runtime: this.agentRuntime,
+          runtimeKind: this.agentRuntime?.snapshot?.()?.runtimeKind || "desktop-runtime"
+        });
     this.agentPool = agentPool || (this.agentRuntime instanceof FakeAgentRuntime
       ? new FakeAgentPool({ runtime: this.agentRuntime })
       : new RuntimeAgentPool({
@@ -98,11 +105,11 @@ class DesktopHost {
   buildComposition() {
     const root = this.root;
     root.PlatformContracts.assertTransactionalStateStore(this.stateStore);
-    root.PlatformContracts.assertAgentRuntime(this.agentRuntime);
+    root.PlatformContracts.assertAgentRuntime(this.coreAgentRuntime);
     root.PlatformContracts.assertTimerRuntime(this.timerRuntime);
 
     this.eventStore = new root.EventStore({ stateStore: this.stateStore });
-    this.eventBus = new root.EventBus({ registry: this.agentRuntime, store: this.eventStore, logger: this.componentLogger("event-bus") });
+    this.eventBus = new root.EventBus({ registry: this.coreAgentRuntime, store: this.eventStore, logger: this.componentLogger("event-bus") });
     this.projectStore = new root.ProjectStore({ storageArea: this.stateStore });
     this.schedulerStore = new root.SchedulerStore({ storageArea: this.stateStore });
     this.reviewStore = new root.ReviewStore({ storageArea: this.stateStore });
@@ -138,43 +145,43 @@ class DesktopHost {
     this.schedulerEngine = null;
     this.planningEngine = new LocalPlanningEngine({
       projectStore: this.projectStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       eventBus: this.eventBus,
-      sendPrompt: (agentId, prompt, sendOptions) => this.agentRuntime.sendPrompt(agentId, prompt, sendOptions),
+      sendPrompt: (agentId, prompt, sendOptions) => this.coreAgentRuntime.sendPrompt(agentId, prompt, sendOptions),
       logger: this.componentLogger("planning")
     });
     this.reviewEngine = new LocalReviewEngine({
       store: this.reviewStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
       repositoryService: this.repositoryService,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
+      sendPrompt: (agentId, prompt) => this.coreAgentRuntime.sendPrompt(agentId, prompt),
       onSchedulerTick: (options) => this.schedulerEngine?.tick(options)
     });
     this.integrationEngine = new LocalIntegrationEngine({
       store: this.integrationStore,
       schedulerStore: this.schedulerStore,
       projectStore: this.projectStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
-      sendPrompt: (agentId, prompt) => this.agentRuntime.sendPrompt(agentId, prompt),
+      sendPrompt: (agentId, prompt) => this.coreAgentRuntime.sendPrompt(agentId, prompt),
       localIntegrationCoordinator: this.localIntegrationCoordinator
     });
     this.schedulerEngine = new LocalSchedulerEngine({
       store: this.schedulerStore,
       projectStore: this.projectStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       eventBus: this.eventBus,
       gitProvider: this.gitProvider,
       reviewEngine: this.reviewEngine,
       sendPrompt: (agentId, prompt) => this.sendWorkerPromptWithWorkspace(agentId, prompt)
     });
     this.orchestrator = new LocalOrchestrator({
-      agentRuntime: this.agentRuntime,
+      agentRuntime: this.coreAgentRuntime,
       agentPool: this.agentPool,
       eventBus: this.eventBus,
       planningEngine: this.planningEngine,
@@ -188,7 +195,7 @@ class DesktopHost {
       schedulerStore: this.schedulerStore,
       reviewStore: this.reviewStore,
       integrationStore: this.integrationStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       planningEngine: this.planningEngine,
       schedulerEngine: this.schedulerEngine,
       reviewEngine: this.reviewEngine,
@@ -216,7 +223,7 @@ class DesktopHost {
       schedulerStore: this.schedulerStore,
       reviewStore: this.reviewStore,
       integrationStore: this.integrationStore,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       eventBus: this.eventBus,
       recoveryController: this.recoveryController,
       persistenceInfo: this.persistenceInfo
@@ -227,7 +234,7 @@ class DesktopHost {
       reviewStore: this.reviewStore,
       reviewEngine: this.reviewEngine,
       integrationEngine: this.integrationEngine,
-      registry: this.agentRuntime,
+      registry: this.coreAgentRuntime,
       recoveryController: this.recoveryController
     });
     this.orchestratorApi = new root.OrchestratorApi({
