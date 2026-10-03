@@ -1,10 +1,31 @@
 "use strict";
 
+function isAdapterOwnedMessage(host, message) {
+  const TYPES = host.root.MESSAGE_TYPES || {};
+  return new Set([
+    TYPES.CONTENT_READY,
+    TYPES.CONTENT_HEARTBEAT,
+    TYPES.CHAT_STATE,
+    TYPES.ASSISTANT_RESPONSE_COMPLETED
+  ].filter(Boolean)).has(message?.type);
+}
+
 async function handleManagedRuntimeMessage(host, message, sender) {
-  const result = await host.orchestrator.handleRuntimeMessage(message, sender);
+  let result;
+  let logicalAgentId = sender?.agentId || null;
+
+  if (isAdapterOwnedMessage(host, message)) {
+    result = await host.agentPool.handleContentMessage(message, sender);
+    logicalAgentId = result?.agentId || logicalAgentId;
+    if (logicalAgentId) await host.orchestrator.handleAgentStateChanged(logicalAgentId);
+  } else {
+    const portableSender = host.agentPool.portableSender(sender);
+    result = await host.orchestrator.handleRuntimeMessage(message, portableSender);
+  }
+
   host.noteManagedBrowserRuntimeMessage?.(message, sender, result);
-  if (sender?.agentId) {
-    const agent = host.agentRuntime.getAgent(sender.agentId);
+  if (logicalAgentId) {
+    const agent = host.agentRuntime.getAgent(logicalAgentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: `direct-browser:${message?.type || "runtime_message"}` });
@@ -16,30 +37,36 @@ async function handleManagedApiMessage(host, message, sender) {
     return {
       apiVersion: host.root.ORCHESTRATOR_API_VERSION,
       ok: false,
-      reason: "orchestrator_command_forbidden_from_agent_session"
+      reason: "orchestrator_command_forbidden_from_agent"
     };
   }
   const TYPES = host.root.MESSAGE_TYPES || {};
   const payload = message?.payload || {};
   if (message?.type === TYPES.ORCHESTRATOR_API_QUERY) return host.query(payload.name, payload.payload || {});
   if (message?.type === TYPES.ORCHESTRATOR_API_EXECUTE) return host.execute(payload.name, payload.payload || {});
-  return host.orchestratorApi.handleLegacyMessage(message, sender || {});
+  return host.orchestratorApi.handleLegacyMessage(message, host.agentPool.portableSender(sender || {}));
 }
 
 async function handleManagedSessionRemoved(host, sessionId) {
   const agent = host.agentRuntime.getAgentBySessionId(sessionId);
   host.noteManagedBrowserSessionRemoved?.(agent);
-  await host.orchestrator.handleSessionRemoved(sessionId);
-  if (agent) await host.integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
-  await host.recoveryController.tick({ reason: "direct-browser:session_removed" });
+  const removed = await host.agentPool.handleBindingRemoved(sessionId, "session_closed");
+  if (removed?.agentId) {
+    await host.orchestrator.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+    await host.integrationEngine.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+  }
+  await host.recoveryController.tick({ reason: "direct-browser:binding_removed" });
   return { ok: true };
 }
 
 async function handleManagedSessionUpdated(host, sessionId, changeInfo, session) {
-  await host.orchestrator.handleSessionUpdated(sessionId, changeInfo || {}, session || null);
-  const agent = host.agentRuntime.getAgentBySessionId(sessionId);
-  if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
-  await host.recoveryController.tick({ reason: "direct-browser:session_updated" });
+  const updated = await host.agentPool.handleBindingUpdated(sessionId, changeInfo || {}, session || null);
+  if (updated?.agentId) {
+    await host.orchestrator.handleAgentStateChanged(updated.agentId);
+    const agent = host.agentRuntime.getAgent(updated.agentId);
+    if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
+  }
+  await host.recoveryController.tick({ reason: "direct-browser:binding_updated" });
   return { ok: true };
 }
 
