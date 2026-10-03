@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const Contracts = require("../../../platform/contracts.js");
+const Lifecycle = require("../../../platform/agent-lifecycle.js");
 const { normalizeTraceContext, traceDetails } = require("./runtime-trace.js");
 
 const MANAGED_BROWSER_DRIVER_METHODS = Object.freeze([
@@ -58,7 +59,8 @@ class ManagedBrowserAgentRuntime {
     clock = () => Date.now(),
     logger = console,
     maxAgents = 5,
-    agentIdPrefix = "desktop-agent"
+    agentIdPrefix = "desktop-agent",
+    readinessTtlMs = 30000
   } = {}) {
     this.driver = assertManagedBrowserDriver(driver);
     if (!profileDirectory) throw new TypeError("managed_browser_profile_directory_required");
@@ -67,6 +69,7 @@ class ManagedBrowserAgentRuntime {
     this.logger = logger;
     this.maxAgents = Math.max(1, Number(maxAgents) || 5);
     this.agentIdPrefix = String(agentIdPrefix || "desktop-agent");
+    this.readinessTtlMs = Math.max(0, Number(readinessTtlMs) || 30000);
     this.runtimeStatus = "idle";
     this.updatedAt = 0;
     this.started = false;
@@ -74,6 +77,7 @@ class ManagedBrowserAgentRuntime {
     this.agents = new Map();
     this.unsubscribeDriver = null;
     this.hostHandlers = null;
+    this.agentEventListeners = new Set();
   }
 
   async load() {
@@ -114,6 +118,47 @@ class ManagedBrowserAgentRuntime {
     return agent ? clone(agent) : null;
   }
 
+  getAgentLifecycle(agentId) {
+    return Lifecycle.lifecycleForAgent(this.agents.get(String(agentId || "")));
+  }
+
+  subscribeAgentEvents(listener) {
+    if (typeof listener !== "function") throw new TypeError("agent_event_listener_invalid");
+    this.agentEventListeners.add(listener);
+    return () => this.agentEventListeners.delete(listener);
+  }
+
+  emitAgentEvent(event) {
+    if (!event) return;
+    const safe = clone(event);
+    for (const listener of [...this.agentEventListeners]) {
+      try { listener(safe); } catch (_) {}
+    }
+  }
+
+  transitionAgent(agentOrId, state, options = {}) {
+    const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+    if (!agent) return null;
+    const result = Lifecycle.transitionAgentLifecycle(agent, state, { at: this.clock(), ...options });
+    if (result?.event) {
+      const event = { ...result.event, role: agent.role };
+      this.emitAgentEvent(event);
+      this.logger?.info?.("agent_lifecycle_changed", {
+        agentId: agent.agentId,
+        role: agent.role,
+        previousState: event.previousState,
+        state: event.state,
+        reason: event.reason,
+        recoverable: event.state !== Lifecycle.STATES.FAILED,
+        projectId: agent.protocolContext?.projectId || null,
+        taskId: agent.protocolContext?.taskId || null,
+        runId: agent.protocolContext?.runId || null,
+        traceId: options?.trace?.traceId || null
+      });
+    }
+    return result;
+  }
+
   getAgentBySessionId(sessionId) {
     const id = String(sessionId ?? "");
     const agent = [...this.agents.values()].find((item) => this.sessionIdForAgent(item) === id);
@@ -125,6 +170,21 @@ class ManagedBrowserAgentRuntime {
   isAgentConnected(agentOrId) {
     const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
     return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
+  }
+
+  isAgentReady(agentOrId) {
+    const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+    return this.isAgentConnected(agent) && Lifecycle.isReady(agent, { now: this.clock(), readinessTtlMs: this.readinessTtlMs });
+  }
+
+  isAgentBusy(agentOrId) {
+    const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+    return this.isAgentConnected(agent) && Lifecycle.isBusy(agent);
+  }
+
+  isAgentAvailable(agentOrId) {
+    const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+    return this.isAgentConnected(agent) && Lifecycle.isAvailable(agent);
   }
 
   sessionIdForAgent(agentOrId) {
@@ -193,9 +253,11 @@ class ManagedBrowserAgentRuntime {
 
   async removeAgent(agentId) {
     const id = String(agentId || "");
-    if (!this.agents.has(id)) return false;
+    const agent = this.agents.get(id);
+    if (!agent) return false;
     this.agents.delete(id);
     this.updatedAt = this.clock();
+    this.emitAgentEvent({ type: "agent-removed", agentId: id, previousState: agent.lifecycleState, at: this.updatedAt, role: agent.role });
     return true;
   }
 
@@ -302,7 +364,21 @@ class ManagedBrowserAgentRuntime {
     agent.status = String(status || "CONNECTING");
     agent.lastError = null;
     agent.updatedAt = this.clock();
+    const target = Lifecycle.stateForLegacyStatus(agent.status);
+    this.transitionAgent(agent, target, {
+      reason: target === Lifecycle.STATES.READY ? "prompt_ready" : target === Lifecycle.STATES.BUSY ? "prompt_active" : "runtime_starting",
+      legacyStatus: agent.status,
+      readinessCheckedAt: target === Lifecycle.STATES.READY ? agent.updatedAt : null,
+      explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED
+    });
     this.updatedAt = agent.updatedAt;
+    this.emitAgentEvent({
+      type: "agent-binding-changed",
+      agentId: agent.agentId,
+      binding: this.runtimeBinding(agent),
+      at: agent.updatedAt,
+      role: agent.role
+    });
     return this.getAgent(agent.agentId);
   }
 
@@ -326,13 +402,16 @@ class ManagedBrowserAgentRuntime {
       chatUrl: String(chatUrl || normalized.url || ""),
       runtimeKind: "desktop-browser"
     };
+    Lifecycle.initializeAgentLifecycle(agent, { at: now });
     this.agents.set(agentId, agent);
     this.updatedAt = now;
+    this.emitAgentEvent({ type: "agent-added", agentId, state: agent.lifecycleState, reason: agent.lifecycleReason, at: now, role: agent.role });
     this.logger?.info?.("managed_browser_agent_created", {
       agentId,
       role: agent.role,
       sessionId: normalized.id,
       status: agent.status,
+      lifecycleState: agent.lifecycleState,
       url: urlForLog(agent.chatUrl)
     });
     return this.getAgent(agentId);
@@ -361,7 +440,10 @@ class ManagedBrowserAgentRuntime {
     mutable.sessionId = null;
     mutable.tabId = null;
     mutable.updatedAt = this.clock();
+    const lifecycleReason = String(reason || "") === "browser_crashed" ? "browser_crashed" : "session_missing";
+    this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: lifecycleReason, legacyStatus: "OFFLINE" });
     this.updatedAt = mutable.updatedAt;
+    this.emitAgentEvent({ type: "agent-binding-changed", agentId: mutable.agentId, binding: null, at: mutable.updatedAt, role: mutable.role });
     this.logger?.warn?.("managed_browser_agent_offline", {
       agentId: mutable.agentId,
       reason: mutable.lastError
@@ -384,14 +466,11 @@ class ManagedBrowserAgentRuntime {
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
     const availability = String(payload.availability || "unknown");
-    if (payload.generating === true || availability === "generating") mutable.status = "BUSY";
-    else if (availability === "ready") mutable.status = "IDLE";
-    else if (availability === "error" || availability === "unavailable") mutable.status = "ERROR";
-    else if (mutable.status !== "OFFLINE") mutable.status = "CONNECTING";
+    const normalized = Lifecycle.normalizeHeartbeat(payload, { hasBinding: Boolean(this.sessionIdForAgent(mutable)) });
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
-    mutable.lastError = mutable.status === "ERROR"
-      ? String(payload.reason || payload.error || availability || "chat_unavailable")
+    mutable.lastError = normalized.state === Lifecycle.STATES.UNAVAILABLE || normalized.state === Lifecycle.STATES.FAILED
+      ? String(payload.reason || payload.error || availability || normalized.reason)
       : null;
     mutable.chatState = {
       generating: Boolean(payload.generating),
@@ -402,10 +481,17 @@ class ManagedBrowserAgentRuntime {
       pathname: String(payload.pathname || "")
     };
     if (url) mutable.chatUrl = String(url);
+    this.transitionAgent(mutable, normalized.state, {
+      reason: normalized.reason,
+      legacyStatus: normalized.legacyStatus,
+      readinessCheckedAt: normalized.state === Lifecycle.STATES.READY ? mutable.lastSeenAt : null,
+      details: normalized.state === Lifecycle.STATES.FAILED ? { recoverable: false, terminal: true, source: "heartbeat" } : { recoverable: true, source: "heartbeat" }
+    });
     this.updatedAt = mutable.updatedAt;
     this.logger?.debug?.("managed_browser_agent_heartbeat", {
       agentId: mutable.agentId,
       status: mutable.status,
+      lifecycleState: mutable.lifecycleState,
       availability,
       generating: payload.generating === true,
       composerOccupied: mutable.chatState.composerOccupied
@@ -427,6 +513,11 @@ class ManagedBrowserAgentRuntime {
       mutable.status = "ERROR";
       mutable.lastError = String(reason || "agent_unreachable");
       mutable.updatedAt = now;
+      this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, {
+        reason: String(reason || "") === "login_required" ? "login_required" : "page_unreachable",
+        legacyStatus: "ERROR",
+        details: { recoverable: true, source: "ping" }
+      });
       mutable.chatState = {
         generating: false,
         availability: "unavailable",
@@ -471,10 +562,17 @@ class ManagedBrowserAgentRuntime {
   }
 
   async sendPrompt(agentId, prompt, options = {}) {
-    const agent = this.getAgent(agentId);
+    let agent = this.getAgent(agentId);
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
+    if (!this.isAgentReady(agent)) {
+      const refreshed = await this.pingAgent(agent.agentId);
+      agent = refreshed?.agent || this.getAgent(agent.agentId);
+      if (!refreshed?.ok || !this.isAgentReady(agent)) {
+        return { ok: false, reason: "agent_not_ready", agentId: agent.agentId, lifecycle: this.getAgentLifecycle(agent.agentId) };
+      }
+    }
     const startedAt = this.clock();
     const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
     const trace = normalizeTraceContext(options?.trace || agent?.protocolContext, {
@@ -486,7 +584,15 @@ class ManagedBrowserAgentRuntime {
     }));
     try {
       const result = await this.driver.sendPrompt(sessionId, String(prompt || ""), { trace });
-      if (result?.ok) await this.updateHeartbeat(sessionId, { availability: "generating", generating: true }, result.url || agent.chatUrl || "");
+      if (result?.ok) {
+        const mutable = this.agents.get(agent.agentId);
+        if (mutable) this.transitionAgent(mutable, Lifecycle.STATES.BUSY, {
+          reason: "prompt_active",
+          legacyStatus: "BUSY",
+          details: { recoverable: true, source: "prompt_accept" },
+          trace
+        });
+      }
       const completionDetails = traceDetails(trace, {
         promptBytes,
         ok: result?.ok !== false,

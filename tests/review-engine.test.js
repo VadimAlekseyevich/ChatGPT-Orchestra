@@ -21,11 +21,13 @@ class FakeEventBus {
 }
 
 function registry(count = 2) {
-  const agents = Array.from({ length: count }, (_, index) => ({ agentId: `A${index + 1}`, role: "worker", tabId: index + 10, status: "IDLE", lastSeenAt: 1, protocolContext: null }));
+  const agents = Array.from({ length: count }, (_, index) => ({ agentId: `A${index + 1}`, role: "worker", tabId: index + 10, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, lastSeenAt: 1, protocolContext: null }));
   return {
     agents,
     listAgents() { return agents.map((agent) => ({ ...agent })); },
     getAgent(id) { const agent = agents.find((item) => item.agentId === id); return agent ? { ...agent } : null; },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
     async setProtocolContext(id, context) { const agent = agents.find((item) => item.agentId === id); if (!agent) return null; agent.protocolContext = context ? { ...context } : null; return { ...agent }; },
     async clearProtocolContext(id) { const agent = agents.find((item) => item.agentId === id); if (agent) agent.protocolContext = null; return agent ? { ...agent } : null; }
   };

@@ -543,11 +543,14 @@ test("same-run planning delivery retries use a fresh traceId without changing ru
   await store.beginStage("P-retry-trace", { stage: "DISCOVERY", runId: "R-existing" });
   await store.fail("P-retry-trace", "lead_prompt_failed", { retryMode: "same_run" }, "PLANNING");
 
-  const lead = { agentId: "A1", role: "lead", status: "IDLE", sessionId: "S1" };
+  const lead = { agentId: "A1", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, sessionId: "S1" };
   const traces = [];
   const registry = {
     listAgents() { return [{ ...lead }]; },
     isAgentConnected() { return true; },
+    isAgentReady(agent) { return agent?.lifecycleState === "READY"; },
+    isAgentAvailable(agent) { return ["READY", "BUSY"].includes(agent?.lifecycleState); },
+    getAgentLifecycle() { return { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason }; },
     sessionIdForAgent() { return "S1"; },
     async pingAgent() {
       return {
@@ -555,7 +558,7 @@ test("same-run planning delivery retries use a fresh traceId without changing ru
         availability: "ready",
         generating: false,
         composerOccupied: false,
-        agent: { ...lead, status: "IDLE", chatState: { availability: "ready", generating: false, composerOccupied: false } }
+        agent: { ...lead, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", chatState: { availability: "ready", generating: false, composerOccupied: false } }
       };
     },
     async setProtocolContext(_agentId, context) { lead.protocolContext = { ...context }; return { ...lead }; },

@@ -219,18 +219,33 @@
     }
 
     agents() {
-      return (this.registry?.listAgents?.() || []).map((agent) => ({
-        agentId: String(agent.agentId || ""),
-        role: String(agent.role || "worker"),
-        label: text(agent.label || "", 300),
-        status: String(agent.status || "UNKNOWN"),
-        connected: Boolean(this.registry?.isAgentConnected?.(agent)),
-        lastSeenAt: number(agent.lastSeenAt),
-        lastError: agent.lastError ? text(agent.lastError, 1000) : null,
-        activeContext: sanitize(agent.protocolContext ? clone(agent.protocolContext) : null),
-        capabilities: sanitize(clone(agent.capabilities || [])),
-        executorRef: { agentId: String(agent.agentId || "") }
-      }));
+      return (this.registry?.listAgents?.() || []).map((agent) => {
+        const lifecycle = this.registry?.getAgentLifecycle?.(agent.agentId) || {
+          lifecycleState: agent.lifecycleState || "UNAVAILABLE",
+          lifecycleReason: agent.lifecycleReason || null,
+          lifecycleChangedAt: agent.lifecycleChangedAt || 0,
+          readinessCheckedAt: agent.readinessCheckedAt || null
+        };
+        return {
+          agentId: String(agent.agentId || ""),
+          role: String(agent.role || "worker"),
+          label: text(agent.label || "", 300),
+          status: String(agent.status || "UNKNOWN"),
+          lifecycleState: String(lifecycle.lifecycleState || "UNAVAILABLE"),
+          lifecycleReason: lifecycle.lifecycleReason ? text(lifecycle.lifecycleReason, 300) : null,
+          lifecycleChangedAt: number(lifecycle.lifecycleChangedAt),
+          readinessCheckedAt: lifecycle.readinessCheckedAt === null ? null : number(lifecycle.readinessCheckedAt),
+          connected: Boolean(this.registry?.isAgentConnected?.(agent)),
+          ready: Boolean(this.registry?.isAgentReady?.(agent)),
+          available: Boolean(this.registry?.isAgentAvailable?.(agent)),
+          lastSeenAt: number(agent.lastSeenAt),
+          lastError: agent.lastError ? text(agent.lastError, 1000) : null,
+          lifecycleDetails: sanitize(lifecycle.lifecycleDetails ? clone(lifecycle.lifecycleDetails) : null),
+          activeContext: sanitize(agent.protocolContext ? clone(agent.protocolContext) : null),
+          capabilities: sanitize(clone(agent.capabilities || [])),
+          executorRef: { agentId: String(agent.agentId || "") }
+        };
+      });
     }
 
     warnings({ minimumSeverity = "info" } = {}) {
@@ -255,8 +270,19 @@
       }
       if (["NEEDS_USER", "CONFLICT"].includes(String(integration?.status || ""))) output.push(warning(`integration:${integration?.currentRunId || "current"}`, "error", `integration_${String(integration.status).toLowerCase()}`, `Integration is ${integration.status}`, integration, integration.updatedAt));
       for (const agent of agents) {
-        if (!agent.connected) output.push(warning(`agent:${agent.agentId}:offline`, agent.role === "lead" ? "error" : "warning", "agent_offline", `${agent.label || agent.agentId} is offline`, { agentId: agent.agentId, role: agent.role }, agent.lastSeenAt));
-        else if (agent.status === "ERROR") output.push(warning(`agent:${agent.agentId}:error`, "warning", "agent_error", `${agent.label || agent.agentId} reports ERROR`, { agentId: agent.agentId }, agent.lastSeenAt));
+        if (agent.lifecycleState === "FAILED") {
+          output.push(warning(`agent:${agent.agentId}:failed`, "error", "agent_failed", `${agent.label || agent.agentId} runtime failed`, {
+            agentId: agent.agentId,
+            role: agent.role,
+            lifecycleReason: agent.lifecycleReason
+          }, agent.lifecycleChangedAt || agent.lastSeenAt));
+        } else if (agent.lifecycleState === "UNAVAILABLE") {
+          output.push(warning(`agent:${agent.agentId}:unavailable`, agent.role === "lead" ? "error" : "warning", "agent_unavailable", `${agent.label || agent.agentId} is unavailable`, {
+            agentId: agent.agentId,
+            role: agent.role,
+            lifecycleReason: agent.lifecycleReason
+          }, agent.lifecycleChangedAt || agent.lastSeenAt));
+        }
       }
       for (const rejection of recent.rejections || []) output.push(warning(`event-rejection:${rejection.cursor || rejection.at || output.length}`, "warning", rejection.reason || "event_rejected", `Protocol event rejected: ${rejection.reason || "unknown"}`, { event: sanitize(rejection.event || null) }, rejection.receivedAt || rejection.at));
 
@@ -279,7 +305,16 @@
         tasks: { total: tasks.length, approved, cancelled, finished, progress: tasks.length ? finished / tasks.length : 0, byStatus: statusCounts },
         runs: { total: runs.length, active: runs.filter((run) => ["ASSIGNED", "RUNNING"].includes(run.status)).length, averageDurationMs: durations.length ? Math.round(durations.reduce((sum, item) => sum + item, 0) / durations.length) : 0 },
         reviews: { total: reviews.length, active: reviews.filter((item) => ["ASSIGNED", "REVIEWING"].includes(item.status)).length, approved: reviews.filter((item) => item.status === "APPROVED").length, changesRequired: reviews.filter((item) => item.status === "CHANGES_REQUIRED").length },
-        agents: { total: agents.length, connected: agents.filter((item) => item.connected).length, busy: agents.filter((item) => item.status === "BUSY").length, idle: agents.filter((item) => item.status === "IDLE").length, offline: agents.filter((item) => !item.connected).length },
+        agents: {
+          total: agents.length,
+          connected: agents.filter((item) => item.connected).length,
+          ready: agents.filter((item) => item.lifecycleState === "READY").length,
+          busy: agents.filter((item) => item.lifecycleState === "BUSY").length,
+          unavailable: agents.filter((item) => item.lifecycleState === "UNAVAILABLE").length,
+          failed: agents.filter((item) => item.lifecycleState === "FAILED").length,
+          idle: agents.filter((item) => item.lifecycleState === "READY").length,
+          offline: agents.filter((item) => item.lifecycleState === "UNAVAILABLE").length
+        },
         updatedAt: this.clock()
       };
     }

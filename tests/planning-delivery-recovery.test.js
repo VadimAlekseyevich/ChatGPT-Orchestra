@@ -51,13 +51,16 @@ function makeProjectStore(initial) {
 }
 
 function makeRegistry() {
-  const lead = { agentId: "L1", role: "lead", status: "IDLE", protocolContext: null };
+  const lead = { agentId: "L1", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, protocolContext: null };
   const operations = [];
   return {
     lead,
     operations,
     listAgents: () => [clone(lead)],
     isAgentConnected: () => true,
+    isAgentReady: (agent) => agent?.lifecycleState === "READY",
+    isAgentAvailable: (agent) => ["READY", "BUSY"].includes(agent?.lifecycleState),
+    getAgentLifecycle: (agentId) => agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null,
     async setProtocolContext(agentId, context) {
       lead.protocolContext = clone(context);
       operations.push(["set", agentId, clone(context)]);

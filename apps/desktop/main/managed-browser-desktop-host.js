@@ -37,9 +37,8 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     if (typeof options.agentRuntime?.bindHostHandlers !== "function") throw new TypeError("managed_browser_agent_runtime_required");
     super({ ...options, autoSeedFakeLead: false });
     this.managedBrowserRecoveryRegistry = new ManagedBrowserRecoveryRegistry(this.agentRuntime);
-    // Legacy Core engines still use integer tabId as a liveness hint. Route only their
-    // registry view through a compatibility adapter; the actual AgentRuntime continues
-    // to expose opaque sessionId bindings and remains the source of truth.
+    // Preserve synthetic tabId only for legacy diagnostics. Core lifecycle decisions
+    // delegate through the compatibility adapter to the actual AgentRuntime.
     this.schedulerEngine.registry = this.managedBrowserRecoveryRegistry;
     this.reviewEngine.registry = this.managedBrowserRecoveryRegistry;
     this.integrationEngine.registry = this.managedBrowserRecoveryRegistry;
@@ -105,7 +104,8 @@ class ManagedBrowserDesktopHost extends DesktopHost {
     }
     const availability = String(page?.availability || lead?.chatState?.availability || "unavailable");
     const loginReady = Boolean(page?.ok && ["ready", "generating"].includes(availability));
-    const leadReady = Boolean(lead?.agentId && lead?.status === "IDLE" && availability === "ready");
+    const lifecycle = lead?.agentId ? this.agentRuntime.getAgentLifecycle?.(lead.agentId) || null : null;
+    const leadReady = Boolean(lead?.agentId && this.agentRuntime.isAgentReady?.(lead));
     return {
       ok: true,
       managedBrowser: {
@@ -124,6 +124,8 @@ class ManagedBrowserDesktopHost extends DesktopHost {
         leadReady,
         leadAgentId: lead?.agentId || null,
         leadStatus: lead?.status || null,
+        leadLifecycleState: lifecycle?.lifecycleState || lead?.lifecycleState || null,
+        leadLifecycleReason: lifecycle?.lifecycleReason || lead?.lifecycleReason || null,
         pageError: page?.ok === false ? String(page.reason || "managed_browser_page_unavailable") : null
       }
     };

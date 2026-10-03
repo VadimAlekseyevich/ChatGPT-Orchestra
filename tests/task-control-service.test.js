@@ -50,8 +50,9 @@ function harness({ recoveryStatus = "RUNNING" } = {}) {
   const reviewEngine = { activeCount: () => 0, async tick() { return { ok: true }; }, async enqueueForWorkerCompletion() { return { ok: true, review: { reviewId: "V1" } }; } };
   const integrationEngine = { async tick(options) { return { ok: true, options }; } };
   const registry = {
-    getAgent: (id) => id === "A2" ? { agentId: "A2", role: "worker", status: "IDLE" } : null,
+    getAgent: (id) => id === "A2" ? { agentId: "A2", role: "worker", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready" } : null,
     isAgentConnected: (agent) => Boolean(agent),
+    isAgentReady: (agent) => Boolean(agent && agent.lifecycleState === "READY"),
     async activateAgent(id) { return { ok: true, agentId: id }; }
   };
   const recoveryController = { getPublicState: () => ({ status: recoveryStatus }) };

@@ -2,10 +2,10 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const CONTRACT_VERSION = 5;
+  const CONTRACT_VERSION = 6;
 
   const AGENT_RUNTIME_METHODS = Object.freeze([
-    "load","snapshot","listAgents","getAgent","getAgentBySessionId","isAgentConnected","sessionIdForAgent","runtimeBinding","setRuntimeStatus","setProtocolContext","clearProtocolContext","removeAgent","normalizeSender","getActiveSession","getSession","createSession","navigateSession","removeSession","bindAgentToSession","createAgentForSession","markSessionOffline","updateSessionNavigation","updateHeartbeat","pingAgent","sendPrompt","stopAgent"
+    "load","snapshot","listAgents","getAgent","getAgentBySessionId","getAgentLifecycle","isAgentConnected","isAgentReady","isAgentBusy","isAgentAvailable","subscribeAgentEvents","sessionIdForAgent","runtimeBinding","setRuntimeStatus","setProtocolContext","clearProtocolContext","removeAgent","normalizeSender","getActiveSession","getSession","createSession","navigateSession","removeSession","bindAgentToSession","createAgentForSession","markSessionOffline","updateSessionNavigation","updateHeartbeat","pingAgent","sendPrompt","stopAgent"
   ]);
   const STATE_STORE_METHODS = Object.freeze(["get", "set"]);
   const TRANSACTIONAL_STATE_STORE_METHODS = Object.freeze(["get", "set", "remove", "clear", "transaction"]);

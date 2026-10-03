@@ -71,7 +71,8 @@
     }
 
     getLead() { return this.registry.listAgents().find((agent) => agent.role === "lead") || null; }
-    isConnected(agent) { return Boolean(agent && this.registry?.isAgentConnected?.(agent)); }
+    isReady(agent) { return Boolean(agent && this.registry?.isAgentReady?.(agent)); }
+    isAvailable(agent) { return Boolean(agent && this.registry?.isAgentAvailable?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
 
     createTrace({ projectId, taskId, runId, agentId, stage, sessionId = null, dispatchKind = "normal" } = {}) {
@@ -101,7 +102,7 @@
 
     async ensureLeadPromptReady() {
       let lead = this.getLead();
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      if (!lead) return { ok: false, reason: "lead_not_ready", lifecycle: null };
 
       let ping = null;
       if (typeof this.registry?.pingAgent === "function") {
@@ -109,22 +110,22 @@
         catch (error) {
           ping = { ok: false, reason: "lead_readiness_check_failed", message: String(error?.message || error) };
         }
-        if (!ping?.ok) return { ok: false, reason: "lead_not_ready", details: ping || null };
+        if (!ping?.ok) {
+          return {
+            ok: false,
+            reason: "lead_not_ready",
+            lifecycle: this.registry?.getAgentLifecycle?.(lead.agentId) || null,
+            details: ping || null
+          };
+        }
         lead = ping.agent || this.getLead() || lead;
       }
 
-      const status = String(lead?.status || "");
-      const availability = String(ping?.availability || lead?.chatState?.availability || "");
-      const composerOccupied = ping?.composerOccupied === true || lead?.chatState?.composerOccupied === true;
-      const generating = ping?.generating === true || status === "BUSY";
-      if (status !== "IDLE" || generating || composerOccupied || (availability && availability !== "ready")) {
+      if (!this.isReady(lead)) {
         return {
           ok: false,
           reason: "lead_not_ready",
-          status: status || null,
-          availability: availability || null,
-          composerOccupied,
-          generating,
+          lifecycle: this.registry?.getAgentLifecycle?.(lead.agentId) || null,
           details: ping || null
         };
       }
@@ -354,7 +355,7 @@
         }
         lead = readiness.lead;
       }
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      if (!this.isReady(lead)) return { ok: false, reason: "lead_not_ready", lifecycle: this.registry?.getAgentLifecycle?.(lead?.agentId) || null };
 
       const runId = `planning-${stage.toLowerCase()}-${this.idFactory()}`;
       const taskId = `planning:${stage.toLowerCase()}`;
@@ -437,7 +438,7 @@
         }
         await this.projectStore.setReady(current.projectId, artifact, validation);
         const lead = readyLead || this.getLead();
-        if (this.isConnected(lead)) {
+        if (this.isAvailable(lead)) {
           await this.registry.setProtocolContext(lead.agentId, { projectId: current.projectId, taskId: "planning:complete", runId: "planning-complete" });
         }
         this.logger?.info?.("planning_stage_advancing", traced(trace, {
@@ -456,7 +457,7 @@
       }
 
       let lead = readyLead || this.getLead();
-      if (!this.isConnected(lead)) {
+      if (!this.isAvailable(lead)) {
         return { ok: true, waitingForLead: true, completedStage: stage, nextStage: next, reason, planningAdvanced: false, project: this.getPublicState() };
       }
       if (!readinessChecked) {

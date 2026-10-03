@@ -76,11 +76,13 @@ function projects() {
 }
 
 function registry() {
-  const agents = ["A1", "A2", "A3"].map((agentId, index) => ({ agentId, role: "worker", tabId: 10 + index, status: "IDLE", protocolContext: null, lastSeenAt: 0 }));
+  const agents = ["A1", "A2", "A3"].map((agentId, index) => ({ agentId, role: "worker", tabId: 10 + index, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, protocolContext: null, lastSeenAt: 0 }));
   return {
     agents,
     listAgents() { return agents.map((agent) => ({ ...agent, protocolContext: agent.protocolContext ? { ...agent.protocolContext } : null })); },
     getAgent(agentId) { const agent = agents.find((item) => item.agentId === agentId); return agent ? { ...agent, protocolContext: agent.protocolContext ? { ...agent.protocolContext } : null } : null; },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
     async setProtocolContext(agentId, context) { const agent = agents.find((item) => item.agentId === agentId); if (!agent) return null; agent.protocolContext = { ...context }; return { ...agent }; },
     async clearProtocolContext(agentId) { const agent = agents.find((item) => item.agentId === agentId); if (agent) agent.protocolContext = null; return agent ? { ...agent } : null; }
   };

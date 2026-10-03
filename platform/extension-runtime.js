@@ -3,6 +3,7 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Contracts = root.PlatformContracts || (typeof require === "function" ? require("./contracts.js") : null);
+  const Lifecycle = root.AgentLifecycle || (typeof require === "function" ? require("./agent-lifecycle.js") : null);
   const CHATGPT_HOME = "https://chatgpt.com/";
 
   function asError(error) { return error?.message || String(error || "unknown_error"); }
@@ -30,18 +31,24 @@
   }
 
   class ExtensionAgentRuntime {
-    constructor({ chromeApi = globalThis.chrome, registry, messageTypes = null, workerUrl = CHATGPT_HOME, logger = console } = {}) {
+    constructor({ chromeApi = globalThis.chrome, registry, messageTypes = null, workerUrl = CHATGPT_HOME, logger = console, clock = () => Date.now(), readinessTtlMs = 30000 } = {}) {
       this.chrome = chromeApi;
       this.registry = registry;
       this.messageTypes = messageTypes || root.MESSAGE_TYPES || {};
       this.workerUrl = workerUrl;
       this.logger = logger;
+      this.clock = clock;
+      this.readinessTtlMs = Math.max(0, Number(readinessTtlMs) || 30000);
     }
 
     async load() { return this.registry?.load?.(); }
     snapshot() { return this.registry?.snapshot?.() || { agents: {} }; }
     listAgents() { return this.registry?.listAgents?.() || []; }
     getAgent(agentId) { return this.registry?.getAgent?.(agentId) || null; }
+    getAgentLifecycle(agentId) {
+      if (typeof this.registry?.getAgentLifecycle === "function") return this.registry.getAgentLifecycle(agentId);
+      return Lifecycle.lifecycleForAgent(this.getAgent(agentId));
+    }
     getAgentBySessionId(sessionId) {
       const numeric = Number(sessionId);
       return Number.isInteger(numeric) ? this.registry?.getAgentByTabId?.(numeric) || null : null;
@@ -65,6 +72,27 @@
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
       return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
+    }
+
+    isAgentReady(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isReady(agent, { now: this.clock(), readinessTtlMs: this.readinessTtlMs });
+    }
+
+    isAgentBusy(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isBusy(agent);
+    }
+
+    isAgentAvailable(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isAvailable(agent);
+    }
+
+    subscribeAgentEvents(listener) {
+      if (typeof this.registry?.subscribeAgentEvents === "function") return this.registry.subscribeAgentEvents(listener);
+      if (typeof listener !== "function") throw new TypeError("agent_event_listener_invalid");
+      return () => {};
     }
 
     normalizeSender(sender = {}) {
@@ -109,7 +137,10 @@
     async removeSession(sessionId) {
       const id = Number(sessionId);
       if (!Number.isInteger(id) || !this.chrome?.tabs?.remove) return;
-      return this.chrome.tabs.remove(id);
+      const agent = this.registry?.getAgentByTabId?.(id) || null;
+      const result = await this.chrome.tabs.remove(id);
+      if (agent) await this.registry?.markOfflineByTabId?.(id, "session_removed");
+      return result;
     }
 
     async bindAgentToSession(agentId, session, { status = "CONNECTING", chatUrl = "" } = {}) {
@@ -161,20 +192,42 @@
         const updated = await this.updateHeartbeat(sessionId, response?.payload || response || {}, agent?.chatUrl || "");
         return { ok: true, agent: updated || this.getAgent(agentId) };
       } catch (error) {
-        return { ok: false, reason: "content_not_ready", message: asError(error) };
+        await this.registry?.setAgentLifecycle?.(agentId, Lifecycle.STATES.UNAVAILABLE, {
+          reason: "page_unreachable",
+          legacyStatus: "ERROR"
+        });
+        return { ok: false, reason: "content_not_ready", message: asError(error), agent: this.getAgent(agentId), agentId };
       }
     }
 
     async sendPrompt(agentId, prompt) {
-      const sessionId = this.sessionIdForAgent(agentId);
+      let agent = this.getAgent(agentId);
+      const sessionId = this.sessionIdForAgent(agent);
       if (!sessionId) return { ok: false, reason: "agent_offline", agentId };
+      if (!this.isAgentReady(agent)) {
+        const refreshed = await this.pingAgent(agentId);
+        agent = refreshed?.agent || this.getAgent(agentId);
+        if (!refreshed?.ok || !this.isAgentReady(agent)) {
+          return { ok: false, reason: "agent_not_ready", agentId, lifecycle: this.getAgentLifecycle(agentId) };
+        }
+      }
       try {
         const result = await this.sendSessionMessage(sessionId, {
           type: this.messageTypes.SEND_PROMPT,
           payload: { prompt: String(prompt || "") }
         });
+        if (result?.ok !== false && (result?.accepted === true || result?.ok === true)) {
+          await this.registry?.setAgentLifecycle?.(agentId, Lifecycle.STATES.BUSY, {
+            reason: "prompt_active",
+            legacyStatus: "BUSY"
+          });
+        }
         return { ...(result || {}), agentId };
       } catch (error) {
+        await this.registry?.setAgentLifecycle?.(agentId, Lifecycle.STATES.UNAVAILABLE, {
+          reason: "page_unreachable",
+          legacyStatus: "ERROR"
+        });
         return { ok: false, reason: "agent_unreachable", message: asError(error), agentId };
       }
     }

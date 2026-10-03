@@ -14,9 +14,11 @@
   function normalizePath(value) { return root.GitProvider?.normalizePath?.(value) || String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, ""); }
 
   function liveAgent(registry, agent) {
-    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
-    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
-    return Number.isInteger(agent.tabId);
+    return Boolean(agent && registry?.isAgentAvailable?.(agent));
+  }
+
+  function readyAgent(registry, agent) {
+    return Boolean(agent && registry?.isAgentReady?.(agent));
   }
 
   class IntegrationEngine {
@@ -109,8 +111,7 @@
       }
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && liveAgent(this.registry, agent)
-        && agent.status === "IDLE"
+        && readyAgent(this.registry, agent)
         && !agent.protocolContext
       )).sort((a, b) => (authorCounts.get(a.agentId) || 0) - (authorCounts.get(b.agentId) || 0) || a.agentId.localeCompare(b.agentId));
     }
@@ -468,7 +469,7 @@
     }
 
     async handleAgentStateChanged(agent) {
-      if (agent?.role === "worker" && agent.status === "IDLE") await this.tick({ reason: "worker_idle_for_integration" });
+      if (agent?.role === "worker" && readyAgent(this.registry, agent)) await this.tick({ reason: "worker_ready_for_integration" });
     }
 
     async escalate(reason, details = null) {

@@ -11,7 +11,7 @@ function fakeStorage() {
 function fixtures() {
   const activeRuns = [{ runId: "R1", taskId: "T1", agentId: "A1" }];
   const activeReviews = [];
-  const agents = new Map([["A1", { agentId: "A1", role: "worker", status: "BUSY", tabId: 1, protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" } }]]);
+  const agents = new Map([["A1", { agentId: "A1", role: "worker", status: "BUSY", lifecycleState: "BUSY", lifecycleReason: "prompt_active", tabId: 1, protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" } }]]);
   const projectStore = {
     summary() { return { projectId: "P1", status: "RUNNING", stage: "EXECUTION" }; },
     getActiveProject() { return { projectId: "P1", status: "RUNNING" }; }
@@ -33,7 +33,19 @@ function fixtures() {
     getAgent(id) { const value = agents.get(id); return value ? { ...value } : null; },
     isAgentConnected(agentOrId) {
       const value = typeof agentOrId === "string" ? agents.get(agentOrId) : agentOrId;
-      return Boolean(value && !["OFFLINE", "ERROR"].includes(value.status));
+      return Boolean(value && value.lifecycleState !== "UNAVAILABLE" && value.lifecycleState !== "FAILED");
+    },
+    isAgentReady(agentOrId) {
+      const value = typeof agentOrId === "string" ? agents.get(agentOrId) : agentOrId;
+      return Boolean(value && value.lifecycleState === "READY");
+    },
+    isAgentAvailable(agentOrId) {
+      const value = typeof agentOrId === "string" ? agents.get(agentOrId) : agentOrId;
+      return Boolean(value && ["READY", "BUSY"].includes(value.lifecycleState));
+    },
+    getAgentLifecycle(id) {
+      const value = agents.get(id);
+      return value ? { lifecycleState: value.lifecycleState, lifecycleReason: value.lifecycleReason || null } : null;
     },
     async setProtocolContext(id, context) { const value = agents.get(id); if (value) value.protocolContext = context; return value; },
     async clearProtocolContext(id) { const value = agents.get(id); if (value) value.protocolContext = null; return value; },
@@ -142,7 +154,7 @@ test("Resume reconciles before opening dispatch gate", async () => {
 test("Resume removes offline worker identities before creating replacement tabs", async () => {
   const fx = fixtures();
   fx.activeRuns.splice(0);
-  fx.agents.set("A-old", { agentId: "A-old", role: "worker", status: "OFFLINE", tabId: null, protocolContext: null });
+  fx.agents.set("A-old", { agentId: "A-old", role: "worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "session_missing", tabId: null, protocolContext: null });
   const { store, controller } = controllerFrom(fx);
   await store.load();
   await store.attachProject("P1", { status: "STOPPED" });
@@ -151,7 +163,7 @@ test("Resume removes offline worker identities before creating replacement tabs"
     reconcileTabs: async () => {},
     createWorkers: async () => {
       observedOldIdentity = fx.agents.has("A-old");
-      fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", tabId: 20, protocolContext: null });
+      fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_starting", tabId: 20, protocolContext: null });
       return { ok: true, created: ["A-new"] };
     }
   });

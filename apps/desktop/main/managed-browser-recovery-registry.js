@@ -2,7 +2,7 @@
 
 class ManagedBrowserRecoveryRegistry {
   constructor(runtime) {
-    if (!runtime?.listAgents || !runtime?.getAgent || !runtime?.isAgentConnected) throw new TypeError("managed_browser_recovery_runtime_required");
+    if (!runtime?.listAgents || !runtime?.getAgent || !runtime?.isAgentConnected || !runtime?.isAgentReady || !runtime?.isAgentAvailable) throw new TypeError("managed_browser_recovery_runtime_required");
     this.runtime = runtime;
     this.compatibilityIds = new Map();
     this.nextCompatibilityId = 1;
@@ -18,8 +18,7 @@ class ManagedBrowserRecoveryRegistry {
     if (!agent) return null;
     return {
       ...agent,
-      // RecoveryController still uses an integer tabId as a liveness token.
-      // This synthetic value is scoped to the recovery view and is never a BrowserWindow/page identity.
+      // Retained only for legacy diagnostic consumers. Core lifecycle decisions delegate to AgentRuntime.
       tabId: this.runtime.isAgentConnected(agent) ? this.compatibilityId(agent.agentId) : null
     };
   }
@@ -36,6 +35,20 @@ class ManagedBrowserRecoveryRegistry {
     const id = typeof agentOrId === "string" ? agentOrId : agentOrId?.agentId;
     return this.runtime.isAgentConnected(id || agentOrId);
   }
+  isAgentReady(agentOrId) {
+    const id = typeof agentOrId === "string" ? agentOrId : agentOrId?.agentId;
+    return this.runtime.isAgentReady(id || agentOrId);
+  }
+  isAgentBusy(agentOrId) {
+    const id = typeof agentOrId === "string" ? agentOrId : agentOrId?.agentId;
+    return this.runtime.isAgentBusy?.(id || agentOrId) === true;
+  }
+  isAgentAvailable(agentOrId) {
+    const id = typeof agentOrId === "string" ? agentOrId : agentOrId?.agentId;
+    return this.runtime.isAgentAvailable(id || agentOrId);
+  }
+  getAgentLifecycle(agentId) { return this.runtime.getAgentLifecycle?.(agentId) || null; }
+  subscribeAgentEvents(listener) { return this.runtime.subscribeAgentEvents?.(listener) || (() => {}); }
   sessionIdForAgent(agentOrId) { return this.runtime.sessionIdForAgent(agentOrId); }
   runtimeBinding(agentOrId) { return this.runtime.runtimeBinding?.(agentOrId) || null; }
   setProtocolContext(agentId, context) { return this.runtime.setProtocolContext(agentId, context); }

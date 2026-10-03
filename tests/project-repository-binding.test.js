@@ -43,9 +43,9 @@ test("invalid local repository id is rejected without changing portable reposito
 test("desktop local planning engine forwards repositoryId into ProjectStore before discovery", async () => {
   class BasePlanningEngine {
     constructor({ projectStore }) { this.projectStore = projectStore; }
-    getLead() { return { agentId: "L1" }; }
-    isConnected() { return true; }
-    async dispatchStage(projectId, stage) { return { ok: true, projectId, stage }; }
+    getLead() { return { agentId: "L1", lifecycleState: "READY" }; }
+    async ensureLeadPromptReady() { return { ok: true, lead: this.getLead() }; }
+    async dispatchStage(projectId, stage, options = {}) { return { ok: true, projectId, stage, readinessChecked: options.readinessChecked === true }; }
   }
   const LocalPlanningEngine = createLocalPlanningEngine(BasePlanningEngine);
   const calls = [];

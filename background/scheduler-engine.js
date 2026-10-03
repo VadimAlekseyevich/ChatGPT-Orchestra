@@ -23,9 +23,11 @@
   }
 
   function liveAgent(registry, agent) {
-    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
-    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
-    return Number.isInteger(agent.tabId);
+    return Boolean(agent && registry?.isAgentAvailable?.(agent));
+  }
+
+  function readyAgent(registry, agent) {
+    return Boolean(agent && registry?.isAgentReady?.(agent));
   }
 
   class SchedulerEngine {
@@ -202,8 +204,7 @@
       for (const agentId of this.reviewEngine?.activeReviewerAgentIds?.() || []) activeAgentIds.add(agentId);
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && liveAgent(this.registry, agent)
-        && agent.status === "IDLE"
+        && readyAgent(this.registry, agent)
         && !activeAgentIds.has(agent.agentId)
       ));
     }
@@ -534,7 +535,7 @@
     async handleAgentStateChanged(agent) {
       if (this.store.summary().status !== "RUNNING") return;
       await this.reviewEngine?.handleAgentStateChanged?.(agent);
-      if (agent?.role === "worker" && agent.status === "IDLE") await this.tick({ reason: "worker_idle" });
+      if (agent?.role === "worker" && readyAgent(this.registry, agent)) await this.tick({ reason: "worker_ready" });
     }
   }
 

@@ -271,6 +271,8 @@ async function approveQueuedReviews(host, projectId) {
           payload: approvalPayload(task)
         }
       });
+      const readiness = await host.agentRuntime.pingAgent(review.reviewerAgentId);
+      assert.equal(readiness?.ok, true, "synthetic review completion must publish fresh readiness evidence");
     }
   }
 }
@@ -363,7 +365,7 @@ test("desktop SQLite host pauses at a safe point, restarts, resumes reviews and 
     const resumed = await host.execute("resume");
     assert.equal(resumed.ok, true);
     assert.equal(host.recoveryStore.summary().status, "RUNNING");
-    assert.equal(host.agentRuntime.listAgents().filter((agent) => agent.role === "worker" && agent.status === "IDLE").length, 2);
+    assert.equal(host.agentRuntime.listAgents().filter((agent) => agent.role === "worker" && host.agentRuntime.isAgentAvailable(agent)).length, 2);
 
     await approveQueuedReviews(host, projectId);
     assert.equal(host.schedulerStore.getTask("T1").status, "APPROVED");

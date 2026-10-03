@@ -37,10 +37,13 @@ test("recovery resume turns planning_timeout into a fresh planning run instead o
     retryMode: "fresh_run"
   }, "PLANNING");
 
-  const lead = { agentId: "A1", role: "lead", status: "IDLE", tabId: null, chatState: { availability: "ready", generating: false, composerOccupied: false } };
+  const lead = { agentId: "A1", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, tabId: null, chatState: { availability: "ready", generating: false, composerOccupied: false } };
   const registry = {
     listAgents() { return [{ ...lead, protocolContext: lead.protocolContext ? { ...lead.protocolContext } : null }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
+    getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async pingAgent() { return { ok: true, availability: "ready", generating: false, composerOccupied: false, agent: { ...lead } }; },
     async setProtocolContext(_agentId, context) { lead.protocolContext = { ...context }; return { ...lead }; },
     async clearProtocolContext() { lead.protocolContext = null; }

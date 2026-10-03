@@ -21,6 +21,7 @@ function loadDesktopCore() {
     "prompts/integration-prompts.js",
     "context/context-packets.js",
     "platform/contracts.js",
+    "platform/agent-lifecycle.js",
     "platform/fake-runtime.js",
     "platform/node-timer-runtime.js",
     "platform/transactional-state-store.js",
