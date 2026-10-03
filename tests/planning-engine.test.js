@@ -38,6 +38,7 @@ function fakeRegistry() {
     listAgents() { return [lead]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
     getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async setProtocolContext(agentId, context) {
       assert.equal(agentId, "A1");
@@ -330,8 +331,9 @@ test("Start Project refuses stale IDLE Lead when a fresh readiness check reports
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, "lead_not_ready");
-  assert.equal(result.status, "ERROR");
-  assert.equal(result.availability, "unavailable");
+  assert.equal(result.lifecycle.lifecycleState, "UNAVAILABLE");
+  assert.equal(result.lifecycle.lifecycleReason, "composer_unavailable");
+  assert.equal(result.details.availability, "unavailable");
   assert.equal(store.getActiveProject(), null);
   assert.equal(prompts.length, 0);
 });
@@ -414,6 +416,7 @@ test("persisted DONE advances after restart even when Lead registers after Plann
     listAgents() { return lead ? [{ ...lead }] : []; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
     getAgentLifecycle(agentId) { return lead && agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async setProtocolContext(agentId, context) {
       assert.equal(agentId, "A-late");
