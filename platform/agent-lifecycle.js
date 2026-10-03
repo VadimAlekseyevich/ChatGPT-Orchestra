@@ -84,7 +84,6 @@
     if (state === STATES.UNAVAILABLE) {
       const lastError = String(agent?.lastError || "");
       if (REASON_SET.has(lastError)) return lastError;
-      if (!agent?.sessionId && !Number.isInteger(agent?.tabId)) return "session_missing";
       return "runtime_starting";
     }
     return defaultReason(state);
@@ -217,25 +216,6 @@
     return copy.lifecycleState === STATES.READY || copy.lifecycleState === STATES.BUSY;
   }
 
-  function normalizeHeartbeat(payload = {}, { hasBinding = true } = {}) {
-    if (!hasBinding) return { state: STATES.UNAVAILABLE, reason: "session_missing", legacyStatus: "OFFLINE" };
-    const availability = String(payload.availability || "unknown");
-    const reason = String(payload.reason || payload.error || "");
-    if (payload.terminal === true) return { state: STATES.FAILED, reason: reason === "runtime_incompatible" ? "runtime_incompatible" : "runtime_failure", legacyStatus: "ERROR" };
-    if (payload.generating === true || availability === "generating") {
-      return { state: STATES.BUSY, reason: "prompt_active", legacyStatus: "BUSY" };
-    }
-    if (availability === "ready") {
-      if (payload.composerOccupied === true) return { state: STATES.UNAVAILABLE, reason: "composer_unavailable", legacyStatus: "ERROR" };
-      return { state: STATES.READY, reason: "prompt_ready", legacyStatus: "IDLE" };
-    }
-    if (reason === "login_required" || availability === "login_required") return { state: STATES.UNAVAILABLE, reason: "login_required", legacyStatus: "ERROR" };
-    if (reason === "heartbeat_stale") return { state: STATES.UNAVAILABLE, reason: "heartbeat_stale", legacyStatus: "ERROR" };
-    if (availability === "error" || availability === "unavailable") {
-      return { state: STATES.UNAVAILABLE, reason: "page_unreachable", legacyStatus: "ERROR" };
-    }
-    return { state: STATES.UNAVAILABLE, reason: "runtime_starting", legacyStatus: "CONNECTING" };
-  }
 
   root.AgentLifecycle = {
     STATES,
@@ -249,8 +229,7 @@
     lifecycleForAgent,
     isReady,
     isBusy,
-    isAvailable,
-    normalizeHeartbeat
+    isAvailable
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = root.AgentLifecycle;
