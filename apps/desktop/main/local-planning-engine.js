@@ -38,11 +38,11 @@ function createLocalPlanningEngine(BasePlanningEngine) {
     }
 
     async startProject({ goal, repositoryUrl, repositoryId = null } = {}) {
-      const lead = this.getLead();
-      if (!this.isConnected(lead)) return { ok: false, reason: "lead_not_connected" };
+      const readiness = await this.ensureLeadPromptReady();
+      if (!readiness.ok) return readiness;
       const created = await this.projectStore.createProject({ goal, repositoryUrl, repositoryId });
       if (!created.ok) return created;
-      return this.dispatchStage(created.project.projectId, "DISCOVERY");
+      return this.dispatchStage(created.project.projectId, "DISCOVERY", { lead: readiness.lead, readinessChecked: true });
     }
   };
 }
