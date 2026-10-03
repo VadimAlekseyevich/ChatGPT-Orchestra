@@ -40,11 +40,13 @@ function fakeGitProvider({ validation = null } = {}) {
 }
 
 function registry(count = 3) {
-  const agents = Array.from({ length: count }, (_, index) => ({ agentId: `A${index + 1}`, role: "worker", tabId: index + 10, status: "IDLE", protocolContext: null, lastSeenAt: 0 }));
+  const agents = Array.from({ length: count }, (_, index) => ({ agentId: `A${index + 1}`, role: "worker", tabId: index + 10, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, protocolContext: null, lastSeenAt: 0 }));
   return {
     agents,
     listAgents() { return agents.map((agent) => ({ ...agent })); },
     getAgent(agentId) { const agent = agents.find((item) => item.agentId === agentId); return agent ? { ...agent } : null; },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    isAgentAvailable(agent) { return Boolean(agent && ["READY", "BUSY"].includes(agent.lifecycleState)); },
     async setProtocolContext(agentId, context) { const agent = agents.find((item) => item.agentId === agentId); if (!agent) return null; agent.protocolContext = { ...context }; return { ...agent }; },
     async clearProtocolContext(agentId) { const agent = agents.find((item) => item.agentId === agentId); if (agent) agent.protocolContext = null; return agent ? { ...agent } : null; }
   };
@@ -161,7 +163,7 @@ test("recent content heartbeat keeps a long-running Worker alive", async () => {
   const workers = registry(1);
   const engine = new SchedulerEngine(engineOptions({ store, projects: projectStore(graph), workers, clock: () => now, idFactory: () => "R1" }));
   await engine.init(); await engine.start({ maxWorkers: 1, maxRetries: 0, runTimeoutMs: 60000 });
-  now += 61000; workers.agents[0].lastSeenAt = now; workers.agents[0].status = "BUSY";
+  now += 61000; workers.agents[0].lastSeenAt = now; workers.agents[0].status = "BUSY"; workers.agents[0].lifecycleState = "BUSY"; workers.agents[0].lifecycleReason = "prompt_active";
   await engine.tick({ reason: "heartbeat_watchdog" });
   assert.equal(store.activeRuns().length, 1);
   assert.notEqual(store.getTask("T1").status, "NEEDS_USER");
@@ -174,7 +176,7 @@ test("restart immediately retries an active run whose Worker disappeared", async
   await seed.load(); await seed.initializeProject(graph, { maxRetries: 2 });
   await seed.setGitSnapshot((await fakeGitProvider().captureBase(graph)).snapshot);
   await seed.createRun({ taskId: "T1", runId: "R-old", agentId: "A1", git: { required: true, provider: "test-git", branch: "orchestra/P1/T1/R-old", targetBranch: "main", baseSha: BASE_SHA } });
-  const workers = registry(1); workers.agents[0].tabId = null; workers.agents[0].status = "OFFLINE";
+  const workers = registry(1); workers.agents[0].tabId = null; workers.agents[0].status = "OFFLINE"; workers.agents[0].lifecycleState = "UNAVAILABLE"; workers.agents[0].lifecycleReason = "session_missing";
   const engine = new SchedulerEngine(engineOptions({ store: new SchedulerStore({ storageArea: storage }), projects: projectStore({ ...graph, status: "RUNNING" }), workers }));
   await engine.init();
   assert.equal(engine.store.getRun("R-old").status, "AGENT_UNAVAILABLE_AFTER_RESTART");
