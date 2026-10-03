@@ -11,9 +11,11 @@
   }
 
   function liveAgent(registry, agent) {
-    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
-    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
-    return Number.isInteger(agent.tabId);
+    return Boolean(agent && registry?.isAgentAvailable?.(agent));
+  }
+
+  function readyAgent(registry, agent) {
+    return Boolean(agent && registry?.isAgentReady?.(agent));
   }
 
   function asText(value, max = 4000) {
@@ -257,8 +259,7 @@
       const requested = new Set(Array.isArray(task?.definition?.reviewerCapabilities) ? task.definition.reviewerCapabilities : []);
       return this.registry.listAgents().filter((agent) => (
         agent.role === "worker"
-        && liveAgent(this.registry, agent)
-        && agent.status === "IDLE"
+        && readyAgent(this.registry, agent)
         && agent.agentId !== review.authorAgentId
         && !workerBusy.has(agent.agentId)
         && !reviewBusy.has(agent.agentId)
@@ -510,7 +511,7 @@
     }
 
     async handleAgentStateChanged(agent) {
-      if (agent?.role === "worker" && agent.status === "IDLE") await this.tick({ reason: "worker_idle_for_review" });
+      if (agent?.role === "worker" && readyAgent(this.registry, agent)) await this.tick({ reason: "worker_ready_for_review" });
     }
 
     async escalate(reason, taskId, details = null) {
