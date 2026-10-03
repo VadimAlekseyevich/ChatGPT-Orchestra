@@ -271,6 +271,8 @@ async function approveQueuedReviews(host, projectId) {
           payload: approvalPayload(task)
         }
       });
+      const readiness = await host.agentRuntime.pingAgent(review.reviewerAgentId);
+      assert.equal(readiness?.ok, true, "synthetic review completion must publish fresh readiness evidence");
     }
   }
 }
