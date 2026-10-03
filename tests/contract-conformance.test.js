@@ -13,8 +13,8 @@ const {
   orchestratorApiConformance
 } = require("./contracts/conformance.js");
 
-test("Platform contract version exposes Phase 14 parity surfaces", () => {
-  if (Contracts.CONTRACT_VERSION < 6) throw new Error("platform_contract_version_not_lifecycle_v6");
+test("Platform contract v7 exposes portable lifecycle and API surfaces", () => {
+  if (Contracts.CONTRACT_VERSION < 7) throw new Error("platform_contract_version_not_runtime_agnostic_v7");
   for (const query of ["contextSummary", "contextPacket"]) {
     if (!Contracts.API_QUERIES.includes(query)) throw new Error(`api_contract_missing:${query}`);
   }
