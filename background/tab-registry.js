@@ -157,6 +157,15 @@
       return this.getAgent(agentId);
     }
 
+    async setAgentLifecycle(agentId, state, options = {}) {
+      const agent = this.state.agents[String(agentId || "")];
+      if (!agent) return null;
+      agent.updatedAt = this.clock();
+      this.transition(agent, state, options);
+      await this.persist();
+      return this.getAgent(agent.agentId);
+    }
+
     async setProtocolContext(agentId, context) {
       const agent = this.state.agents[agentId];
       if (!agent) return null;
