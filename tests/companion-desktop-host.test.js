@@ -8,7 +8,8 @@ require("../platform/contracts.js");
 require("../platform/companion-protocol.js");
 const { CompanionRpcPeer } = require("../platform/companion-rpc.js");
 const { createLoopbackCompanionPair } = require("../platform/companion-loopback.js");
-const { FakeAgentRuntime, MemoryStateStore, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
+const { MemoryStateStore, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
+const { FakeRuntimeControl } = require("./helpers/fake-runtime-control.js");
 const { TransactionalStateStore } = require("../platform/transactional-state-store.js");
 const { DesktopBridgeAgentRuntime } = require("../platform/desktop-bridge-runtime.js");
 const { ExtensionCompanionEndpoint } = require("../platform/extension-companion-endpoint.js");
@@ -30,7 +31,7 @@ test("CompanionDesktopHost receives browser events while desktop owns Core/state
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension });
-  const remoteRuntime = new FakeAgentRuntime({
+  const remoteRuntime = new FakeRuntimeControl({
     agents: [{ agentId: "lead-bridge", role: "lead", status: "IDLE", active: true, tabId: 71 }]
   });
   const endpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: remoteRuntime });
