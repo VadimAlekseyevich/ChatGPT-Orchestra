@@ -9,8 +9,7 @@ test("FakeAgentRuntime emits portable lifecycle events without duplicate no-op t
   const events = [];
   runtime.subscribeAgentEvents((event) => events.push(event));
 
-  const session = await runtime.createSession({ url: "https://chatgpt.com/", active: true });
-  const worker = await runtime.createAgentForSession({ role: "worker", session, status: "CONNECTING" });
+  const worker = runtime.addAgent({ role: "worker", status: "CONNECTING" });
   assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "UNAVAILABLE");
 
   now = 1010;
@@ -46,8 +45,7 @@ test("FakeAgentRuntime emits portable lifecycle events without duplicate no-op t
 test("stale READY cannot dispatch until the runtime performs a fresh readiness check", async () => {
   let now = 2000;
   const runtime = new FakeAgentRuntime({ clock: () => now, readinessTtlMs: 50 });
-  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
-  const worker = await runtime.createAgentForSession({ role: "worker", session, status: "CONNECTING" });
+  const worker = runtime.addAgent({ role: "worker", status: "CONNECTING" });
   await runtime.pingAgent(worker.agentId);
   assert.equal(runtime.isAgentReady(worker.agentId), true);
 
@@ -64,11 +62,10 @@ test("stale READY cannot dispatch until the runtime performs a fresh readiness c
   assert.equal(runtime.prompts.length, 1);
 });
 
-test("terminal FAILED does not recover from ordinary ping or heartbeat", async () => {
+test("terminal FAILED does not recover from ordinary ping", async () => {
   let now = 3000;
   const runtime = new FakeAgentRuntime({ clock: () => now });
-  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
-  const worker = await runtime.createAgentForSession({ role: "worker", session, status: "CONNECTING" });
+  const worker = runtime.addAgent({ role: "worker", status: "CONNECTING" });
 
   await runtime.setAgentLifecycle(worker.agentId, "FAILED", {
     reason: "runtime_failure",
@@ -80,8 +77,19 @@ test("terminal FAILED does not recover from ordinary ping or heartbeat", async (
   const ping = await runtime.pingAgent(worker.agentId);
   assert.equal(ping.ok, false);
   assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "FAILED");
-
-  await runtime.updateHeartbeat(session.id, { availability: "ready", generating: false });
-  assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "FAILED");
   assert.equal(runtime.isAgentReady(worker.agentId), false);
+});
+
+test("opaque runtime binding replacement preserves logical identity and protocol context", async () => {
+  const runtime = new FakeAgentRuntime();
+  const worker = runtime.addAgent({ agentId: "worker-stable", role: "worker", status: "IDLE" });
+  await runtime.setProtocolContext(worker.agentId, { projectId: "P1", taskId: "T1", runId: "R1" });
+  const before = runtime.getAgent(worker.agentId);
+
+  const after = await runtime.replaceRuntimeBinding(worker.agentId);
+  assert.equal(after.agentId, before.agentId);
+  assert.deepEqual(after.protocolContext, before.protocolContext);
+  assert.notEqual(after.bindingGeneration, before.bindingGeneration);
+  assert.equal(JSON.stringify(after).includes("sessionId"), false);
+  assert.equal(JSON.stringify(after).includes("tabId"), false);
 });
