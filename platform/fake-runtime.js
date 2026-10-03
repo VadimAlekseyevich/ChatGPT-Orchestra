@@ -226,7 +226,8 @@
       this.transitionAgent(agent, target, {
         reason: target === Lifecycle.STATES.READY ? "prompt_ready" : target === Lifecycle.STATES.BUSY ? "prompt_active" : "runtime_starting",
         legacyStatus: agent.status,
-        readinessCheckedAt: target === Lifecycle.STATES.READY ? this.clock() : null
+        readinessCheckedAt: target === Lifecycle.STATES.READY ? this.clock() : null,
+        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED
       });
       this.emitAgentEvent({
         type: "agent-binding-changed",
