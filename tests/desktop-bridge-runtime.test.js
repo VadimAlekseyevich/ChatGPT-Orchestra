@@ -5,7 +5,7 @@ const Contracts = require("../platform/contracts.js");
 const Protocol = require("../platform/companion-protocol.js");
 const { CompanionRpcPeer } = require("../platform/companion-rpc.js");
 const { createLoopbackCompanionPair } = require("../platform/companion-loopback.js");
-const { FakeAgentRuntime } = require("../platform/fake-runtime.js");
+const { FakeRuntimeControl } = require("./helpers/fake-runtime-control.js");
 const { DesktopBridgeAgentRuntime } = require("../platform/desktop-bridge-runtime.js");
 const { ExtensionCompanionEndpoint } = require("../platform/extension-companion-endpoint.js");
 const { agentRuntimeConformance } = require("./contracts/conformance.js");
@@ -14,7 +14,7 @@ test("DesktopBridgeAgentRuntime controls an extension-side AgentRuntime through 
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension });
-  const remoteRuntime = new FakeAgentRuntime({
+  const remoteRuntime = new FakeRuntimeControl({
     agents: [{ agentId: "lead-1", role: "lead", status: "IDLE", active: true, tabId: 41 }]
   });
   const endpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: remoteRuntime });
@@ -60,7 +60,7 @@ test("DesktopBridgeAgentRuntime passes the reusable AgentRuntime lifecycle confo
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension });
-  const remoteRuntime = new FakeAgentRuntime();
+  const remoteRuntime = new FakeRuntimeControl();
   const endpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: remoteRuntime });
   const runtime = new DesktopBridgeAgentRuntime({ rpc: desktopRpc });
 
@@ -77,7 +77,7 @@ test("DesktopBridgeAgentRuntime demotes cached READY on transport loss and reval
   const pair = createLoopbackCompanionPair();
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension });
-  const remoteRuntime = new FakeAgentRuntime({
+  const remoteRuntime = new FakeRuntimeControl({
     agents: [{ agentId: "lead-transport", role: "lead", status: "IDLE", active: true, tabId: 51 }]
   });
   const endpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: remoteRuntime });
