@@ -33,10 +33,21 @@ function fixture() {
   const projectStore = { getActiveProject: () => ({ projectId: "P1", status: "NEEDS_USER", stage: "EXECUTION_BLOCKED", initialGoal: "goal", repository: { url: "https://github.com/a/b", fullName: "a/b" }, updatedAt: now, execution: { tabId: 55 } }) };
   const registry = {
     listAgents: () => [
-      { agentId: "lead", role: "lead", label: "Lead", status: "IDLE", tabId: 42, sessionId: "42", lastSeenAt: now, protocolContext: { projectId: "P1", taskId: "planning", runId: "x" } },
-      { agentId: "A2", role: "worker", label: "Worker", status: "OFFLINE", tabId: 43, sessionId: "43", lastSeenAt: now - 500 }
+      { agentId: "lead", role: "lead", label: "Lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", lifecycleChangedAt: now, readinessCheckedAt: now, tabId: 42, sessionId: "42", lastSeenAt: now, protocolContext: { projectId: "P1", taskId: "planning", runId: "x" } },
+      { agentId: "A2", role: "worker", label: "Worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "session_missing", lifecycleChangedAt: now - 500, tabId: 43, sessionId: "43", lastSeenAt: now - 500 }
     ],
-    isAgentConnected: (agent) => agent.status !== "OFFLINE"
+    isAgentConnected: (agent) => agent.lifecycleState !== "UNAVAILABLE" && agent.lifecycleState !== "FAILED",
+    isAgentReady: (agent) => agent.lifecycleState === "READY",
+    isAgentAvailable: (agent) => ["READY", "BUSY"].includes(agent.lifecycleState),
+    getAgentLifecycle: (agentId) => {
+      const agent = registry.listAgents().find((item) => item.agentId === agentId);
+      return agent ? {
+        lifecycleState: agent.lifecycleState,
+        lifecycleReason: agent.lifecycleReason,
+        lifecycleChangedAt: agent.lifecycleChangedAt,
+        readinessCheckedAt: agent.readinessCheckedAt || null
+      } : null;
+    }
   };
   const eventBus = { recent: () => ({ events: [{ receivedAt: now, tabId: 42, runtimeSource: { sessionId: "42" }, source: { runtime: { sessionId: "42" } }, event: { projectId: "P1", taskId: "T2", event: "ERROR", payload: { reason: "x" } } }], rejections: [{ receivedAt: now, tabId: 43, reason: "bad_event", runtimeSource: { sessionId: "43" }, event: { projectId: "P1", taskId: "T2" } }] }) };
   const recoveryController = { getPublicState: () => ({ status: "RECOVERY_REQUIRED", issues: [{ code: "needs_reconcile", sessionId: "42" }], snapshot: { tabId: 42 }, updatedAt: now }) };
