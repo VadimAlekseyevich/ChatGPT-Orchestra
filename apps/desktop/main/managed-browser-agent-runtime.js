@@ -470,7 +470,7 @@ class ManagedBrowserAgentRuntime {
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
     mutable.lastError = normalized.state === Lifecycle.STATES.UNAVAILABLE || normalized.state === Lifecycle.STATES.FAILED
-      ? String(payload.reason || payload.error || normalized.reason)
+      ? String(payload.reason || payload.error || availability || normalized.reason)
       : null;
     mutable.chatState = {
       generating: Boolean(payload.generating),
