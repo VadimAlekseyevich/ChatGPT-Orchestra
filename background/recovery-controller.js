@@ -10,9 +10,11 @@
     return JSON.parse(JSON.stringify(value));
   }
   function liveAgent(registry, agent) {
-    if (!agent || ["OFFLINE", "ERROR"].includes(agent.status)) return false;
-    if (typeof registry?.isAgentConnected === "function") return Boolean(registry.isAgentConnected(agent));
-    return Number.isInteger(agent.tabId);
+    return Boolean(agent && registry?.isAgentAvailable?.(agent));
+  }
+
+  function lifecycleState(registry, agent) {
+    return registry?.getAgentLifecycle?.(agent?.agentId)?.lifecycleState || agent?.lifecycleState || "UNAVAILABLE";
   }
 
   class RecoveryController {
@@ -88,6 +90,8 @@
         agentId: agent.agentId,
         role: agent.role,
         status: agent.status,
+        lifecycleState: lifecycleState(this.registry, agent),
+        lifecycleReason: this.registry?.getAgentLifecycle?.(agent.agentId)?.lifecycleReason || agent.lifecycleReason || null,
         tabId: Number.isInteger(agent.tabId) ? agent.tabId : null,
         protocolContext: agent.protocolContext ? clone(agent.protocolContext) : null,
         lastSeenAt: agent.lastSeenAt || 0
@@ -117,17 +121,26 @@
 
       if (this.activePlanningGeneration()) {
         const lead = this.planningEngine?.getLead?.();
-        if (!liveAgent(this.registry, lead)) issues.push({ code: "lead_reconnect_required", projectId: project.projectId });
+        if (!liveAgent(this.registry, lead)) issues.push({
+          code: lifecycleState(this.registry, lead) === "FAILED" ? "lead_runtime_failed" : "lead_reconnect_required",
+          projectId: project.projectId,
+          lifecycleState: lifecycleState(this.registry, lead)
+        });
       }
       for (const run of this.schedulerStore?.activeRuns?.() || []) {
-        if (!liveAgent(this.registry, this.registry.getAgent(run.agentId))) issues.push({ code: "worker_run_requires_reconciliation", runId: run.runId, taskId: run.taskId, agentId: run.agentId });
+        const agent = this.registry.getAgent(run.agentId);
+        if (!liveAgent(this.registry, agent)) issues.push({ code: "worker_run_requires_reconciliation", runId: run.runId, taskId: run.taskId, agentId: run.agentId, lifecycleState: lifecycleState(this.registry, agent) });
       }
       for (const review of this.reviewStore?.active?.() || []) {
-        if (!liveAgent(this.registry, this.registry.getAgent(review.reviewerAgentId))) issues.push({ code: "review_requires_reconciliation", reviewId: review.reviewId, taskId: review.taskId, agentId: review.reviewerAgentId });
+        const agent = this.registry.getAgent(review.reviewerAgentId);
+        if (!liveAgent(this.registry, agent)) issues.push({ code: "review_requires_reconciliation", reviewId: review.reviewId, taskId: review.taskId, agentId: review.reviewerAgentId, lifecycleState: lifecycleState(this.registry, agent) });
       }
       const integrationRun = this.integrationStore?.currentRun?.();
-      if (integrationRun && ACTIVE_INTEGRATION_GENERATION.has(integrationRun.status) && !liveAgent(this.registry, this.registry.getAgent(integrationRun.agentId))) {
-        issues.push({ code: "integration_requires_reconciliation", runId: integrationRun.runId, agentId: integrationRun.agentId });
+      if (integrationRun && ACTIVE_INTEGRATION_GENERATION.has(integrationRun.status)) {
+        const agent = this.registry.getAgent(integrationRun.agentId);
+        if (!liveAgent(this.registry, agent)) {
+          issues.push({ code: "integration_requires_reconciliation", runId: integrationRun.runId, agentId: integrationRun.agentId, lifecycleState: lifecycleState(this.registry, agent) });
+        }
       }
       return issues;
     }
