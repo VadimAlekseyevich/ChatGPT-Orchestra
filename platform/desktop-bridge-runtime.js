@@ -158,6 +158,16 @@
       this.updatedAt = this.clock();
     }
 
+    syncTransportLifecycle() {
+      let status = null;
+      try { status = this.rpc?.transport?.getStatus?.() || null; }
+      catch (_) { status = null; }
+      if (!status || (status.connected !== false && status.peerConnected !== false)) return status;
+      this.handshake = null;
+      this.markAllUnavailable("transport_disconnected");
+      return status;
+    }
+
     snapshot() {
       return {
         schemaVersion: 1,
@@ -167,9 +177,19 @@
       };
     }
 
-    listAgents() { return [...this.agents.values()].map(clone); }
-    getAgent(agentId) { const agent = this.agents.get(String(agentId || "")); return agent ? clone(agent) : null; }
-    getAgentLifecycle(agentId) { return Lifecycle.lifecycleForAgent(this.agents.get(String(agentId || ""))); }
+    listAgents() {
+      this.syncTransportLifecycle();
+      return [...this.agents.values()].map(clone);
+    }
+    getAgent(agentId) {
+      this.syncTransportLifecycle();
+      const agent = this.agents.get(String(agentId || ""));
+      return agent ? clone(agent) : null;
+    }
+    getAgentLifecycle(agentId) {
+      this.syncTransportLifecycle();
+      return Lifecycle.lifecycleForAgent(this.agents.get(String(agentId || "")));
+    }
     getAgentBySessionId(sessionId) {
       const id = String(sessionId ?? "");
       const agent = [...this.agents.values()].find((item) => this.sessionIdForAgent(item) === id);
@@ -178,7 +198,8 @@
     getAgentByTabId(tabId) { return this.getAgentBySessionId(tabId); }
 
     isAgentConnected(agentOrId) {
-      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+      this.syncTransportLifecycle();
+      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : this.agents.get(String(agentOrId?.agentId || "")) || agentOrId;
       return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
     }
 
@@ -235,6 +256,7 @@
             });
           }
         } else {
+          this.handshake = null;
           this.markAllUnavailable("transport_disconnected");
         }
         throw error;
