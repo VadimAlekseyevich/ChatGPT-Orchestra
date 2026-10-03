@@ -442,7 +442,7 @@ class ManagedBrowserAgentRuntime {
     mutable.sessionId = null;
     mutable.tabId = null;
     mutable.updatedAt = this.clock();
-    const lifecycleReason = String(reason || "") === "browser_crashed" ? "browser_crashed" : "session_missing";
+    const lifecycleReason = "runtime_unavailable";
     this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: lifecycleReason, legacyStatus: "OFFLINE" });
     this.updatedAt = mutable.updatedAt;
     this.emitAgentEvent({ type: "agent-binding-changed", agentId: mutable.agentId, binding: null, at: mutable.updatedAt, role: mutable.role });
@@ -516,7 +516,7 @@ class ManagedBrowserAgentRuntime {
       mutable.lastError = String(reason || "agent_unreachable");
       mutable.updatedAt = now;
       this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, {
-        reason: String(reason || "") === "login_required" ? "login_required" : "page_unreachable",
+        reason: String(reason || "") === "login_required" ? "login_required" : "runtime_unavailable",
         legacyStatus: "ERROR",
         details: { recoverable: true, source: "ping" }
       });
