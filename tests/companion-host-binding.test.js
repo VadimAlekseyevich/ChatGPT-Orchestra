@@ -18,6 +18,9 @@ test("desktop companion binding translates runtime binding details before Core c
       getAgent(id) { return agents.get(id) || null; },
       getAgentBySessionId(id) { return [...agents.values()].find((agent) => agent.sessionId === id) || null; }
     },
+    coreAgentRuntime: {
+      getAgent(id) { return agents.has(id) ? { agentId: id, status: "IDLE", lifecycleState: "READY" } : null; }
+    },
     agentPool: {
       portableSender(sender) { return { agentId: sender.agentId || null, runtimeKind: "companion", bindingPresent: Boolean(sender.sessionId) }; },
       async handleContentMessage(message) { calls.push(["adapter-message", message.type]); return { ok: true, agentId: "A1" }; },
