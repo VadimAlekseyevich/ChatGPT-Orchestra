@@ -32,11 +32,14 @@ test("fresh Lead resumes the same persisted planning role without creating a new
     summary: () => ({ projectId: project.projectId, status: project.status, stage: project.stage, currentRunId: project.currentRunId }),
     async beginStage() { beginStageCalls += 1; throw new Error("replacement_must_not_begin_new_stage"); }
   };
-  const lead = { agentId: "LEAD-NEW", role: "lead", status: "IDLE" };
+  const lead = { agentId: "LEAD-NEW", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
   const contexts = [];
   const registry = {
     listAgents: () => [clone(lead)],
     isAgentConnected: () => true,
+    isAgentReady: (agent) => agent?.lifecycleState === "READY",
+    isAgentAvailable: (agent) => ["READY", "BUSY"].includes(agent?.lifecycleState),
+    getAgentLifecycle: (agentId) => agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null,
     async setProtocolContext(agentId, context) { contexts.push({ agentId, context: clone(context) }); return { ...lead, protocolContext: clone(context) }; },
     async clearProtocolContext() { throw new Error("must_not_clear_successful_context"); }
   };
@@ -63,11 +66,14 @@ test("fresh Lead resumes the same persisted planning role without creating a new
 
 test("failed fresh Lead dispatch clears protocol binding so registration can retry safely", async () => {
   const project = activeProject();
-  const lead = { agentId: "LEAD-NEW", role: "lead", status: "IDLE" };
+  const lead = { agentId: "LEAD-NEW", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
   const operations = [];
   const registry = {
     listAgents: () => [clone(lead)],
     isAgentConnected: () => true,
+    isAgentReady: (agent) => agent?.lifecycleState === "READY",
+    isAgentAvailable: (agent) => ["READY", "BUSY"].includes(agent?.lifecycleState),
+    getAgentLifecycle: (agentId) => agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null,
     async setProtocolContext(agentId, context) { operations.push(["set", agentId, clone(context)]); return { ...lead, protocolContext: clone(context) }; },
     async clearProtocolContext(agentId) { operations.push(["clear", agentId]); return { ...lead, protocolContext: null }; }
   };
