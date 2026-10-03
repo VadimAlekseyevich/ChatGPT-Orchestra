@@ -27,6 +27,8 @@ test("ServiceWorkerOrchestrator manages agents through FakeAgentRuntime with no 
     assert.equal(runtime.listAgents().filter((agent) => agent.role === "worker").length, 2);
 
     const target = workers.created[0];
+    assert.equal((await runtime.pingAgent(target)).ok, true);
+    assert.equal(runtime.isAgentReady(target), true);
     assert.equal((await orchestrator.sendPromptToAgent(target, "portable task")).ok, true);
     assert.deepEqual(runtime.prompts.at(-1), { agentId: target, prompt: "portable task" });
   } finally {
