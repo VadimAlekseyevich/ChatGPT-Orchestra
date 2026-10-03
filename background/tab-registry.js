@@ -216,7 +216,7 @@
       agent.lastError = String(reason || "tab_unavailable");
       agent.updatedAt = this.clock();
       agent.tabId = null;
-      this.transition(agent, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
+      this.transition(agent, Lifecycle.STATES.UNAVAILABLE, { reason: "runtime_unavailable", legacyStatus: "OFFLINE" });
       await this.persist();
       this.emitAgentEvent({ type: "agent-binding-changed", agentId: agent.agentId, binding: null, at: agent.updatedAt, role: agent.role });
       return this.getAgent(existing.agentId);
@@ -231,7 +231,7 @@
       if (!isChatGPTUrl(url)) {
         agent.status = "ERROR";
         agent.lastError = "navigated_outside_chatgpt";
-        this.transition(agent, Lifecycle.STATES.UNAVAILABLE, { reason: "navigation_in_progress", legacyStatus: "ERROR" });
+        this.transition(agent, Lifecycle.STATES.UNAVAILABLE, { reason: "runtime_not_ready", legacyStatus: "ERROR" });
       } else if (agent.status === "ERROR" && agent.lastError === "navigated_outside_chatgpt") {
         agent.status = "CONNECTING";
         agent.lastError = null;
