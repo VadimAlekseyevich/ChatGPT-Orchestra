@@ -311,7 +311,7 @@ class DesktopHost {
     const startedAt = hostNow(this);
     const logger = hostDiagnosticLogger(this);
     const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
-    const agent = this.agentRuntime.getAgent?.(agentId) || null;
+    const agent = this.coreAgentRuntime.getAgent?.(agentId) || null;
     const context = agent?.protocolContext || null;
     const run = context?.runId ? this.schedulerStore.getRun?.(context.runId) : null;
     const taskState = context?.taskId ? this.schedulerStore.getTask?.(context.taskId) : null;
@@ -348,7 +348,7 @@ class DesktopHost {
       }
     }
     try {
-      const result = await this.agentRuntime.sendPrompt(agentId, prompt);
+      const result = await this.coreAgentRuntime.sendPrompt(agentId, prompt);
       logger?.info?.("worker_prompt_dispatch_completed", {
         agentId: String(agentId || ""),
         taskId: context?.taskId || null,
