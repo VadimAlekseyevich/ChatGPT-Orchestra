@@ -11,6 +11,7 @@
       this.rpc = rpc;
       this.agentRuntime = Contracts.assertAgentRuntime(agentRuntime);
       this.disposers = [];
+      this.agentEventDisposer = null;
       this.started = false;
     }
 
@@ -53,12 +54,19 @@
       this.installHandlers();
       await this.rpc.start();
       await this.agentRuntime.load();
+      this.agentEventDisposer = this.agentRuntime.subscribeAgentEvents((event) => {
+        const type = String(event?.type || "");
+        if (!type) return;
+        Promise.resolve(this.rpc.notify(type, event)).catch(() => {});
+      });
       this.started = true;
       return { ok: true };
     }
 
     async stop() {
       this.started = false;
+      this.agentEventDisposer?.();
+      this.agentEventDisposer = null;
       for (const dispose of this.disposers.splice(0)) dispose();
       await this.rpc.stop();
     }
