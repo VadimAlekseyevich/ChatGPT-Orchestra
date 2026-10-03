@@ -294,7 +294,7 @@
         cached.sessionId = null;
         cached.tabId = null;
         cached.status = "OFFLINE";
-        this.transitionCachedAgent(cached, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
+        this.transitionCachedAgent(cached, Lifecycle.STATES.UNAVAILABLE, { reason: "runtime_unavailable", legacyStatus: "OFFLINE" });
         this.emitAgentEvent({ type: "agent-binding-changed", agentId: cached.agentId, binding: null, at: this.clock(), role: cached.role });
       }
       return result;
