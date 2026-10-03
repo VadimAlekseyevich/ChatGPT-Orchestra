@@ -5,6 +5,7 @@ require("../content/message-types.js");
 require("../platform/contracts.js");
 const { ExtensionAgentRuntime } = require("../platform/extension-runtime.js");
 const { RuntimeAgentPool } = require("../platform/runtime-agent-pool.js");
+const { PortableAgentRuntime } = require("../platform/portable-agent-runtime.js");
 const { TabRegistry } = require("../background/tab-registry.js");
 const { ServiceWorkerOrchestrator } = require("../background/orchestrator.js");
 
@@ -60,7 +61,8 @@ function makeOrchestrator() {
   const registry = new TabRegistry({ stateStore: fakeStorage(), idFactory: () => `agent-${++id}` });
   const agentRuntime = new ExtensionAgentRuntime({ chromeApi, registry, messageTypes: globalThis.ChatGPTOrchestra.MESSAGE_TYPES });
   const agentPool = new RuntimeAgentPool({ runtime: agentRuntime, runtimeKind: "extension" });
-  const orchestrator = new ServiceWorkerOrchestrator({ agentRuntime, agentPool, logger: { warn() {} } });
+  const coreAgentRuntime = new PortableAgentRuntime({ runtime: agentRuntime, runtimeKind: "extension" });
+  const orchestrator = new ServiceWorkerOrchestrator({ agentRuntime: coreAgentRuntime, agentPool, logger: { warn() {} } });
   return { orchestrator, agentPool, registry, agentRuntime, chromeApi };
 }
 
