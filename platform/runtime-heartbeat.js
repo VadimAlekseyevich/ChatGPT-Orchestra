@@ -5,7 +5,7 @@
   const Lifecycle = root.AgentLifecycle || (typeof require === "function" ? require("./agent-lifecycle.js") : null);
 
   function normalizeRuntimeHeartbeat(payload = {}, { bindingPresent = true } = {}) {
-    if (!bindingPresent) return { state: Lifecycle.STATES.UNAVAILABLE, reason: "session_missing", legacyStatus: "OFFLINE" };
+    if (!bindingPresent) return { state: Lifecycle.STATES.UNAVAILABLE, reason: "runtime_unavailable", legacyStatus: "OFFLINE" };
     const availability = String(payload.availability || "unknown");
     const reason = String(payload.reason || payload.error || "");
 
@@ -21,7 +21,7 @@
     }
     if (availability === "ready") {
       if (payload.composerOccupied === true) {
-        return { state: Lifecycle.STATES.UNAVAILABLE, reason: "composer_unavailable", legacyStatus: "ERROR" };
+        return { state: Lifecycle.STATES.UNAVAILABLE, reason: "runtime_not_ready", legacyStatus: "ERROR" };
       }
       return { state: Lifecycle.STATES.READY, reason: "prompt_ready", legacyStatus: "IDLE" };
     }
@@ -29,10 +29,10 @@
       return { state: Lifecycle.STATES.UNAVAILABLE, reason: "login_required", legacyStatus: "ERROR" };
     }
     if (reason === "heartbeat_stale") {
-      return { state: Lifecycle.STATES.UNAVAILABLE, reason: "heartbeat_stale", legacyStatus: "ERROR" };
+      return { state: Lifecycle.STATES.UNAVAILABLE, reason: "runtime_unavailable", legacyStatus: "ERROR" };
     }
     if (availability === "error" || availability === "unavailable") {
-      return { state: Lifecycle.STATES.UNAVAILABLE, reason: "page_unreachable", legacyStatus: "ERROR" };
+      return { state: Lifecycle.STATES.UNAVAILABLE, reason: "runtime_unavailable", legacyStatus: "ERROR" };
     }
     return { state: Lifecycle.STATES.UNAVAILABLE, reason: "runtime_starting", legacyStatus: "CONNECTING" };
   }
