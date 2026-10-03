@@ -138,7 +138,7 @@
         if (!task) return { ok: false, reason: "unknown_task" };
         if (task.activeRunId || task.activeReviewId || !["READY", "NEEDS_USER"].includes(task.status)) return { ok: false, reason: "task_reassign_requires_idle_task", status: task.status };
         const agent = this.registry?.getAgent?.(agentId);
-        if (!agent || agent.role !== "worker" || !this.registry?.isAgentConnected?.(agent) || agent.status !== "IDLE") return { ok: false, reason: "target_agent_not_idle", agentId };
+        if (!agent || agent.role !== "worker" || !this.registry?.isAgentReady?.(agent)) return { ok: false, reason: "target_agent_not_ready", agentId };
         const available = (this.schedulerEngine?.availableWorkers?.() || []).some((item) => item.agentId === agent.agentId);
         if (!available) return { ok: false, reason: "target_agent_unavailable", agentId };
         if (!this.schedulerStore.dependenciesSatisfied(task)) return { ok: false, reason: "task_dependencies_not_satisfied" };
