@@ -195,7 +195,7 @@
         return { ok: true, agent: updated || this.getAgent(agentId) };
       } catch (error) {
         await this.registry?.setAgentLifecycle?.(agentId, Lifecycle.STATES.UNAVAILABLE, {
-          reason: "page_unreachable",
+          reason: "runtime_unavailable",
           legacyStatus: "ERROR"
         });
         return { ok: false, reason: "content_not_ready", message: asError(error), agent: this.getAgent(agentId), agentId };
@@ -227,7 +227,7 @@
         return { ...(result || {}), agentId };
       } catch (error) {
         await this.registry?.setAgentLifecycle?.(agentId, Lifecycle.STATES.UNAVAILABLE, {
-          reason: "page_unreachable",
+          reason: "runtime_unavailable",
           legacyStatus: "ERROR"
         });
         return { ok: false, reason: "agent_unreachable", message: asError(error), agentId };
