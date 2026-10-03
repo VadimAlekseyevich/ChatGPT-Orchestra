@@ -3,10 +3,28 @@
 const { STORE_KEYS } = require("../../../persistence/portable-state.js");
 const { stageCompanionMigration, migrationStatus } = require("./companion-migration.js");
 
+function isAdapterOwnedMessage(host, message) {
+  const TYPES = host.root.MESSAGE_TYPES || {};
+  return new Set([
+    TYPES.CONTENT_READY,
+    TYPES.CONTENT_HEARTBEAT,
+    TYPES.CHAT_STATE,
+    TYPES.ASSISTANT_RESPONSE_COMPLETED
+  ].filter(Boolean)).has(message?.type);
+}
+
 async function handleRuntimeMessage(host, message, sender) {
-  const result = await host.orchestrator.handleRuntimeMessage(message, sender);
-  if (sender?.agentId) {
-    const agent = host.agentRuntime.getAgent(sender.agentId);
+  let result;
+  let logicalAgentId = sender?.agentId || null;
+  if (isAdapterOwnedMessage(host, message)) {
+    result = await host.agentPool.handleContentMessage(message, sender);
+    logicalAgentId = result?.agentId || logicalAgentId;
+    if (logicalAgentId) await host.orchestrator.handleAgentStateChanged(logicalAgentId);
+  } else {
+    result = await host.orchestrator.handleRuntimeMessage(message, host.agentPool.portableSender(sender));
+  }
+  if (logicalAgentId) {
+    const agent = host.agentRuntime.getAgent(logicalAgentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: `companion:${message?.type || "runtime_message"}` });
@@ -14,27 +32,32 @@ async function handleRuntimeMessage(host, message, sender) {
 }
 
 async function handleApiMessage(host, message, sender) {
-  if (sender?.sessionId) return { apiVersion: host.root.ORCHESTRATOR_API_VERSION, ok: false, reason: "orchestrator_command_forbidden_from_agent_session" };
+  if (sender?.sessionId) return { apiVersion: host.root.ORCHESTRATOR_API_VERSION, ok: false, reason: "orchestrator_command_forbidden_from_agent" };
   const TYPES = host.root.MESSAGE_TYPES || {};
   const payload = message?.payload || {};
   if (message?.type === TYPES.ORCHESTRATOR_API_QUERY) return host.query(payload.name, payload.payload || {});
   if (message?.type === TYPES.ORCHESTRATOR_API_EXECUTE) return host.execute(payload.name, payload.payload || {});
-  return host.orchestratorApi.handleLegacyMessage(message, sender || {});
+  return host.orchestratorApi.handleLegacyMessage(message, host.agentPool.portableSender(sender || {}));
 }
 
 async function handleSessionRemoved(host, sessionId) {
-  const agent = host.agentRuntime.getAgentBySessionId(sessionId);
-  await host.orchestrator.handleSessionRemoved(sessionId);
-  if (agent) await host.integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
-  await host.recoveryController.tick({ reason: "companion:session_removed" });
+  const removed = await host.agentPool.handleBindingRemoved(sessionId, "session_closed");
+  if (removed?.agentId) {
+    await host.orchestrator.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+    await host.integrationEngine.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+  }
+  await host.recoveryController.tick({ reason: "companion:binding_removed" });
   return { ok: true };
 }
 
 async function handleSessionUpdated(host, sessionId, changeInfo, session) {
-  await host.orchestrator.handleSessionUpdated(sessionId, changeInfo || {}, session || null);
-  const agent = host.agentRuntime.getAgentBySessionId(sessionId);
-  if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
-  await host.recoveryController.tick({ reason: "companion:session_updated" });
+  const updated = await host.agentPool.handleBindingUpdated(sessionId, changeInfo || {}, session || null);
+  if (updated?.agentId) {
+    await host.orchestrator.handleAgentStateChanged(updated.agentId);
+    const agent = host.agentRuntime.getAgent(updated.agentId);
+    if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
+  }
+  await host.recoveryController.tick({ reason: "companion:binding_updated" });
   return { ok: true };
 }
 
