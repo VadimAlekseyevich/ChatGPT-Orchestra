@@ -97,15 +97,17 @@
 
     normalizeSender(sender = {}) {
       const tabId = sender?.tab?.id;
-      if (!Number.isInteger(tabId)) return Contracts.normalizeRuntimeSender({ kind: "extension-ui" });
+      if (!Number.isInteger(tabId)) {
+        return { kind: "extension-ui", sessionId: null, agentId: null, url: "", legacyTabId: null };
+      }
       const agent = this.registry?.getAgentByTabId?.(tabId) || null;
-      return Contracts.normalizeRuntimeSender({
-        kind: agent ? "agent-session" : "unregistered-session",
+      return {
+        kind: "agent-session",
         sessionId: String(tabId),
         agentId: agent?.agentId || null,
-        url: sender?.tab?.url || agent?.chatUrl || "",
+        url: String(sender?.tab?.url || agent?.chatUrl || ""),
         legacyTabId: tabId
-      });
+      };
     }
 
     async getActiveSession() {
