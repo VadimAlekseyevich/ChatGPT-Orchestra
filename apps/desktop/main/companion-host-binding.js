@@ -24,7 +24,7 @@ async function handleRuntimeMessage(host, message, sender) {
     result = await host.orchestrator.handleRuntimeMessage(message, host.agentPool.portableSender(sender));
   }
   if (logicalAgentId) {
-    const agent = host.agentRuntime.getAgent(logicalAgentId);
+    const agent = host.coreAgentRuntime.getAgent(logicalAgentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: `companion:${message?.type || "runtime_message"}` });
@@ -54,7 +54,7 @@ async function handleSessionUpdated(host, sessionId, changeInfo, session) {
   const updated = await host.agentPool.handleBindingUpdated(sessionId, changeInfo || {}, session || null);
   if (updated?.agentId) {
     await host.orchestrator.handleAgentStateChanged(updated.agentId);
-    const agent = host.agentRuntime.getAgent(updated.agentId);
+    const agent = host.coreAgentRuntime.getAgent(updated.agentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: "companion:binding_updated" });
