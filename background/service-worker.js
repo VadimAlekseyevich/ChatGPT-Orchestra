@@ -109,7 +109,7 @@ const planningEngine = new root.PlanningEngine({
   projectStore,
   registry: agentRuntime,
   eventBus,
-  sendPrompt: (agentId, prompt) => agentRuntime.sendPrompt(agentId, prompt)
+  sendPrompt: (agentId, prompt, sendOptions) => agentRuntime.sendPrompt(agentId, prompt, sendOptions)
 });
 const reviewEngine = new root.ReviewEngine({
   store: reviewStore,

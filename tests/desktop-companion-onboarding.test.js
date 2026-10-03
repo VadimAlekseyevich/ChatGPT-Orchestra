@@ -23,7 +23,7 @@ test("companion onboarding stays hidden outside companion runtime", async () => 
   assert.equal(root.innerHTML, "");
 });
 
-test("companion onboarding guides normal-browser login and prepares the packaged fallback", async () => {
+test("native extension onboarding prepares the packaged browser bridge", async () => {
   const root = fakeRoot();
   const calls = [];
   const transport = {
@@ -38,7 +38,7 @@ test("companion onboarding guides normal-browser login and prepares the packaged
   };
   const app = new DesktopCompanionOnboarding({ rootElement: root, transport });
   await app.refresh();
-  assert.match(root.innerHTML, /Chrome \/ Edge fallback/);
+  assert.match(root.innerHTML, /Chrome \/ Edge extension bridge/);
   assert.match(root.innerHTML, /Enable Desktop/);
 
   const prepared = await app.handleAction("prepare");

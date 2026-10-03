@@ -36,12 +36,6 @@
     : null;
   onboarding?.start();
 
-  const companionRoot = document.querySelector("#desktopCompanionOnboarding");
-  const companionOnboarding = companionRoot && root.DesktopCompanionOnboarding
-    ? new root.DesktopCompanionOnboarding({ rootElement: companionRoot, transport, t })
-    : null;
-  companionOnboarding?.start();
-
   const projectRoot = document.querySelector("#desktopProjectOnboarding");
   const projectOnboarding = projectRoot && root.DesktopProjectOnboarding
     ? new root.DesktopProjectOnboarding({ rootElement: projectRoot, transport, pollMs: 3000, t })
@@ -76,7 +70,6 @@
     if (localeSelect) localeSelect.value = i18n.locale;
     renderWorkflowGuide();
     onboarding?.render();
-    companionOnboarding?.render();
     projectOnboarding?.render();
     bundleImport?.render();
     app.render();

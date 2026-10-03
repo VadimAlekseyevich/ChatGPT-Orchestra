@@ -24,7 +24,7 @@ Tracking issue: [#43 — complete manual alpha validation and signed Windows rel
 
 ChatGPT Orchestra coordinates Lead, Worker, Reviewer and Integrator agents around durable project state. Chats are executors, not the source of truth: planning, DAG state, run identities, local Git provenance, review, integration, recovery and observability live in Orchestra.
 
-The primary alpha runtime is the packaged desktop application with a managed ChatGPT browser profile. The Edge extension remains an explicit companion fallback, not the primary product path.
+The primary alpha runtime is the packaged native desktop application with its own managed ChatGPT browser profile. ChatGPT pages, Lead/Worker sessions and orchestration stay inside Orchestra. The legacy extension bridge is not part of the normal product path.
 
 ```text
 Desktop UI / Dashboard
@@ -50,8 +50,9 @@ managed ChatGPT agents     trusted local verification
 - `shell:false`, argv-only local command execution with bounded output, timeouts, cancellation and audit metadata;
 - independent artifact provenance and scope validation before review;
 - deterministic no-ff local integration with conflict detection and repair fallback;
-- direct desktop managed-browser `AgentRuntime` with dedicated persistent ChatGPT profile;
-- extension companion fallback;
+- direct desktop managed-browser `AgentRuntime` with a dedicated persistent ChatGPT profile;
+- ChatGPT agent windows remain inside Orchestra instead of opening Chrome or Edge;
+- legacy extension bridge retained only for compatibility/testing;
 - SQLite persistence, Project Bundle export/import and deterministic recovery;
 - Pause / Resume / Stop Now boundaries with late-event rejection;
 - workspace salvage instead of deleting dirty abandoned worktrees;
@@ -80,7 +81,13 @@ npm run test:phase20
 npm run test:alpha
 ```
 
-Run the desktop managed-browser product path:
+Run the native desktop product path:
+
+```powershell
+npm run desktop:dev
+```
+
+The default desktop runtime is the embedded managed-browser runtime. The explicit equivalent is:
 
 ```powershell
 npm run desktop:managed-browser
@@ -92,7 +99,7 @@ Build the Windows installer candidate:
 npm run desktop:dist:win
 ```
 
-The extension fallback can be staged with:
+The legacy browser extension bridge can still be staged for compatibility testing with:
 
 ```powershell
 npm run extension:stage-alpha
@@ -133,7 +140,7 @@ For the desktop alpha/development path:
 - Windows 10/11 for the release target;
 - Node.js 22 recommended for desktop development and SQLite tests;
 - system Git available on `PATH`;
-- ChatGPT access and an interactive login in Orchestra's dedicated managed-browser profile.
+- ChatGPT access through Orchestra's embedded managed-browser profile.
 
 Node 18 remains covered for portable/Core compatibility jobs in CI.
 

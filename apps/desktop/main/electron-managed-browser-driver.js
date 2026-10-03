@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-trace.js");
 
 const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
 const DEFAULT_AGENT_PRELOAD = path.join(__dirname, "..", "agent-preload.js");
@@ -127,14 +128,18 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
-    const redirectUnsupportedAuth = (rawUrl) => {
+    const blockUnsupportedAuth = (rawUrl, source = "navigation") => {
       const provider = unsupportedEmbeddedAuthProvider(rawUrl);
       if (!provider) return false;
       const entry = this.entry(id);
       if (entry) entry.unsupportedAuthProvider = provider;
-      window.hide?.();
-      Promise.resolve(this.resolveElectron()?.shell?.openExternal?.(DEFAULT_CHATGPT_URL)).catch((error) => {
-        this.emit({ type: "navigation-blocked", sessionId: id, reason: `external_auth_open_failed:${asError(error)}` });
+      this.logger?.warn?.("managed_browser_auth_provider_blocked", {
+        sessionId: id,
+        provider,
+        source,
+        origin: (() => {
+          try { return new URL(String(rawUrl || "")).origin; } catch (_) { return ""; }
+        })()
       });
       this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
       return true;
@@ -147,8 +152,8 @@ class ElectronManagedBrowserDriver {
       }
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
-    window.webContents?.on?.("will-navigate", (event, url) => {
-      if (redirectUnsupportedAuth(url)) {
+    const guardNavigation = (source) => (event, url) => {
+      if (blockUnsupportedAuth(url, source)) {
         event?.preventDefault?.();
         return;
       }
@@ -156,11 +161,53 @@ class ElectronManagedBrowserDriver {
         event?.preventDefault?.();
         this.emit({ type: "navigation-blocked", sessionId: id, url: String(url || ""), reason: asError(error) });
       }
-    });
+    };
+    window.webContents?.on?.("will-navigate", guardNavigation("will-navigate"));
+    // Server-side redirects (ChatGPT -> Google OAuth) do not reliably surface as
+    // will-navigate. Intercept them before commit so the managed page never lands
+    // on Google's embedded-user-agent flow.
+    window.webContents?.on?.("will-redirect", guardNavigation("will-redirect"));
     window.webContents?.on?.("did-navigate", onNavigation);
     window.webContents?.on?.("did-navigate-in-page", onNavigation);
+    window.webContents?.on?.("did-start-loading", () => {
+      const entry = this.entry(id);
+      if (entry) entry.lastLoadError = null;
+      this.logger?.info?.("managed_browser_page_load_started", {
+        sessionId: id,
+        url: String(window.webContents?.getURL?.() || entry?.url || "")
+      });
+    });
+    window.webContents?.on?.("did-finish-load", () => {
+      const entry = this.entry(id);
+      if (entry) entry.lastLoadError = null;
+      this.logger?.info?.("managed_browser_page_load_completed", {
+        sessionId: id,
+        url: String(window.webContents?.getURL?.() || entry?.url || ""),
+        title: String(window.webContents?.getTitle?.() || "")
+      });
+    });
+    window.webContents?.on?.("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame === false) return;
+      const entry = this.entry(id);
+      const failure = {
+        errorCode: Number(errorCode) || 0,
+        errorDescription: String(errorDescription || "unknown"),
+        url: String(validatedURL || window.webContents?.getURL?.() || entry?.url || "")
+      };
+      if (entry) entry.lastLoadError = failure;
+      this.logger?.warn?.("managed_browser_page_load_failed", {
+        sessionId: id,
+        ...failure
+      });
+    });
     window.webContents?.on?.("render-process-gone", (_event, details = {}) => {
       if (!this.sessions.has(id)) return;
+      this.logger?.error?.("managed_browser_renderer_gone", {
+        sessionId: id,
+        reason: String(details.reason || "unknown"),
+        exitCode: Number(details.exitCode) || 0,
+        url: String(window.webContents?.getURL?.() || "")
+      });
       this.sessions.delete(id);
       this.emit({ type: "session-removed", sessionId: id, reason: `render_process_gone:${String(details.reason || "unknown")}` });
     });
@@ -175,7 +222,7 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
-      if (redirectUnsupportedAuth(rawUrl)) return { action: "deny" };
+      if (blockUnsupportedAuth(rawUrl, "window-open")) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
@@ -221,7 +268,7 @@ class ElectronManagedBrowserDriver {
         devTools: false
       }
     });
-    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null });
+    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null, lastLoadError: null });
     this.attachWindow(id, window);
     try {
       await window.loadURL(targetUrl);
@@ -289,7 +336,23 @@ class ElectronManagedBrowserDriver {
     if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
     if (typeof this.pageAdapter?.ping === "function") {
       const result = await this.pageAdapter.ping(entry.window.webContents);
-      return { ...result, unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
+      const availability = String(result?.availability || "unavailable");
+      if (result?.ok === false || availability === "unavailable" || availability === "error") {
+        this.logger?.warn?.("managed_browser_page_status_unavailable", {
+          sessionId: id,
+          reason: result?.reason || entry.lastLoadError?.errorDescription || null,
+          availability,
+          url: String(result?.url || entry.window.webContents?.getURL?.() || entry.url || ""),
+          loadErrorCode: entry.lastLoadError?.errorCode || null
+        });
+      }
+      return {
+        ...result,
+        ...(result?.ok === false && entry.lastLoadError
+          ? { reason: result.reason || "managed_browser_page_load_failed", loadError: { ...entry.lastLoadError } }
+          : {}),
+        unsupportedAuthProvider: entry.unsupportedAuthProvider || null
+      };
     }
     return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || ""), unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
   }
@@ -302,12 +365,50 @@ class ElectronManagedBrowserDriver {
     return this.pageAdapter.readAssistantSnapshot(entry.window.webContents);
   }
 
-  async sendPrompt(sessionId, prompt) {
+  async sendPrompt(sessionId, prompt, options = {}) {
     this.ensureStarted();
     const entry = this.entry(sessionId);
-    if (!entry?.window || entry.window.isDestroyed?.()) return { ok: false, reason: "session_unavailable" };
-    if (typeof this.pageAdapter?.sendPrompt !== "function") return { ok: false, reason: "chatgpt_page_adapter_unavailable" };
-    return this.pageAdapter.sendPrompt(entry.window.webContents, String(prompt || ""));
+    const trace = normalizeTraceContext(options?.trace, { sessionId: String(sessionId || "") });
+    const promptBytes = byteLength(prompt);
+    if (!entry?.window || entry.window.isDestroyed?.()) {
+      this.logger?.warn?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "session_unavailable"
+      }));
+      return { ok: false, reason: "session_unavailable" };
+    }
+    if (typeof this.pageAdapter?.sendPrompt !== "function") {
+      this.logger?.warn?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "chatgpt_page_adapter_unavailable"
+      }));
+      return { ok: false, reason: "chatgpt_page_adapter_unavailable" };
+    }
+    const startedAt = Date.now();
+    this.logger?.info?.("managed_browser_driver_prompt_send_started", traceDetails(trace, { promptBytes }));
+    try {
+      const result = await this.pageAdapter.sendPrompt(entry.window.webContents, String(prompt || ""), { trace });
+      const details = traceDetails(trace, {
+        promptBytes,
+        ok: result?.ok !== false,
+        accepted: result?.accepted === true || result?.ok === true,
+        confirmed: result?.confirmed === true,
+        method: result?.method || null,
+        reason: result?.reason || null,
+        durationMs: Math.max(0, Date.now() - startedAt)
+      });
+      if (result?.ok === false) this.logger?.warn?.("managed_browser_driver_prompt_send_failed", details);
+      else this.logger?.info?.("managed_browser_driver_prompt_send_completed", details);
+      return result;
+    } catch (error) {
+      this.logger?.error?.("managed_browser_driver_prompt_send_failed", traceDetails(trace, {
+        promptBytes,
+        reason: "driver_prompt_send_error",
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error
+      }));
+      throw error;
+    }
   }
 
   async stopGeneration(sessionId) {

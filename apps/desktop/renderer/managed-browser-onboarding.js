@@ -123,13 +123,10 @@
     renderUnsupportedAuth(status) {
       if (status?.unsupportedAuthProvider !== "google") return "";
       return `<div class="dashboard-error managed-auth-fallback">
-        <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in must continue in Chrome or Edge"))}</strong>
-        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google does not allow this sign-in inside the embedded Electron browser. Orchestra opened the provider in your normal browser and can switch to its extension/companion fallback without copying credentials or cookies."))}</p>
-        ${this.fallbackError ? `<p>${escapeHtml(this.fallbackError === "companion_fallback_requires_packaged_runtime" ? this.tr("managed.packagedFallbackRequired", "This fallback must be prepared from the packaged Windows candidate. Build it, launch the packaged executable, then try again.") : this.fallbackError)}</p>` : ""}
+        <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in is unavailable inside embedded browsers"))}</strong>
+        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google blocks OAuth sign-in inside embedded user-agents. Orchestra will stay inside the application and will not open an external browser. Use another ChatGPT sign-in method in this window."))}</p>
         <div class="dashboard-task-controls">
-          <button data-managed-browser-action="use-companion">${escapeHtml(this.tr("managed.useCompanion", "Prepare and use Chrome / Edge fallback"))}</button>
-          <button class="secondary" data-managed-browser-action="open-external">${escapeHtml(this.tr("managed.openExternal", "Open ChatGPT in normal browser"))}</button>
-          <button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
+          <button data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
         </div>
       </div>`;
     }
@@ -176,17 +173,6 @@
     async handleAction(action) {
       const normalized = String(action || "");
       if (normalized === "refresh") return this.refresh();
-      if (normalized === "open-external") return this.transport.openChatGPTExternal?.();
-      if (normalized === "use-companion") {
-        this.fallbackError = null;
-        const prepared = await this.transport.prepareCompanionFallback?.();
-        if (!prepared?.ok) {
-          this.fallbackError = prepared?.reason || "companion_fallback_prepare_failed";
-          this.render();
-          return prepared;
-        }
-        return this.transport.switchRuntime?.("companion");
-      }
       if (normalized === "open") {
         await this.transport.execute("openManagedBrowser", {});
         return this.refresh();

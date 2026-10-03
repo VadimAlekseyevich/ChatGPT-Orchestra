@@ -28,7 +28,11 @@ function createLocalPlanningEngine(BasePlanningEngine) {
       super({
         ...options,
         ...(typeof originalSendPrompt === "function" ? {
-          sendPrompt: (agentId, prompt) => originalSendPrompt(agentId, augmentPlanningPrompt(prompt, projectStore?.getActiveProject?.()))
+          sendPrompt: (agentId, prompt, sendOptions) => originalSendPrompt(
+            agentId,
+            augmentPlanningPrompt(prompt, projectStore?.getActiveProject?.()),
+            sendOptions
+          )
         } : {})
       });
     }

@@ -1,11 +1,12 @@
 # Phase 19 Desktop Reliability and Security Policy
 
-Phase 19 promotes the direct managed-browser runtime to the default desktop product path and defines bounded failure behavior before the Desktop-first Alpha release gate.
+Phase 19 promotes the direct managed-browser runtime to the default desktop product path and keeps ChatGPT interaction inside the native application.
 
 ## Runtime policy
 
 - `electron .` starts the direct managed-browser runtime.
-- `--companion` remains an explicit extension-backed fallback.
+- `--managed-browser` explicitly selects the same embedded runtime.
+- `--companion` is retained only as a legacy compatibility/testing mode and is not part of the normal product flow.
 - `--desktop-shell` is an explicit development/test-only fake-runtime shell.
 - Ambiguous multi-runtime selections fail closed.
 - One Lead plus up to four Worker slots is the release concurrency ceiling.

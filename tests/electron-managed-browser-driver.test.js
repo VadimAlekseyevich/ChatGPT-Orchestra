@@ -74,6 +74,12 @@ function harness() {
     }
   };
   const pageCalls = [];
+  const logs = [];
+  const logger = {
+    info(event, details) { logs.push({ level: "info", event, details }); },
+    warn(event, details) { logs.push({ level: "warn", event, details }); },
+    error(event, details) { logs.push({ level: "error", event, details }); }
+  };
   const pageAdapter = {
     async ping(webContents) {
       pageCalls.push({ type: "ping", url: webContents.getURL() });
@@ -88,10 +94,10 @@ function harness() {
       return { ok: true, stopped: true, url: webContents.getURL() };
     }
   };
-  const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter });
+  const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter, logger });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory };
+  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory, logs };
 }
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
@@ -114,6 +120,32 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   await driver.close();
 });
 
+
+test("managed browser records main-frame load failures and renderer exits for real-runtime diagnosis", async () => {
+  const { driver, profileDirectory, logs } = harness();
+  await driver.start({ profileDirectory });
+  const session = await driver.createSession({ url: "https://chatgpt.com/", active: true });
+  const win = FakeBrowserWindow.instances[0];
+
+  win.webContents.emit("did-start-loading");
+  win.webContents.emit("did-fail-load", {}, -105, "NAME_NOT_RESOLVED", "https://chatgpt.com/", true);
+
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_page_load_failed"
+    && item.details.sessionId === session.id
+    && item.details.errorCode === -105
+    && item.details.errorDescription === "NAME_NOT_RESOLVED"
+  ));
+
+  win.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 139 });
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_renderer_gone"
+    && item.details.reason === "crashed"
+    && item.details.exitCode === 139
+  ));
+  await driver.close();
+});
+
 test("managed browser navigation allows current OpenAI auth hosts and known identity providers while remaining fail-closed", () => {
   assert.equal(assertManagedNavigationUrl("about:blank"), "about:blank");
   assert.equal(assertManagedNavigationUrl("https://chatgpt.com/c/123"), "https://chatgpt.com/c/123");
@@ -132,7 +164,41 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
 });
 
-test("Google auth is opened in the normal browser instead of the embedded Electron window", async () => {
+test("Google auth server redirects are blocked before the embedded page leaves ChatGPT", async () => {
+  const { driver, profileDirectory, logs } = harness();
+  const events = [];
+  await driver.start({ profileDirectory });
+  driver.subscribe((event) => events.push(event));
+  const session = await driver.createSession({ url: "https://chatgpt.com/auth/login_with", active: true });
+  const win = FakeBrowserWindow.instances[0];
+  let prevented = false;
+
+  win.webContents.emit(
+    "will-redirect",
+    { preventDefault() { prevented = true; } },
+    "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fauth.openai.com"
+  );
+
+  assert.equal(prevented, true);
+  assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login_with");
+  assert.ok(events.some((event) =>
+    event.type === "unsupported-auth-provider"
+    && event.sessionId === session.id
+    && event.provider === "google"
+  ));
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_auth_provider_blocked"
+    && item.details.provider === "google"
+    && item.details.source === "will-redirect"
+    && item.details.origin === "https://accounts.google.com"
+  ));
+
+  const ping = await driver.pingSession(session.id);
+  assert.equal(ping.unsupportedAuthProvider, "google");
+  await driver.close();
+});
+
+test("Google auth stays inside Orchestra and never opens the system browser", async () => {
   const { driver, externalUrls, profileDirectory } = harness();
   const events = [];
   await driver.start({ profileDirectory });
@@ -147,8 +213,8 @@ test("Google auth is opened in the normal browser instead of the embedded Electr
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login");
-  assert.equal(win.isVisible(), false);
-  assert.deepEqual(externalUrls, ["https://chatgpt.com/"]);
+  assert.equal(win.isVisible(), true);
+  assert.deepEqual(externalUrls, []);
   assert.ok(events.some((event) => event.type === "unsupported-auth-provider" && event.provider === "google"));
 
   const ping = await driver.pingSession(session.id);

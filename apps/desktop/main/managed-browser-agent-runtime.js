@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const Contracts = require("../../../platform/contracts.js");
+const { normalizeTraceContext, traceDetails } = require("./runtime-trace.js");
 
 const MANAGED_BROWSER_DRIVER_METHODS = Object.freeze([
   "start",
@@ -469,39 +470,54 @@ class ManagedBrowserAgentRuntime {
     }
   }
 
-  async sendPrompt(agentId, prompt) {
+  async sendPrompt(agentId, prompt, options = {}) {
     const agent = this.getAgent(agentId);
     const sessionId = this.sessionIdForAgent(agent);
     if (!sessionId) return { ok: false, reason: "agent_offline", agentId: String(agentId || "") };
     await this.ensureStarted();
     const startedAt = this.clock();
     const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
-    this.logger?.info?.("managed_browser_prompt_send_started", {
+    const trace = normalizeTraceContext(options?.trace || agent?.protocolContext, {
       agentId: agent.agentId,
-      sessionId,
-      promptBytes
+      sessionId
     });
+    this.logger?.info?.("managed_browser_prompt_send_started", traceDetails(trace, {
+      promptBytes
+    }));
     try {
-      const result = await this.driver.sendPrompt(sessionId, String(prompt || ""));
+      const result = await this.driver.sendPrompt(sessionId, String(prompt || ""), { trace });
       if (result?.ok) await this.updateHeartbeat(sessionId, { availability: "generating", generating: true }, result.url || agent.chatUrl || "");
-      this.logger?.info?.("managed_browser_prompt_send_completed", {
-        agentId: agent.agentId,
-        sessionId,
+      const completionDetails = traceDetails(trace, {
         promptBytes,
         ok: result?.ok !== false,
+        promptAccepted: result?.accepted === true || result?.ok === true,
+        promptConfirmed: result?.confirmed === true,
+        confirmationMethod: result?.method || null,
+        navigationReconciliation: ["navigation", "navigation-reconciled"].includes(String(result?.method || "")),
+        preloadTimeoutRecovery: result?.recoveredFrom === "agent_preload_timeout",
+        recoveredFrom: result?.recoveredFrom || null,
         reason: result?.reason || null,
         durationMs: Math.max(0, this.clock() - startedAt)
       });
-      return { ...(result || {}), agentId: agent.agentId };
+      if (result?.ok === false) this.logger?.warn?.("managed_browser_prompt_send_failed", completionDetails);
+      else this.logger?.info?.("managed_browser_prompt_send_completed", completionDetails);
+      return { ...(result || {}), agentId: agent.agentId, trace };
     } catch (error) {
-      this.logger?.error?.("managed_browser_prompt_send_failed", {
-        agentId: agent.agentId,
-        sessionId,
+      this.logger?.error?.("managed_browser_prompt_send_failed", traceDetails(trace, {
         promptBytes,
+        promptAccepted: false,
+        promptConfirmed: false,
         durationMs: Math.max(0, this.clock() - startedAt),
+        reason: "agent_unreachable",
         error
-      });
-      return { ok: false, reason: "agent_unreachable", message: String(error?.message || error), agentId: agent.agentId };
+      }));
+      return {
+        ok: false,
+        reason: "agent_unreachable",
+        message: String(error?.message || error),
+        agentId: agent.agentId,
+        trace
+      };
     }
   }
 

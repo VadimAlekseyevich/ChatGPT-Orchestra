@@ -10,7 +10,7 @@ const {
   resolveDesktopRuntimeMode
 } = require("../apps/desktop/main/desktop-runtime-mode.js");
 
-test("desktop runtime defaults to the managed-browser primary product path", () => {
+test("desktop runtime defaults to the all-in-app managed-browser product path", () => {
   assert.equal(resolveDesktopRuntimeMode([], {}), RUNTIME_MODES.MANAGED_BROWSER);
 });
 
@@ -20,7 +20,7 @@ test("legacy fake desktop shell is dev/test only and requires an explicit flag o
   assert.equal(resolveDesktopRuntimeMode(["--desktop-shell"], {}), RUNTIME_MODES.DESKTOP);
 });
 
-test("companion mode remains explicitly selectable as fallback", () => {
+test("companion mode remains an explicit compatibility runtime", () => {
   assert.equal(companionRequested(["--companion"], {}), true);
   assert.equal(companionRequested([], { ORCHESTRA_COMPANION: "1" }), true);
   assert.equal(resolveDesktopRuntimeMode(["--companion"], {}), RUNTIME_MODES.COMPANION);
