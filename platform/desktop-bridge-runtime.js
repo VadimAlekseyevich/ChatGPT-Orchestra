@@ -3,6 +3,7 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Contracts = root.PlatformContracts || (typeof require === "function" ? require("./contracts.js") : null);
+  const Lifecycle = root.AgentLifecycle || (typeof require === "function" ? require("./agent-lifecycle.js") : null);
   const Protocol = root.CompanionProtocol || (typeof require === "function" ? require("./companion-protocol.js") : null);
 
   function clone(value) {
@@ -12,10 +13,11 @@
   }
 
   class DesktopBridgeAgentRuntime {
-    constructor({ rpc, clock = () => Date.now() } = {}) {
+    constructor({ rpc, clock = () => Date.now(), readinessTtlMs = 30000 } = {}) {
       if (!rpc) throw new TypeError("desktop_bridge_rpc_required");
       this.rpc = rpc;
       this.clock = clock;
+      this.readinessTtlMs = Math.max(0, Number(readinessTtlMs) || 30000);
       this.runtimeStatus = "idle";
       this.updatedAt = 0;
       this.agents = new Map();
@@ -25,6 +27,10 @@
       this.lastBootstrapError = null;
       this.closed = false;
       this.hostHandlerDisposers = [];
+      this.agentEventListeners = new Set();
+      this.rpcEventDisposer = typeof this.rpc.onEvent === "function"
+        ? this.rpc.onEvent((name, payload) => this.handleRemoteAgentEvent(name, payload))
+        : null;
     }
 
     async bootstrap() {
@@ -79,7 +85,9 @@
       this.updatedAt = Number(snapshot.updatedAt) || this.clock();
       this.agents.clear();
       for (const [agentId, agent] of Object.entries(snapshot.agents || {})) {
-        this.agents.set(String(agentId), clone({ ...agent, agentId: String(agent.agentId || agentId) }));
+        const item = clone({ ...agent, agentId: String(agent.agentId || agentId) });
+        Lifecycle.initializeAgentLifecycle(item, { at: this.updatedAt });
+        this.agents.set(String(agentId), item);
       }
       return this.snapshot();
     }
@@ -87,9 +95,67 @@
     upsertAgent(agent) {
       if (!agent?.agentId) return null;
       const item = clone(agent);
+      Lifecycle.initializeAgentLifecycle(item, { at: this.clock() });
       this.agents.set(String(item.agentId), item);
       this.updatedAt = this.clock();
       return clone(item);
+    }
+
+    subscribeAgentEvents(listener) {
+      if (typeof listener !== "function") throw new TypeError("agent_event_listener_invalid");
+      this.agentEventListeners.add(listener);
+      return () => this.agentEventListeners.delete(listener);
+    }
+
+    emitAgentEvent(event) {
+      if (!event) return;
+      const safe = clone(event);
+      for (const listener of [...this.agentEventListeners]) {
+        try { listener(safe); } catch (_) {}
+      }
+    }
+
+    transitionCachedAgent(agentOrId, state, options = {}) {
+      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+      if (!agent) return null;
+      const result = Lifecycle.transitionAgentLifecycle(agent, state, { at: this.clock(), ...options });
+      if (result?.event) this.emitAgentEvent({ ...result.event, role: agent.role });
+      return result;
+    }
+
+    handleRemoteAgentEvent(name, payload = {}) {
+      if (!["agent-added", "agent-removed", "agent-lifecycle-changed", "agent-binding-changed"].includes(String(name || ""))) return;
+      const event = clone({ ...(payload || {}), type: String(name || payload?.type || "") });
+      const agentId = String(event.agentId || "");
+      if (event.type === "agent-removed") {
+        this.agents.delete(agentId);
+      } else if (event.type === "agent-lifecycle-changed") {
+        const agent = this.agents.get(agentId);
+        if (agent) {
+          agent.lifecycleState = Lifecycle.normalizeState(event.state);
+          agent.lifecycleReason = Lifecycle.normalizeReason(event.reason, agent.lifecycleState === Lifecycle.STATES.FAILED ? "runtime_failure" : "runtime_starting");
+          agent.lifecycleChangedAt = Number(event.at) || this.clock();
+          if (agent.lifecycleState === Lifecycle.STATES.READY) agent.readinessCheckedAt = agent.lifecycleChangedAt;
+          if (agent.lifecycleState === Lifecycle.STATES.READY) agent.status = "IDLE";
+          else if (agent.lifecycleState === Lifecycle.STATES.BUSY) agent.status = "BUSY";
+          else if (agent.lifecycleState === Lifecycle.STATES.FAILED) agent.status = "ERROR";
+          else if (agent.status !== "OFFLINE") agent.status = "ERROR";
+        }
+      }
+      this.updatedAt = this.clock();
+      this.emitAgentEvent(event);
+    }
+
+    markAllUnavailable(reason = "transport_disconnected") {
+      for (const agent of this.agents.values()) {
+        agent.status = "OFFLINE";
+        this.transitionCachedAgent(agent, Lifecycle.STATES.UNAVAILABLE, {
+          reason: Lifecycle.normalizeReason(reason, "transport_disconnected"),
+          legacyStatus: "OFFLINE",
+          details: { recoverable: true, source: "bridge_transport" }
+        });
+      }
+      this.updatedAt = this.clock();
     }
 
     snapshot() {
@@ -103,6 +169,7 @@
 
     listAgents() { return [...this.agents.values()].map(clone); }
     getAgent(agentId) { const agent = this.agents.get(String(agentId || "")); return agent ? clone(agent) : null; }
+    getAgentLifecycle(agentId) { return Lifecycle.lifecycleForAgent(this.agents.get(String(agentId || ""))); }
     getAgentBySessionId(sessionId) {
       const id = String(sessionId ?? "");
       const agent = [...this.agents.values()].find((item) => this.sessionIdForAgent(item) === id);
@@ -113,6 +180,21 @@
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
       return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
+    }
+
+    isAgentReady(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isReady(agent, { now: this.clock(), readinessTtlMs: this.readinessTtlMs });
+    }
+
+    isAgentBusy(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isBusy(agent);
+    }
+
+    isAgentAvailable(agentOrId) {
+      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
+      return this.isAgentConnected(agent) && Lifecycle.isAvailable(agent);
     }
 
     sessionIdForAgent(agentOrId) {
@@ -140,8 +222,23 @@
     }
 
     async remote(method, payload = {}) {
-      await this.ensureReady();
-      return this.rpc.request(`agent.${method}`, payload);
+      try {
+        await this.ensureReady();
+        return await this.rpc.request(`agent.${method}`, payload);
+      } catch (error) {
+        if (String(error?.message || error).includes("contract_version_mismatch")) {
+          for (const agent of this.agents.values()) {
+            this.transitionCachedAgent(agent, Lifecycle.STATES.FAILED, {
+              reason: "runtime_incompatible",
+              legacyStatus: "ERROR",
+              details: { recoverable: false, terminal: true, source: "bridge_handshake" }
+            });
+          }
+        } else {
+          this.markAllUnavailable("transport_disconnected");
+        }
+        throw error;
+      }
     }
 
     async setRuntimeStatus(status) {
@@ -160,9 +257,16 @@
     async createSession(options = {}) { return this.remote("createSession", options); }
     async navigateSession(sessionId, url) { return this.remote("navigateSession", { sessionId, url }); }
     async removeSession(sessionId) {
-      const result = await this.remote("removeSession", { sessionId });
       const agent = this.getAgentBySessionId(sessionId);
-      if (agent) this.upsertAgent({ ...agent, status: "OFFLINE", sessionId: null, tabId: null });
+      const result = await this.remote("removeSession", { sessionId });
+      if (agent) {
+        const cached = this.agents.get(agent.agentId);
+        cached.sessionId = null;
+        cached.tabId = null;
+        cached.status = "OFFLINE";
+        this.transitionCachedAgent(cached, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
+        this.emitAgentEvent({ type: "agent-binding-changed", agentId: cached.agentId, binding: null, at: this.clock(), role: cached.role });
+      }
       return result;
     }
     async bindAgentToSession(agentId, session, options = {}) {
@@ -185,7 +289,19 @@
       if (result?.agent) this.upsertAgent(result.agent);
       return result;
     }
-    async sendPrompt(agentId, prompt) { return this.remote("sendPrompt", { agentId, prompt: String(prompt || "") }); }
+    async sendPrompt(agentId, prompt) {
+      let agent = this.getAgent(agentId);
+      if (!this.isAgentReady(agent)) {
+        const refreshed = await this.pingAgent(agentId);
+        agent = refreshed?.agent || this.getAgent(agentId);
+        if (!refreshed?.ok || !this.isAgentReady(agent)) return { ok: false, reason: "agent_not_ready", agentId, lifecycle: this.getAgentLifecycle(agentId) };
+      }
+      const result = await this.remote("sendPrompt", { agentId, prompt: String(prompt || "") });
+      if (result?.ok !== false && (result?.accepted === true || result?.ok === true)) {
+        this.transitionCachedAgent(String(agentId || ""), Lifecycle.STATES.BUSY, { reason: "prompt_active", legacyStatus: "BUSY" });
+      }
+      return result;
+    }
     async stopAgent(agentId) { return this.remote("stopAgent", { agentId }); }
 
     bindHostHandlers({ onRuntimeMessage, onApiMessage, onSessionRemoved, onSessionUpdated } = {}) {
@@ -212,6 +328,7 @@
     async close() {
       this.closed = true;
       this.unbindHostHandlers();
+      this.markAllUnavailable("transport_disconnected");
       await this.rpc.stop();
       this.handshake = null;
       this.readyPromise = null;
