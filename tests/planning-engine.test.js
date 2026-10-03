@@ -31,12 +31,14 @@ class FakeEventBus {
 }
 
 function fakeRegistry() {
-  const lead = { agentId: "A1", role: "lead", tabId: 7, status: "IDLE" };
+  const lead = { agentId: "A1", role: "lead", tabId: 7, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
   return {
     lead,
     contexts: [],
     listAgents() { return [lead]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async setProtocolContext(agentId, context) {
       assert.equal(agentId, "A1");
       lead.protocolContext = { ...context };
@@ -288,13 +290,15 @@ test("rejected planning artifact stays retryable and restarts the same stage wit
 
 test("Start Project refuses stale IDLE Lead when a fresh readiness check reports no composer", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-stale" });
-  const lead = { agentId: "A-stale", role: "lead", tabId: 9, status: "IDLE", chatState: null };
+  const lead = { agentId: "A-stale", role: "lead", tabId: 9, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, chatState: null };
   const registry = {
     listAgents() { return [{ ...lead, chatState: lead.chatState ? { ...lead.chatState } : null }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     async pingAgent(agentId) {
       assert.equal(agentId, "A-stale");
       lead.status = "ERROR";
+      lead.lifecycleState = "UNAVAILABLE";
+      lead.lifecycleReason = "composer_unavailable";
       lead.chatState = { availability: "unavailable", generating: false, composerOccupied: null };
       lead.lastError = "unavailable";
       return {
@@ -340,7 +344,7 @@ test("planning retry preserves the persisted failed run until Lead readiness ret
   await store.beginStage("P-retry-ready", { stage: "DISCOVERY", runId: "planning-discovery-existing" });
   await store.fail("P-retry-ready", "lead_prompt_failed", { reason: "composer_unavailable" }, "PLANNING");
 
-  const lead = { agentId: "A-retry", role: "lead", tabId: 10, status: "IDLE" };
+  const lead = { agentId: "A-retry", role: "lead", tabId: 10, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
   const registry = {
     listAgents() { return [{ ...lead }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
@@ -349,7 +353,7 @@ test("planning retry preserves the persisted failed run until Lead readiness ret
         ok: true,
         availability: "unavailable",
         generating: false,
-        agent: { ...lead, status: "ERROR", chatState: { availability: "unavailable", generating: false } }
+        agent: { ...lead, status: "ERROR", lifecycleState: "UNAVAILABLE", lifecycleReason: "page_unreachable", chatState: { availability: "unavailable", generating: false } }
       };
     },
     async setProtocolContext() { throw new Error("must_not_rebind_while_unready"); },
@@ -427,7 +431,7 @@ test("persisted DONE advances after restart even when Lead registers after Plann
   assert.ok(project.stageHistory.some((entry) => entry.runId === "planning-discovery-durable" && entry.status === "completed"));
   assert.equal(prompts.length, 0);
 
-  lead = { agentId: "A-late", role: "lead", status: "IDLE", tabId: null };
+  lead = { agentId: "A-late", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, tabId: null };
   const resumed = await engine.resumeCurrentStage({ reason: "lead_registered_after_boot" });
   assert.equal(resumed.ok, true);
   project = engine.projectStore.getActiveProject();
