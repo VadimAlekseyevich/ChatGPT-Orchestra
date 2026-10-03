@@ -4,6 +4,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
+const STRICT_CORE_FILES = [
+  "background/orchestrator.js",
+  "background/orchestrator-api.js",
+  "background/event-bus.js",
+  "background/planning-engine.js",
+  "background/scheduler-engine.js",
+  "background/review-engine.js",
+  "background/integration-engine.js",
+  "background/recovery-controller.js",
+  "background/task-control-service.js",
+  "platform/contracts.js",
+  "platform/agent-lifecycle.js",
+  "platform/fake-runtime.js"
+];
+
 const PORTABLE_BOUNDARY_FILES = [
   "background/orchestrator.js",
   "background/orchestrator-api.js",
@@ -24,6 +39,24 @@ const PORTABLE_BOUNDARY_FILES = [
   "dashboard/dashboard-app.js",
   "dashboard/fake-transport.js"
 ];
+
+test("Orchestra Core source has no browser/runtime-handle behavior", () => {
+  const forbidden = [
+    /\b(?:tabId|legacyTabId|sessionId|runtimeSource|composerOccupied|getAgentByTabId|sessionIdForAgent)\b/,
+    /\b(?:BrowserWindow|WebContents|MutationObserver|querySelector)\b/,
+    /(?:content\/selectors|electron-managed-browser|electron-preload|runtime-agent-pool|runtime-control-contract)/
+  ];
+  for (const relative of STRICT_CORE_FILES) {
+    const source = fs.readFileSync(path.join(ROOT, relative), "utf8");
+    for (const pattern of forbidden) {
+      assert.equal(pattern.test(source), false, `${relative} crosses runtime boundary via ${pattern}`);
+    }
+    assert.equal(/\bchrome\s*\./.test(source), false, `${relative} references chrome.* directly`);
+    assert.equal(source.includes("globalThis.chrome"), false, `${relative} references globalThis.chrome directly`);
+    assert.equal(/\bdocument\s*\./.test(source), false, `${relative} references document.* directly`);
+    assert.equal(/\bwindow\s*\./.test(source), false, `${relative} references window.* directly`);
+  }
+});
 
 test("portable orchestration and Dashboard boundary has no direct Chrome API dependency", () => {
   for (const relative of PORTABLE_BOUNDARY_FILES) {
