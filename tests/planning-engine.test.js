@@ -294,6 +294,8 @@ test("Start Project refuses stale IDLE Lead when a fresh readiness check reports
   const registry = {
     listAgents() { return [{ ...lead, chatState: lead.chatState ? { ...lead.chatState } : null }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async pingAgent(agentId) {
       assert.equal(agentId, "A-stale");
       lead.status = "ERROR";
@@ -348,6 +350,8 @@ test("planning retry preserves the persisted failed run until Lead readiness ret
   const registry = {
     listAgents() { return [{ ...lead }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async pingAgent() {
       return {
         ok: true,
@@ -409,6 +413,8 @@ test("persisted DONE advances after restart even when Lead registers after Plann
   const registry = {
     listAgents() { return lead ? [{ ...lead }] : []; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
+    isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
+    getAgentLifecycle(agentId) { return lead && agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
     async setProtocolContext(agentId, context) {
       assert.equal(agentId, "A-late");
       lead.protocolContext = { ...context };
