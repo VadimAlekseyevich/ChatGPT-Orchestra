@@ -9,6 +9,7 @@ importScripts(
   "../prompts/integration-prompts.js",
   "../context/context-packets.js",
   "../platform/contracts.js",
+  "../platform/agent-lifecycle.js",
   "../platform/extension-runtime.js",
   "../platform/companion-protocol.js",
   "../platform/companion-rpc.js",
