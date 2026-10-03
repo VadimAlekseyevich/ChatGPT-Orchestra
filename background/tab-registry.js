@@ -3,6 +3,7 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Lifecycle = root.AgentLifecycle || (typeof require === "function" ? require("../platform/agent-lifecycle.js") : null);
+  const RuntimeHeartbeat = root.RuntimeHeartbeat || (typeof require === "function" ? require("../platform/runtime-heartbeat.js") : null);
   const STORAGE_KEY = "orchestra.tabRegistry.v1";
   const SCHEMA_VERSION = 1;
 
@@ -23,11 +24,11 @@
   }
 
   function deriveAgentStatus(payload = {}) {
-    return Lifecycle.normalizeHeartbeat(payload, { hasBinding: true }).legacyStatus;
+    return RuntimeHeartbeat.normalizeRuntimeHeartbeat(payload, { bindingPresent: true }).legacyStatus;
   }
 
   function deriveAgentLifecycle(payload = {}, { hasBinding = true } = {}) {
-    return Lifecycle.normalizeHeartbeat(payload, { hasBinding });
+    return RuntimeHeartbeat.normalizeRuntimeHeartbeat(payload, { bindingPresent: hasBinding });
   }
 
   function normalizeProtocolContext(context = {}) {
