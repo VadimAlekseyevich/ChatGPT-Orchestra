@@ -9,10 +9,6 @@
     "load","snapshot","listAgents","getAgent","getAgentLifecycle","isAgentConnected","isAgentReady","isAgentBusy","isAgentAvailable","subscribeAgentEvents","setRuntimeStatus","setProtocolContext","clearProtocolContext","removeAgent","pingAgent","sendPrompt","stopAgent"
   ]);
 
-  // Host adapter contract. Browser-backed runtimes may implement this, but Orchestra Core must not depend on it.
-  const RUNTIME_CONTROL_METHODS = Object.freeze([
-    "getAgentBySessionId","getActiveSession","getSession","createSession","navigateSession","removeSession","bindAgentToSession","createAgentForSession","markSessionOffline","updateSessionNavigation","updateHeartbeat","normalizeSender"
-  ]);
 
   const STATE_STORE_METHODS = Object.freeze(["get", "set"]);
   const TRANSACTIONAL_STATE_STORE_METHODS = Object.freeze(["get", "set", "remove", "clear", "transaction"]);
@@ -37,7 +33,6 @@
     return value;
   }
   function assertAgentRuntime(value) { return assertContract("agent_runtime", value, AGENT_RUNTIME_METHODS); }
-  function assertRuntimeControl(value) { return assertContract("runtime_control", value, RUNTIME_CONTROL_METHODS); }
   function assertStateStore(value) { return assertContract("state_store", value, STATE_STORE_METHODS); }
   function assertTransactionalStateStore(value) { return assertContract("transactional_state_store", value, TRANSACTIONAL_STATE_STORE_METHODS); }
   function assertTimerRuntime(value) { return assertContract("timer_runtime", value, TIMER_RUNTIME_METHODS); }
@@ -56,7 +51,6 @@
   root.PlatformContracts = {
     CONTRACT_VERSION,
     AGENT_RUNTIME_METHODS,
-    RUNTIME_CONTROL_METHODS,
     STATE_STORE_METHODS,
     TRANSACTIONAL_STATE_STORE_METHODS,
     TIMER_RUNTIME_METHODS,
@@ -65,7 +59,6 @@
     API_COMMANDS,
     API_QUERIES,
     assertAgentRuntime,
-    assertRuntimeControl,
     assertStateStore,
     assertTransactionalStateStore,
     assertTimerRuntime,
