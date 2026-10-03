@@ -238,6 +238,10 @@
           connected: Boolean(this.registry?.isAgentConnected?.(agent)),
           ready: Boolean(this.registry?.isAgentReady?.(agent)),
           available: Boolean(this.registry?.isAgentAvailable?.(agent)),
+          runtimeKind: String(agent.runtimeKind || "unknown"),
+          bindingPresent: agent.bindingPresent === null || agent.bindingPresent === undefined
+            ? Boolean(this.registry?.isAgentConnected?.(agent))
+            : Boolean(agent.bindingPresent),
           lastSeenAt: number(agent.lastSeenAt),
           lastError: agent.lastError ? text(agent.lastError, 1000) : null,
           lifecycleDetails: sanitize(lifecycle.lifecycleDetails ? clone(lifecycle.lifecycleDetails) : null),
