@@ -3,6 +3,7 @@
 const path = require("node:path");
 const Contracts = require("../../../platform/contracts.js");
 const Lifecycle = require("../../../platform/agent-lifecycle.js");
+const RuntimeHeartbeat = require("../../../platform/runtime-heartbeat.js");
 const { normalizeTraceContext, traceDetails } = require("./runtime-trace.js");
 
 const MANAGED_BROWSER_DRIVER_METHODS = Object.freeze([
@@ -202,12 +203,13 @@ class ManagedBrowserAgentRuntime {
     const byAgent = requestedAgentId ? this.agents.get(requestedAgentId) : null;
     const bySession = sender?.sessionId !== undefined && sender?.sessionId !== null ? this.getAgentBySessionId(sender.sessionId) : null;
     const agent = byAgent || bySession;
-    return Contracts.normalizeRuntimeSender({
+    return {
       kind: agent ? "agent-session" : "desktop-browser-ui",
       sessionId: agent ? this.sessionIdForAgent(agent) : sender?.sessionId || null,
       agentId: agent?.agentId || requestedAgentId,
-      url: agent?.chatUrl || sender?.url || ""
-    });
+      url: agent?.chatUrl || sender?.url || "",
+      legacyTabId: null
+    };
   }
 
   bindHostHandlers({ onRuntimeMessage, onApiMessage, onSessionRemoved, onSessionUpdated } = {}) {
@@ -466,7 +468,7 @@ class ManagedBrowserAgentRuntime {
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
     const availability = String(payload.availability || "unknown");
-    const normalized = Lifecycle.normalizeHeartbeat(payload, { hasBinding: Boolean(this.sessionIdForAgent(mutable)) });
+    const normalized = RuntimeHeartbeat.normalizeRuntimeHeartbeat(payload, { bindingPresent: Boolean(this.sessionIdForAgent(mutable)) });
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
     mutable.lastError = normalized.state === Lifecycle.STATES.UNAVAILABLE || normalized.state === Lifecycle.STATES.FAILED
