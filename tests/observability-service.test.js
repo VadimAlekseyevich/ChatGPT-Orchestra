@@ -33,8 +33,8 @@ function fixture() {
   const projectStore = { getActiveProject: () => ({ projectId: "P1", status: "NEEDS_USER", stage: "EXECUTION_BLOCKED", initialGoal: "goal", repository: { url: "https://github.com/a/b", fullName: "a/b" }, updatedAt: now, execution: { tabId: 55 } }) };
   const registry = {
     listAgents: () => [
-      { agentId: "lead", role: "lead", label: "Lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", lifecycleChangedAt: now, readinessCheckedAt: now, tabId: 42, sessionId: "42", lastSeenAt: now, protocolContext: { projectId: "P1", taskId: "planning", runId: "x" } },
-      { agentId: "A2", role: "worker", label: "Worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "session_missing", lifecycleChangedAt: now - 500, tabId: 43, sessionId: "43", lastSeenAt: now - 500 }
+      { agentId: "lead", role: "lead", label: "Lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", lifecycleChangedAt: now, readinessCheckedAt: now, runtimeKind: "fake", bindingPresent: true, tabId: 42, sessionId: "42", lastSeenAt: now, protocolContext: { projectId: "P1", taskId: "planning", runId: "x" } },
+      { agentId: "A2", role: "worker", label: "Worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_unavailable", lifecycleChangedAt: now - 500, runtimeKind: "managed-browser", bindingPresent: false, tabId: 43, sessionId: "43", lastSeenAt: now - 500 }
     ],
     isAgentConnected: (agent) => agent.lifecycleState !== "UNAVAILABLE" && agent.lifecycleState !== "FAILED",
     isAgentReady: (agent) => agent.lifecycleState === "READY",
@@ -68,6 +68,10 @@ test("dashboard exposes project/task/review/integration/agent observability", ()
   assert.equal(dashboard.agents.length, 2);
   assert.equal(dashboard.agents.find((agent) => agent.agentId === "lead").lifecycleState, "READY");
   assert.equal(dashboard.agents.find((agent) => agent.agentId === "A2").lifecycleState, "UNAVAILABLE");
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "lead").runtimeKind, "fake");
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "lead").bindingPresent, true);
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "A2").runtimeKind, "managed-browser");
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "A2").bindingPresent, false);
   assert.equal(dashboard.metrics.tasks.total, 2);
   assert.equal(dashboard.metrics.agents.ready, 1);
   assert.equal(dashboard.metrics.agents.unavailable, 1);
