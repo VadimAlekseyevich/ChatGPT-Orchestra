@@ -144,7 +144,8 @@
       this.transition(agent, target, {
         reason: target === Lifecycle.STATES.READY ? "prompt_ready" : target === Lifecycle.STATES.BUSY ? "prompt_active" : "runtime_starting",
         legacyStatus: agent.status,
-        readinessCheckedAt: target === Lifecycle.STATES.READY ? agent.updatedAt : null
+        readinessCheckedAt: target === Lifecycle.STATES.READY ? agent.updatedAt : null,
+        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED
       });
       await this.persist();
       this.emitAgentEvent({
