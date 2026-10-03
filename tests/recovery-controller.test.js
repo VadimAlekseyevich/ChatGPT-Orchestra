@@ -11,7 +11,7 @@ function fakeStorage() {
 function fixtures() {
   const activeRuns = [{ runId: "R1", taskId: "T1", agentId: "A1" }];
   const activeReviews = [];
-  const agents = new Map([["A1", { agentId: "A1", role: "worker", status: "BUSY", lifecycleState: "BUSY", lifecycleReason: "prompt_active", tabId: 1, protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" } }]]);
+  const agents = new Map([["A1", { agentId: "A1", role: "worker", status: "BUSY", lifecycleState: "BUSY", lifecycleReason: "prompt_active", protocolContext: { projectId: "P1", taskId: "T1", runId: "R1" } }]]);
   const projectStore = {
     summary() { return { projectId: "P1", status: "RUNNING", stage: "EXECUTION" }; },
     getActiveProject() { return { projectId: "P1", status: "RUNNING" }; }
@@ -124,6 +124,17 @@ test("Stop Now blocks dispatch, stops agents and persists STOPPED snapshot", asy
   assert.equal(controller.canDispatchNewPrompts(), false);
 });
 
+test("Recovery snapshots contain only logical agent identity and lifecycle state", async () => {
+  const fx = fixtures();
+  const { controller } = controllerFrom(fx);
+  const snapshot = controller.buildSnapshot("issue72");
+  const serialized = JSON.stringify(snapshot);
+  assert.equal(serialized.includes("tabId"), false);
+  assert.equal(serialized.includes("sessionId"), false);
+  assert.equal(snapshot.agents[0].agentId, "A1");
+  assert.equal(snapshot.agents[0].lifecycleState, "BUSY");
+});
+
 test("Resume reconciles before opening dispatch gate", async () => {
   const fx = fixtures();
   fx.activeRuns.splice(0);
@@ -132,7 +143,7 @@ test("Resume reconciles before opening dispatch gate", async () => {
   await store.attachProject("P1", { status: "STOPPED" });
   const order = [];
   controller.setActions({
-    reconcileTabs: async () => { order.push("tabs"); },
+    reconcileRuntime: async () => { order.push("runtime"); },
     createWorkers: async () => { order.push("workers"); return { ok: true }; }
   });
   fx.schedulerEngine.reconcileForResume = async () => { order.push("scheduler"); return { ok: true, issues: [] }; };
@@ -147,23 +158,23 @@ test("Resume reconciles before opening dispatch gate", async () => {
   assert.equal(result.ok, true);
   assert.equal(store.summary().status, "RUNNING");
   assert.equal(controller.canDispatchNewPrompts(), true);
-  assert.deepEqual(order.slice(0, 5), ["tabs", "workers", "scheduler", "reviews", "integration"]);
+  assert.deepEqual(order.slice(0, 5), ["runtime", "workers", "scheduler", "reviews", "integration"]);
   assert.ok(order.indexOf("scheduler-kick") > order.indexOf("integration"));
 });
 
-test("Resume removes offline worker identities before creating replacement tabs", async () => {
+test("Resume removes unavailable worker identities before creating replacement runtime agents", async () => {
   const fx = fixtures();
   fx.activeRuns.splice(0);
-  fx.agents.set("A-old", { agentId: "A-old", role: "worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "session_missing", tabId: null, protocolContext: null });
+  fx.agents.set("A-old", { agentId: "A-old", role: "worker", status: "OFFLINE", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_unavailable", protocolContext: null });
   const { store, controller } = controllerFrom(fx);
   await store.load();
   await store.attachProject("P1", { status: "STOPPED" });
   let observedOldIdentity = null;
   controller.setActions({
-    reconcileTabs: async () => {},
+    reconcileRuntime: async () => {},
     createWorkers: async () => {
       observedOldIdentity = fx.agents.has("A-old");
-      fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_starting", tabId: 20, protocolContext: null });
+      fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_starting", protocolContext: null });
       return { ok: true, created: ["A-new"] };
     }
   });
