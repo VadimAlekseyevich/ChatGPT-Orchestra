@@ -161,7 +161,7 @@
       ]);
       if (adapterOwnedTypes.has(type)) return { ok: false, reason: "runtime_adapter_required" };
 
-      if (context.agentId) return { ok: false, reason: "orchestrator_command_forbidden_from_agent" };
+      if (context.agentId || context.bindingPresent === true) return { ok: false, reason: "orchestrator_command_forbidden_from_agent" };
 
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_STATE) return { ok: true, state: this.getPublicState() };
       if (type === root.MESSAGE_TYPES.ORCHESTRATOR_GET_EVENTS) return { ok: true, ...(this.eventBus?.recent?.(payload.limit) || { events: [], rejections: [] }) };
