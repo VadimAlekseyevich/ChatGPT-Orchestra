@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const Contracts = require("../platform/contracts.js");
+const RuntimeControl = require("../platform/runtime-control-contract.js");
 const { ExtensionAgentRuntime } = require("../platform/extension-runtime.js");
 const { MemoryStateStore, FakeAgentRuntime, DeterministicTimerRuntime } = require("../platform/fake-runtime.js");
 
@@ -44,9 +45,10 @@ test("FakeAgentRuntime satisfies AgentRuntime contract without Chrome globals", 
 
 test("runtime connectivity is distinct from agent health", () => {
   const fakeRuntime = new FakeAgentRuntime({
-    agents: [{ agentId: "worker-error", role: "worker", status: "ERROR", sessionId: "session-error" }]
+    agents: [{ agentId: "worker-error", role: "worker", status: "ERROR", bindingPresent: true }]
   });
   assert.equal(fakeRuntime.isAgentConnected("worker-error"), true);
+  fakeRuntime.agents.get("worker-error").bindingPresent = false;
   fakeRuntime.agents.get("worker-error").status = "OFFLINE";
   assert.equal(fakeRuntime.isAgentConnected("worker-error"), false);
 
@@ -60,6 +62,15 @@ test("runtime connectivity is distinct from agent health", () => {
   });
   assert.equal(extensionRuntime.isAgentConnected("worker-error"), true);
   assert.equal(extensionRuntime.isAgentConnected("worker-offline"), false);
+});
+
+test("portable AgentRuntime contract excludes browser runtime control", () => {
+  const fakeRuntime = new FakeAgentRuntime();
+  Contracts.assertAgentRuntime(fakeRuntime);
+  assert.throws(() => RuntimeControl.assertRuntimeControl(fakeRuntime), /runtime_control_contract_missing/);
+  for (const method of ["getSession", "createSession", "normalizeSender"]) {
+    assert.equal(Contracts.AGENT_RUNTIME_METHODS.includes(method), false, method);
+  }
 });
 
 test("DeterministicTimerRuntime satisfies TimerRuntime and fires only on demand", async () => {
