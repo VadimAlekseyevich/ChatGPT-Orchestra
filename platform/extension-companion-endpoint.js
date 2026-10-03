@@ -3,6 +3,7 @@
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
   const Contracts = root.PlatformContracts || (typeof require === "function" ? require("./contracts.js") : null);
+  const RuntimeControl = root.RuntimeControlContract || (typeof require === "function" ? require("./runtime-control-contract.js") : null);
   const Protocol = root.CompanionProtocol || (typeof require === "function" ? require("./companion-protocol.js") : null);
 
   class ExtensionCompanionEndpoint {
@@ -10,6 +11,7 @@
       if (!rpc) throw new TypeError("extension_companion_rpc_required");
       this.rpc = rpc;
       this.agentRuntime = Contracts.assertAgentRuntime(agentRuntime);
+      RuntimeControl.assertRuntimeControl(this.agentRuntime);
       this.disposers = [];
       this.agentEventDisposer = null;
       this.started = false;
