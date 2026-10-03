@@ -66,9 +66,13 @@ test("dashboard exposes project/task/review/integration/agent observability", ()
   assert.equal(dashboard.reviews.items[0].status, "APPROVED");
   assert.equal(dashboard.integration.summary.status, "IDLE");
   assert.equal(dashboard.agents.length, 2);
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "lead").lifecycleState, "READY");
+  assert.equal(dashboard.agents.find((agent) => agent.agentId === "A2").lifecycleState, "UNAVAILABLE");
   assert.equal(dashboard.metrics.tasks.total, 2);
+  assert.equal(dashboard.metrics.agents.ready, 1);
+  assert.equal(dashboard.metrics.agents.unavailable, 1);
   assert.ok(dashboard.warnings.some((item) => item.code === "blocked"));
-  assert.ok(dashboard.warnings.some((item) => item.code === "agent_offline"));
+  assert.ok(dashboard.warnings.some((item) => item.code === "agent_unavailable"));
 });
 
 test("dashboard and debug bundle never expose browser runtime identifiers", () => {
