@@ -40,6 +40,9 @@ test("recovery compatibility view reports live direct agents without leaking Bro
   const registry = new ManagedBrowserRecoveryRegistry(runtime);
 
   assert.equal(runtime.getAgent(agent.agentId).tabId, null);
+  assert.equal(registry.isAgentReady(agent.agentId), true);
+  assert.equal(registry.isAgentAvailable(agent.agentId), true);
+  assert.equal(registry.getAgentLifecycle(agent.agentId).lifecycleState, "READY");
   const recoveryAgent = registry.getAgent(agent.agentId);
   assert.equal(Number.isInteger(recoveryAgent.tabId), true);
   assert.equal(recoveryAgent.sessionId, session.id);
@@ -56,6 +59,8 @@ test("recovery preserves offline logical worker so createWorkers rebinds a fresh
   await runtime.markSessionOffline(firstSession.id, "render_process_gone");
 
   assert.equal(registry.getAgent(worker.agentId).tabId, null);
+  assert.equal(registry.isAgentAvailable(worker.agentId), false);
+  assert.equal(registry.getAgentLifecycle(worker.agentId).lifecycleState, "UNAVAILABLE");
   const removed = await registry.removeAgent(worker.agentId);
   assert.equal(removed, true);
   assert.ok(runtime.getAgent(worker.agentId), "logical direct-browser worker must survive recovery cleanup");
