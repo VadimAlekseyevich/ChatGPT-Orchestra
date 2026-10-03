@@ -131,7 +131,9 @@
     }
 
     async handleContentMessage(message, sender) {
-      const context = this.runtime.normalizeSender(sender || {});
+      const context = sender?.sessionId !== null && sender?.sessionId !== undefined
+        ? sender
+        : this.runtime.normalizeSender(sender || {});
       if (!context?.sessionId) return { ok: false, reason: "missing_runtime_binding" };
       const agent = context.agentId
         ? this.runtime.getAgent(context.agentId)
