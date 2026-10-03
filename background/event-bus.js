@@ -6,7 +6,7 @@
     || (typeof require === "function" ? require("../protocol/orchestra-protocol.js") : null);
   const StoreModule = typeof require === "function" ? require("./event-store.js") : null;
   const eventSignature = root.eventSignature || StoreModule?.eventSignature;
-  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "sessionId", "dispatchKind", "startedAt"];
+  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "dispatchKind", "startedAt"];
 
   function traceContext(value = null, fallback = {}) {
     const source = value?.trace && typeof value.trace === "object" ? value.trace : (value && typeof value === "object" ? value : {});
@@ -96,23 +96,21 @@
     }
 
     normalizeSender(sender = {}) {
-      if (sender?.agentId || sender?.sessionId || sender?.kind) {
-        return {
-          kind: String(sender.kind || "agent-session"),
-          sessionId: sender.sessionId === null || sender.sessionId === undefined ? null : String(sender.sessionId),
-          agentId: sender.agentId ? String(sender.agentId) : null,
-          url: String(sender.url || ""),
-          legacyTabId: Number.isInteger(sender.legacyTabId) ? sender.legacyTabId : null
-        };
-      }
-      const tabId = sender?.tab?.id;
-      const agent = Number.isInteger(tabId) ? this.registry?.getAgentByTabId?.(tabId) : null;
       return {
-        kind: Number.isInteger(tabId) ? "legacy-extension-tab" : "unknown",
-        sessionId: Number.isInteger(tabId) ? String(tabId) : null,
-        agentId: agent?.agentId || null,
-        url: String(sender?.tab?.url || agent?.chatUrl || ""),
-        legacyTabId: Number.isInteger(tabId) ? tabId : null
+        runtimeKind: String(sender.runtimeKind || sender.kind || "unknown"),
+        agentId: sender.agentId ? String(sender.agentId) : null,
+        bindingPresent: sender.bindingPresent === null || sender.bindingPresent === undefined
+          ? null
+          : Boolean(sender.bindingPresent)
+      };
+    }
+
+    runtimeDiagnostic(context = {}) {
+      return {
+        runtimeKind: String(context.runtimeKind || "unknown"),
+        bindingPresent: context.bindingPresent === null || context.bindingPresent === undefined
+          ? null
+          : Boolean(context.bindingPresent)
       };
     }
 
@@ -122,14 +120,15 @@
         projectId: event?.projectId,
         taskId: event?.taskId,
         runId: event?.runId,
-        agentId: event?.agentId || context.agentId,
-        sessionId: context.sessionId
+        agentId: event?.agentId || context.agentId
       });
       await this.store.reject(reason, {
         event,
-        tabId: context.legacyTabId,
-        runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
-        details: { ...(details || {}), trace: normalizedTrace }
+        details: {
+          ...(details || {}),
+          trace: normalizedTrace,
+          runtime: this.runtimeDiagnostic(context)
+        }
       });
       this.logger?.warn?.("orchestra_event_rejected", traced(normalizedTrace, {
         eventId: event?.eventId || null,
@@ -155,13 +154,10 @@
 
     recordFromStored(stored) {
       if (!stored?.event) return null;
-      const context = stored.runtimeSource || stored.source?.runtime || {};
       const agent = stored.event.agentId ? this.registry?.getAgent?.(stored.event.agentId) : null;
       return {
         cursor: stored.cursor,
         route: stored.route || Protocol.routeForEvent(stored.event.event),
-        tabId: Number.isInteger(stored.tabId) ? stored.tabId : null,
-        runtimeSource: context,
         source: stored.source || {},
         agent,
         event: stored.event
@@ -173,8 +169,7 @@
         projectId: record?.event?.projectId,
         taskId: record?.event?.taskId,
         runId: record?.event?.runId,
-        agentId: record?.event?.agentId || record?.runtimeSource?.agentId,
-        sessionId: record?.runtimeSource?.sessionId
+        agentId: record?.event?.agentId
       });
     }
 
@@ -283,7 +278,7 @@
       const event = validation.event;
       const context = this.normalizeSender(sender || {});
       if (!context.agentId) {
-        return this.reject(context.sessionId ? "unregistered_sender" : "missing_sender_identity", {
+        return this.reject("missing_sender_identity", {
           event,
           sender: context,
           trace: sourceTrace
@@ -296,8 +291,7 @@
         projectId: event.projectId,
         taskId: event.taskId,
         runId: event.runId,
-        agentId: event.agentId,
-        sessionId: context.sessionId
+        agentId: event.agentId
       });
       if (!agent) return this.reject("unregistered_sender", { event, sender: context, trace });
       if (event.agentId !== agent.agentId) {
@@ -383,12 +377,9 @@
         });
       }
 
-      const runtimeSource = { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId };
       const accepted = await this.store.accept(event, {
         route,
-        tabId: context.legacyTabId,
-        runtimeSource,
-        source: { ...source, trace, runtime: runtimeSource }
+        source: { ...source, trace, runtime: this.runtimeDiagnostic(context) }
       });
       this.logger?.info?.("orchestra_event_accepted", traced(trace, {
         eventId: event.eventId,
@@ -400,8 +391,6 @@
       const record = {
         cursor: accepted.cursor,
         route,
-        tabId: context.legacyTabId,
-        runtimeSource,
         source: accepted.source,
         agent,
         event
@@ -419,26 +408,22 @@
 
     async handleProtocolError(payload, sender) {
       const context = this.normalizeSender(sender || {});
-      if (!context.agentId) return context.sessionId
-        ? { ok: true, ignored: true, reason: "unregistered_sender" }
-        : { ok: false, reason: "missing_sender_identity" };
+      if (!context.agentId) return { ok: false, reason: "missing_sender_identity" };
       const agent = this.registry.getAgent(context.agentId);
       if (!agent) return { ok: true, ignored: true, reason: "unregistered_sender" };
 
       const trace = traceContext(payload?.trace || agent.protocolContext, {
-        agentId: agent.agentId,
-        sessionId: context.sessionId
+        agentId: agent.agentId
       });
       const reason = `content_protocol_error:${String(payload?.reason || "unknown")}`;
       await this.store.reject(reason, {
-        tabId: context.legacyTabId,
-        runtimeSource: { kind: context.kind, sessionId: context.sessionId, agentId: context.agentId },
         details: {
           agentId: agent.agentId,
           field: payload?.field || null,
           receivedMetadata: payload?.receivedMetadata || null,
           lastLineMetadata: payload?.lastLineMetadata || null,
           responseFingerprint: payload?.responseFingerprint || "",
+          runtime: this.runtimeDiagnostic(context),
           trace
         }
       });
