@@ -14,20 +14,14 @@
     "prompt_ready",
     "prompt_active",
     "runtime_starting",
-    "session_missing",
+    "runtime_unavailable",
+    "runtime_not_ready",
     "transport_disconnected",
     "login_required",
-    "composer_unavailable",
-    "page_unreachable",
-    "navigation_in_progress",
-    "heartbeat_stale",
-    "browser_crashed",
-    "session_replaced",
     "runtime_incompatible",
     "runtime_failure",
     "recovery_required",
     "prompt_rejected",
-    "session_removed",
     "recovered"
   ]);
 
