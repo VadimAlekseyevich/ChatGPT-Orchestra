@@ -33,10 +33,14 @@ test("DesktopBridgeAgentRuntime controls an extension-side AgentRuntime through 
     const ping = await runtime.pingAgent(worker.agentId);
     assert.equal(ping.ok, true);
     assert.equal(runtime.getAgent(worker.agentId).status, "IDLE");
+    assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "READY");
+    assert.equal(runtime.isAgentReady(worker.agentId), true);
 
     const sent = await runtime.sendPrompt(worker.agentId, "perform task");
     assert.equal(sent.ok, true);
     assert.equal(remoteRuntime.prompts.at(-1).prompt, "perform task");
+    assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "BUSY");
+    assert.equal(runtime.isAgentBusy(worker.agentId), true);
 
     runtime.bindHostHandlers({
       onRuntimeMessage: async (message, sender) => ({ ok: true, echo: message.type, agentId: sender.agentId })
@@ -78,6 +82,10 @@ test("DesktopBridgeAgentRuntime startup stays non-blocking until the browser com
               agentId: "lead-late",
               role: "lead",
               status: "IDLE",
+              lifecycleState: "READY",
+              lifecycleReason: "prompt_ready",
+              lifecycleChangedAt: 123,
+              readinessCheckedAt: 123,
               sessionId: "41",
               chatUrl: "https://chatgpt.com/"
             }
