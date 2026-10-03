@@ -25,7 +25,7 @@ async function handleManagedRuntimeMessage(host, message, sender) {
 
   host.noteManagedBrowserRuntimeMessage?.(message, sender, result);
   if (logicalAgentId) {
-    const agent = host.agentRuntime.getAgent(logicalAgentId);
+    const agent = host.coreAgentRuntime.getAgent(logicalAgentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: `direct-browser:${message?.type || "runtime_message"}` });
@@ -63,7 +63,7 @@ async function handleManagedSessionUpdated(host, sessionId, changeInfo, session)
   const updated = await host.agentPool.handleBindingUpdated(sessionId, changeInfo || {}, session || null);
   if (updated?.agentId) {
     await host.orchestrator.handleAgentStateChanged(updated.agentId);
-    const agent = host.agentRuntime.getAgent(updated.agentId);
+    const agent = host.coreAgentRuntime.getAgent(updated.agentId);
     if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   }
   await host.recoveryController.tick({ reason: "direct-browser:binding_updated" });
