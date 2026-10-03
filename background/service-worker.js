@@ -10,6 +10,9 @@ importScripts(
   "../context/context-packets.js",
   "../platform/contracts.js",
   "../platform/agent-lifecycle.js",
+  "../platform/runtime-heartbeat.js",
+  "../platform/runtime-control-contract.js",
+  "../platform/runtime-agent-pool.js",
   "../platform/extension-runtime.js",
   "../platform/companion-protocol.js",
   "../platform/companion-rpc.js",
@@ -70,6 +73,12 @@ agentRuntime.activateAgent = async (agentId) => {
   }
 };
 root.PlatformContracts.assertAgentRuntime(agentRuntime);
+root.RuntimeControlContract.assertRuntimeControl(agentRuntime);
+const agentPool = new root.RuntimeAgentPool({
+  runtime: agentRuntime,
+  runtimeKind: "extension",
+  logger: console
+});
 
 const eventStore = new root.EventStore({ stateStore });
 const eventBus = new root.EventBus({ registry: agentRuntime, store: eventStore });
@@ -142,6 +151,7 @@ schedulerEngine = new root.SchedulerEngine({
 });
 const orchestrator = new root.ServiceWorkerOrchestrator({
   agentRuntime,
+  agentPool,
   eventBus,
   planningEngine,
   schedulerEngine
@@ -164,7 +174,7 @@ root.RecoveryRuntime.controller = recoveryController;
 recoveryController.setActions({
   stopAgent: (agentId) => agentRuntime.stopAgent(agentId),
   createWorkers: (count) => orchestrator.createWorkers(count),
-  reconcileTabs: () => orchestrator.reconcileRegisteredSessions()
+  reconcileRuntime: () => orchestrator.reconcileAgents()
 });
 
 const observabilityService = new root.ObservabilityService({
@@ -350,10 +360,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (isPortableImport) portableReloadPending = true;
 
     let result;
+    let logicalAgentId = senderContext.agentId || null;
+    const portableSender = agentPool.portableSender(senderContext);
+    const adapterOwnedTypes = new Set([
+      root.MESSAGE_TYPES.CONTENT_READY,
+      root.MESSAGE_TYPES.CONTENT_HEARTBEAT,
+      root.MESSAGE_TYPES.CHAT_STATE,
+      root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
+    ].filter(Boolean));
     try {
-      result = senderContext.sessionId
-        ? await orchestrator.handleRuntimeMessage(message, senderContext)
-        : await orchestratorApi.handleLegacyMessage(message, senderContext);
+      if (senderContext.sessionId && adapterOwnedTypes.has(message?.type)) {
+        result = await agentPool.handleContentMessage(message, senderContext);
+        logicalAgentId = result?.agentId || logicalAgentId;
+        if (logicalAgentId) await orchestrator.handleAgentStateChanged(logicalAgentId);
+      } else {
+        result = senderContext.sessionId
+          ? await orchestrator.handleRuntimeMessage(message, portableSender)
+          : await orchestratorApi.handleLegacyMessage(message, portableSender);
+      }
     } catch (error) {
       if (isPortableImport) portableReloadPending = false;
       throw error;
@@ -373,8 +397,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (isPortableImport && result?.ok && result?.reloadRequired) return result;
 
-    if (senderContext.agentId) {
-      const agent = agentRuntime.getAgent(senderContext.agentId);
+    if (logicalAgentId) {
+      const agent = agentRuntime.getAgent(logicalAgentId);
       if (agent) await integrationEngine.handleAgentStateChanged(agent);
     }
     await recoveryController.tick({ reason: genericCommand || message?.type || "runtime_message" });
@@ -400,10 +424,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       return;
     }
     if (!localRuntimeActive) await initializeLocalRuntime();
-    const agent = agentRuntime.getAgentBySessionId(sessionId);
-    await orchestrator.handleSessionRemoved(sessionId);
-    if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
-    await recoveryController.tick({ reason: "session_removed" });
+    const removed = await agentPool.handleBindingRemoved(sessionId, "session_closed");
+    if (removed?.agentId) {
+      await orchestrator.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+      await integrationEngine.handleAgentUnavailable(removed.agentId, "runtime_binding_lost");
+    }
+    await recoveryController.tick({ reason: "runtime_binding_removed" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] session_removed_handler_failed", error);
   });
@@ -420,10 +446,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       return;
     }
     if (!localRuntimeActive) await initializeLocalRuntime();
-    await orchestrator.handleSessionUpdated(sessionId, changeInfo, session);
-    const agent = agentRuntime.getAgentBySessionId(sessionId);
-    if (agent) await integrationEngine.handleAgentStateChanged(agent);
-    await recoveryController.tick({ reason: "session_updated" });
+    const updated = await agentPool.handleBindingUpdated(sessionId, changeInfo, session);
+    if (updated?.agentId) {
+      await orchestrator.handleAgentStateChanged(updated.agentId);
+      const agent = agentRuntime.getAgent(updated.agentId);
+      if (agent) await integrationEngine.handleAgentStateChanged(agent);
+    }
+    await recoveryController.tick({ reason: "runtime_binding_updated" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] session_updated_handler_failed", error);
   });
