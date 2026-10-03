@@ -231,15 +231,23 @@
     }
 
     normalizeSender(sender = {}) {
-      if (sender?.kind && Object.prototype.hasOwnProperty.call(sender, "sessionId")) return Contracts.normalizeRuntimeSender(sender);
+      if (sender?.kind && Object.prototype.hasOwnProperty.call(sender, "sessionId")) {
+        return {
+          kind: String(sender.kind || "unknown"),
+          sessionId: sender.sessionId === null || sender.sessionId === undefined ? null : String(sender.sessionId),
+          agentId: sender.agentId ? String(sender.agentId) : null,
+          url: String(sender.url || ""),
+          legacyTabId: Number.isInteger(sender.legacyTabId) ? sender.legacyTabId : null
+        };
+      }
       const agent = sender?.agentId ? this.getAgent(sender.agentId) : sender?.sessionId ? this.getAgentBySessionId(sender.sessionId) : null;
-      return Contracts.normalizeRuntimeSender({
+      return {
         kind: agent ? "agent-session" : "companion-ui",
         sessionId: agent ? this.sessionIdForAgent(agent) : sender?.sessionId || null,
         agentId: agent?.agentId || sender?.agentId || null,
         url: agent?.chatUrl || sender?.url || "",
         legacyTabId: Number.isInteger(sender?.legacyTabId) ? sender.legacyTabId : null
-      });
+      };
     }
 
     async remote(method, payload = {}) {
