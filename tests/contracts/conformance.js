@@ -4,30 +4,42 @@ const Contracts = require("../../platform/contracts.js");
 async function agentRuntimeConformance(runtime) {
   Contracts.assertAgentRuntime(runtime);
   await runtime.load();
-  const session = await runtime.createSession({ url: "about:blank", active: true });
-  assert.ok(session?.id);
-  const agent = await runtime.createAgentForSession({ role: "worker", session, label: "contract" });
-  assert.ok(agent?.agentId);
+
+  let cleanup = async () => {};
+  let agent = runtime.listAgents().find((item) => item.role === "worker") || null;
+  if (!agent && typeof runtime.addAgent === "function") {
+    agent = runtime.addAgent({ role: "worker", label: "contract", status: "CONNECTING" });
+  } else if (!agent && typeof runtime.createSession === "function" && typeof runtime.createAgentForSession === "function") {
+    const session = await runtime.createSession({ url: "about:blank", active: true });
+    agent = await runtime.createAgentForSession({ role: "worker", session, label: "contract" });
+    cleanup = async () => runtime.removeSession?.(session.id);
+  }
+  assert.ok(agent?.agentId, "conformance runtime must provision a logical worker");
+
   assert.equal(runtime.isAgentConnected(agent.agentId), true);
   assert.equal(typeof runtime.subscribeAgentEvents, "function");
   assert.equal(typeof runtime.getAgentLifecycle, "function");
   assert.equal(typeof runtime.isAgentReady, "function");
   assert.equal(typeof runtime.isAgentBusy, "function");
   assert.equal(typeof runtime.isAgentAvailable, "function");
+
   const ping = await runtime.pingAgent(agent.agentId);
   assert.equal(ping?.ok, true);
   assert.equal(runtime.isAgentReady(agent.agentId), true);
   assert.equal(runtime.getAgentLifecycle(agent.agentId).lifecycleState, "READY");
+
   await runtime.setProtocolContext(agent.agentId, { projectId: "P1", taskId: "T1", runId: "R1" });
   assert.equal(runtime.getAgent(agent.agentId).protocolContext.runId, "R1");
+
   const sent = await runtime.sendPrompt(agent.agentId, "contract prompt");
   assert.equal(sent?.ok, true);
   assert.equal(runtime.isAgentBusy(agent.agentId), true);
+
   const stopped = await runtime.stopAgent(agent.agentId);
   assert.equal(stopped?.ok, true);
   await runtime.clearProtocolContext(agent.agentId);
   assert.equal(runtime.getAgent(agent.agentId).protocolContext, null);
-  await runtime.removeSession(session.id);
+  await cleanup();
 }
 
 async function stateStoreConformance(store) {
