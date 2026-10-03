@@ -109,6 +109,12 @@
             : await this.agentRuntime.createAgentForSession({ role: "worker", session, chatUrl: this.workerUrl, label: `Worker ${index + 1}`, status: "CONNECTING" });
           await this.agentRuntime.navigateSession(session.id, this.workerUrl);
           created.push(agent.agentId);
+          try {
+            await this.refreshAgentFromContent(agent.agentId);
+          } catch (_) {
+            // Creation succeeded; readiness remains adapter-owned and may be established
+            // later by a heartbeat/event without making the logical worker invalid.
+          }
         } catch (error) {
           if (agent && session?.id) await this.agentRuntime.markSessionOffline(session.id, "worker_session_create_failed");
           if (session?.id) { try { await this.agentRuntime.removeSession(session.id); } catch (_) {} }
