@@ -8,6 +8,7 @@ require("../content/message-types.js");
 const { TabRegistry } = require("../background/tab-registry.js");
 const { MemoryStateStore } = require("../platform/fake-runtime.js");
 const { ExtensionAgentRuntime } = require("../platform/extension-runtime.js");
+const { RuntimeAgentPool } = require("../platform/runtime-agent-pool.js");
 const { ManagedBrowserAgentRuntime } = require("../apps/desktop/main/managed-browser-agent-runtime.js");
 const { agentRuntimeConformance } = require("./contracts/conformance.js");
 
@@ -86,26 +87,29 @@ test("ExtensionAgentRuntime and ManagedBrowserAgentRuntime pass the same portabl
   await managed.close();
 });
 
-test("extension tab senders and managed page senders normalize to the same agent-session boundary", async () => {
+test("extension and managed bindings normalize to the same portable Core sender shape", async () => {
   const extension = extensionRuntime();
   await extension.load();
   const extSession = await extension.createSession({ url: "https://chatgpt.com/", active: true });
   const extAgent = await extension.createAgentForSession({ role: "lead", session: extSession, status: "IDLE" });
-  const extSender = extension.normalizeSender({ tab: { id: Number(extSession.id), url: extSession.url } });
+  const extRaw = extension.normalizeSender({ tab: { id: Number(extSession.id), url: extSession.url } });
+  const extPortable = new RuntimeAgentPool({ runtime: extension, runtimeKind: "extension" }).portableSender(extRaw);
 
   const managed = managedRuntime();
   await managed.load();
   const managedSession = await managed.createSession({ url: "https://chatgpt.com/", active: true });
   const managedAgent = await managed.createAgentForSession({ role: "lead", session: managedSession, status: "IDLE" });
-  const managedSender = managed.normalizeSender({ sessionId: managedSession.id, url: managedSession.url });
+  const managedRaw = managed.normalizeSender({ sessionId: managedSession.id, url: managedSession.url });
+  const managedPortable = new RuntimeAgentPool({ runtime: managed, runtimeKind: "managed" }).portableSender(managedRaw);
 
-  assert.equal(extSender.kind, "agent-session");
-  assert.equal(managedSender.kind, "agent-session");
-  assert.equal(extSender.agentId, extAgent.agentId);
-  assert.equal(managedSender.agentId, managedAgent.agentId);
-  assert.ok(extSender.sessionId);
-  assert.ok(managedSender.sessionId);
-  assert.equal(managedSender.legacyTabId, null);
+  assert.deepEqual(Object.keys(extPortable).sort(), ["agentId", "bindingPresent", "runtimeKind"]);
+  assert.deepEqual(Object.keys(managedPortable).sort(), ["agentId", "bindingPresent", "runtimeKind"]);
+  assert.equal(extPortable.agentId, extAgent.agentId);
+  assert.equal(managedPortable.agentId, managedAgent.agentId);
+  assert.equal(extPortable.bindingPresent, true);
+  assert.equal(managedPortable.bindingPresent, true);
+  assert.equal(JSON.stringify(extPortable).includes("sessionId"), false);
+  assert.equal(JSON.stringify(managedPortable).includes("sessionId"), false);
 
   await managed.close();
 });
