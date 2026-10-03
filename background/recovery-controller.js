@@ -92,7 +92,6 @@
         status: agent.status,
         lifecycleState: lifecycleState(this.registry, agent),
         lifecycleReason: this.registry?.getAgentLifecycle?.(agent.agentId)?.lifecycleReason || agent.lifecycleReason || null,
-        tabId: Number.isInteger(agent.tabId) ? agent.tabId : null,
         protocolContext: agent.protocolContext ? clone(agent.protocolContext) : null,
         lastSeenAt: agent.lastSeenAt || 0
       }));
@@ -337,7 +336,7 @@
       });
 
       const issues = [];
-      try { await this.actions.reconcileTabs?.(); } catch (error) { issues.push({ code: "tab_reconciliation_failed", message: error?.message || String(error) }); }
+      try { await this.actions.reconcileRuntime?.(); } catch (error) { issues.push({ code: "runtime_reconciliation_failed", message: error?.message || String(error) }); }
 
       const schedulerSummary = this.schedulerStore?.summary?.();
       if (schedulerSummary?.taskCount > 0 && schedulerSummary.status !== "INTEGRATION_VERIFIED") {
@@ -399,7 +398,7 @@
       const TYPES = root.MESSAGE_TYPES || {};
       const known = new Set([TYPES.ORCHESTRATOR_GET_RECOVERY, TYPES.ORCHESTRATOR_PAUSE, TYPES.ORCHESTRATOR_STOP_NOW, TYPES.ORCHESTRATOR_RESUME].filter(Boolean));
       if (!known.has(type)) return { handled: false };
-      if (sender?.tab) return { handled: true, response: { ok: false, reason: "orchestrator_command_forbidden_from_tab" } };
+      if (sender?.agentId) return { handled: true, response: { ok: false, reason: "orchestrator_command_forbidden_from_agent" } };
       if (type === TYPES.ORCHESTRATOR_GET_RECOVERY) return { handled: true, response: { ok: true, recovery: this.getPublicState() } };
       if (type === TYPES.ORCHESTRATOR_PAUSE) return { handled: true, response: await this.pause() };
       if (type === TYPES.ORCHESTRATOR_STOP_NOW) return { handled: true, response: await this.stopNow() };
