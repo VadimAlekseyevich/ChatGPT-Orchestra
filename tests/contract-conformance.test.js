@@ -14,7 +14,7 @@ const {
 } = require("./contracts/conformance.js");
 
 test("Platform contract version exposes Phase 14 parity surfaces", () => {
-  if (Contracts.CONTRACT_VERSION < 4) throw new Error("platform_contract_version_not_phase14");
+  if (Contracts.CONTRACT_VERSION < 6) throw new Error("platform_contract_version_not_lifecycle_v6");
   for (const query of ["contextSummary", "contextPacket"]) {
     if (!Contracts.API_QUERIES.includes(query)) throw new Error(`api_contract_missing:${query}`);
   }
