@@ -2,13 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const Lifecycle = require("../platform/agent-lifecycle.js");
+const RuntimeHeartbeat = require("../platform/runtime-heartbeat.js");
 
 function agent(status = "CONNECTING", overrides = {}) {
   return {
     agentId: "A1",
     role: "worker",
     status,
-    sessionId: "session-1",
     lastSeenAt: 0,
     ...overrides
   };
@@ -105,21 +105,21 @@ test("READY is freshness-bound and stale readiness is not dispatchable", () => {
   assert.equal(Lifecycle.isReady(value, { now: 1031, readinessTtlMs: 30 }), false);
 });
 
-test("heartbeat normalization keeps browser details outside Core lifecycle decisions", () => {
+test("runtime adapter maps browser heartbeat details into portable lifecycle decisions", () => {
   assert.deepEqual(
-    Lifecycle.normalizeHeartbeat({ availability: "ready", generating: false, composerOccupied: false }),
+    RuntimeHeartbeat.normalizeRuntimeHeartbeat({ availability: "ready", generating: false, composerOccupied: false }),
     { state: "READY", reason: "prompt_ready", legacyStatus: "IDLE" }
   );
   assert.deepEqual(
-    Lifecycle.normalizeHeartbeat({ availability: "ready", generating: false, composerOccupied: true }),
-    { state: "UNAVAILABLE", reason: "composer_unavailable", legacyStatus: "ERROR" }
+    RuntimeHeartbeat.normalizeRuntimeHeartbeat({ availability: "ready", generating: false, composerOccupied: true }),
+    { state: "UNAVAILABLE", reason: "runtime_not_ready", legacyStatus: "ERROR" }
   );
   assert.deepEqual(
-    Lifecycle.normalizeHeartbeat({ availability: "generating", generating: true }),
+    RuntimeHeartbeat.normalizeRuntimeHeartbeat({ availability: "generating", generating: true }),
     { state: "BUSY", reason: "prompt_active", legacyStatus: "BUSY" }
   );
   assert.deepEqual(
-    Lifecycle.normalizeHeartbeat({ availability: "unavailable" }),
-    { state: "UNAVAILABLE", reason: "page_unreachable", legacyStatus: "ERROR" }
+    RuntimeHeartbeat.normalizeRuntimeHeartbeat({ availability: "unavailable" }),
+    { state: "UNAVAILABLE", reason: "runtime_unavailable", legacyStatus: "ERROR" }
   );
 });
