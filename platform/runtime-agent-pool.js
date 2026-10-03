@@ -41,7 +41,10 @@
       return Contracts.normalizePortableSender({
         runtimeKind: this.runtimeKind,
         agentId: agent?.agentId || requestedAgentId || null,
-        bindingPresent: Boolean(agent || sender?.sessionId !== null && sender?.sessionId !== undefined)
+        bindingPresent: Boolean(
+          (agent && this.runtime.sessionIdForAgent(agent))
+          || (sender?.sessionId !== null && sender?.sessionId !== undefined)
+        )
       });
     }
 
