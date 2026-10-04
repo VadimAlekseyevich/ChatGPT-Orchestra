@@ -200,7 +200,7 @@
     isAgentConnected(agentOrId) {
       this.syncTransportLifecycle();
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : this.agents.get(String(agentOrId?.agentId || "")) || agentOrId;
-      return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
+      return Boolean(agent && agent.status !== "OFFLINE");
     }
 
     isAgentReady(agentOrId) {
@@ -231,7 +231,7 @@
     }
 
     runtimeMetadata(agentOrId) {
-      return { runtimeKind: "extension-companion", bindingPresent: this.isAgentConnected(agentOrId) };
+      return { runtimeKind: "extension-companion", bindingPresent: Boolean(this.sessionIdForAgent(agentOrId)) };
     }
 
     resolveSender(sender = {}) {

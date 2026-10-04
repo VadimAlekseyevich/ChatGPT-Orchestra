@@ -74,11 +74,16 @@
       await this.rpc.stop();
     }
 
+    portableSender(sender = {}) {
+      if (typeof this.agentRuntime.normalizeSender === "function") return this.agentRuntime.normalizeSender(sender);
+      return Contracts.normalizePortableSender(sender);
+    }
+
     async forwardRuntimeMessage(message, sender = {}) {
       if (!this.started) throw new Error("extension_companion_not_started");
       return this.rpc.request("orchestrator.runtimeMessage", {
         message,
-        sender: this.agentRuntime.normalizeSender(sender)
+        sender: this.portableSender(sender)
       });
     }
 
@@ -86,7 +91,7 @@
       if (!this.started) throw new Error("extension_companion_not_started");
       return this.rpc.request("orchestrator.apiMessage", {
         message,
-        sender: this.agentRuntime.normalizeSender(sender)
+        sender: this.portableSender(sender)
       });
     }
 

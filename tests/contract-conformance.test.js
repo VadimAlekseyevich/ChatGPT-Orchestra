@@ -13,8 +13,12 @@ const {
   orchestratorApiConformance
 } = require("./contracts/conformance.js");
 
-test("Platform contract version exposes Phase 14 parity surfaces", () => {
-  if (Contracts.CONTRACT_VERSION < 6) throw new Error("platform_contract_version_not_lifecycle_v6");
+test("Platform contract version exposes the portable v7 runtime split", () => {
+  if (Contracts.CONTRACT_VERSION < 7) throw new Error("platform_contract_version_not_portable_v7");
+  for (const browserMethod of ["getActiveSession", "createSession", "navigateSession", "removeSession", "bindAgentToSession", "sessionIdForAgent"]) {
+    if (Contracts.AGENT_RUNTIME_METHODS.includes(browserMethod)) throw new Error(`portable_agent_runtime_contains_browser_method:${browserMethod}`);
+    if (!Contracts.RUNTIME_HOST_CONTROL_METHODS.includes(browserMethod)) throw new Error(`runtime_host_control_missing:${browserMethod}`);
+  }
   for (const query of ["contextSummary", "contextPacket"]) {
     if (!Contracts.API_QUERIES.includes(query)) throw new Error(`api_contract_missing:${query}`);
   }
