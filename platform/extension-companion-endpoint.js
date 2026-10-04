@@ -30,6 +30,9 @@
         };
       });
       this.handler("agent.snapshot", async () => this.agentRuntime.snapshot());
+      this.handler("agent.reconcileAgents", async () => this.agentRuntime.reconcileAgents());
+      this.handler("agent.openAgent", (options = {}) => this.agentRuntime.openAgent(options));
+      this.handler("agent.refreshAgent", ({ agentId } = {}) => this.agentRuntime.refreshAgent(agentId));
       this.handler("agent.setRuntimeStatus", ({ status } = {}) => this.agentRuntime.setRuntimeStatus(status));
       this.handler("agent.setProtocolContext", ({ agentId, context } = {}) => this.agentRuntime.setProtocolContext(agentId, context));
       this.handler("agent.clearProtocolContext", ({ agentId } = {}) => this.agentRuntime.clearProtocolContext(agentId));
@@ -44,7 +47,7 @@
       this.handler("agent.markSessionOffline", ({ sessionId, reason } = {}) => this.agentRuntime.markSessionOffline(sessionId, reason));
       this.handler("agent.updateSessionNavigation", ({ sessionId, url } = {}) => this.agentRuntime.updateSessionNavigation(sessionId, url));
       this.handler("agent.updateHeartbeat", ({ sessionId, payload, url } = {}) => this.agentRuntime.updateHeartbeat(sessionId, payload || {}, url || ""));
-      this.handler("agent.pingAgent", ({ agentId } = {}) => this.agentRuntime.pingAgent(agentId));
+      if (typeof this.agentRuntime.pingAgent === "function") this.handler("agent.pingAgent", ({ agentId } = {}) => this.agentRuntime.pingAgent(agentId));
       this.handler("agent.sendPrompt", ({ agentId, prompt } = {}) => this.agentRuntime.sendPrompt(agentId, prompt));
       this.handler("agent.stopAgent", ({ agentId } = {}) => this.agentRuntime.stopAgent(agentId));
     }
@@ -71,11 +74,16 @@
       await this.rpc.stop();
     }
 
+    portableSender(sender = {}) {
+      if (typeof this.agentRuntime.normalizeSender === "function") return this.agentRuntime.normalizeSender(sender);
+      return Contracts.normalizePortableSender(sender);
+    }
+
     async forwardRuntimeMessage(message, sender = {}) {
       if (!this.started) throw new Error("extension_companion_not_started");
       return this.rpc.request("orchestrator.runtimeMessage", {
         message,
-        sender: this.agentRuntime.normalizeSender(sender)
+        sender: this.portableSender(sender)
       });
     }
 
@@ -83,7 +91,7 @@
       if (!this.started) throw new Error("extension_companion_not_started");
       return this.rpc.request("orchestrator.apiMessage", {
         message,
-        sender: this.agentRuntime.normalizeSender(sender)
+        sender: this.portableSender(sender)
       });
     }
 

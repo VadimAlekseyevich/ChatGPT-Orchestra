@@ -291,13 +291,13 @@ test("rejected planning artifact stays retryable and restarts the same stage wit
 
 test("Start Project refuses stale IDLE Lead when a fresh readiness check reports no composer", async () => {
   const store = new ProjectStore({ storageArea: fakeStorage(), idFactory: () => "P-stale" });
-  const lead = { agentId: "A-stale", role: "lead", tabId: 9, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, chatState: null };
+  const lead = { agentId: "A-stale", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1, chatState: null };
   const registry = {
     listAgents() { return [{ ...lead, chatState: lead.chatState ? { ...lead.chatState } : null }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
     getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
-    async pingAgent(agentId) {
+    async refreshAgent(agentId) {
       assert.equal(agentId, "A-stale");
       lead.status = "ERROR";
       lead.lifecycleState = "UNAVAILABLE";
@@ -348,13 +348,13 @@ test("planning retry preserves the persisted failed run until Lead readiness ret
   await store.beginStage("P-retry-ready", { stage: "DISCOVERY", runId: "planning-discovery-existing" });
   await store.fail("P-retry-ready", "lead_prompt_failed", { reason: "composer_unavailable" }, "PLANNING");
 
-  const lead = { agentId: "A-retry", role: "lead", tabId: 10, status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
+  const lead = { agentId: "A-retry", role: "lead", status: "IDLE", lifecycleState: "READY", lifecycleReason: "prompt_ready", readinessCheckedAt: 1 };
   const registry = {
     listAgents() { return [{ ...lead }]; },
     isAgentConnected(agent) { return Boolean(agent && agent.status !== "OFFLINE"); },
     isAgentReady(agent) { return Boolean(agent && agent.lifecycleState === "READY"); },
     getAgentLifecycle(agentId) { return agentId === lead.agentId ? { lifecycleState: lead.lifecycleState, lifecycleReason: lead.lifecycleReason } : null; },
-    async pingAgent() {
+    async refreshAgent() {
       return {
         ok: true,
         availability: "unavailable",

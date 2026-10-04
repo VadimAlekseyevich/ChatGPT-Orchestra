@@ -12,11 +12,11 @@ async function handleManagedRuntimeMessage(host, message, sender) {
 }
 
 async function handleManagedApiMessage(host, message, sender) {
-  if (sender?.sessionId) {
+  if (sender?.agentId) {
     return {
       apiVersion: host.root.ORCHESTRATOR_API_VERSION,
       ok: false,
-      reason: "orchestrator_command_forbidden_from_agent_session"
+      reason: "orchestrator_command_forbidden_from_agent"
     };
   }
   const TYPES = host.root.MESSAGE_TYPES || {};
@@ -29,15 +29,23 @@ async function handleManagedApiMessage(host, message, sender) {
 async function handleManagedSessionRemoved(host, sessionId) {
   const agent = host.agentRuntime.getAgentBySessionId(sessionId);
   host.noteManagedBrowserSessionRemoved?.(agent);
-  await host.orchestrator.handleSessionRemoved(sessionId);
-  if (agent) await host.integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
+  await host.agentRuntime.markSessionOffline(sessionId, "session_closed");
+  if (agent?.role === "lead") await host.planningEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
+  if (agent) {
+    await host.schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
+    await host.integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
+  }
   await host.recoveryController.tick({ reason: "direct-browser:session_removed" });
   return { ok: true };
 }
 
 async function handleManagedSessionUpdated(host, sessionId, changeInfo, session) {
-  await host.orchestrator.handleSessionUpdated(sessionId, changeInfo || {}, session || null);
-  const agent = host.agentRuntime.getAgentBySessionId(sessionId);
+  if (changeInfo?.url) await host.agentRuntime.updateSessionNavigation(sessionId, changeInfo.url);
+  let agent = host.agentRuntime.getAgentBySessionId(sessionId);
+  if (agent && changeInfo?.status === "complete") {
+    const refreshed = await host.agentRuntime.refreshAgent(agent.agentId);
+    agent = refreshed?.agent || host.agentRuntime.getAgent(agent.agentId);
+  }
   if (agent) await host.integrationEngine.handleAgentStateChanged(agent);
   await host.recoveryController.tick({ reason: "direct-browser:session_updated" });
   return { ok: true };

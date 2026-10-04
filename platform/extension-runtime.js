@@ -7,6 +7,12 @@
   const CHATGPT_HOME = "https://chatgpt.com/";
 
   function asError(error) { return error?.message || String(error || "unknown_error"); }
+  function isChatGPTUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""));
+      return parsed.protocol === "https:" && (parsed.hostname === "chatgpt.com" || parsed.hostname === "chat.openai.com");
+    } catch (_) { return false; }
+  }
 
   class ChromeStorageStateStore {
     constructor({ storageArea = globalThis.chrome?.storage?.local } = {}) {
@@ -69,6 +75,10 @@
       return sessionId ? { kind: "extension-tab", sessionId } : null;
     }
 
+    runtimeMetadata(agentOrId) {
+      return { runtimeKind: "extension", bindingPresent: this.isAgentConnected(agentOrId) };
+    }
+
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.getAgent(agentOrId) : agentOrId;
       return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
@@ -95,7 +105,7 @@
       return () => {};
     }
 
-    normalizeSender(sender = {}) {
+    resolveSender(sender = {}) {
       const tabId = sender?.tab?.id;
       if (!Number.isInteger(tabId)) return Contracts.normalizeRuntimeSender({ kind: "extension-ui" });
       const agent = this.registry?.getAgentByTabId?.(tabId) || null;
@@ -105,6 +115,15 @@
         agentId: agent?.agentId || null,
         url: sender?.tab?.url || agent?.chatUrl || "",
         legacyTabId: tabId
+      });
+    }
+
+    normalizeSender(sender = {}) {
+      const host = this.resolveSender(sender);
+      return Contracts.normalizePortableSender({
+        agentId: host.agentId,
+        runtimeKind: "extension",
+        bindingPresent: Boolean(host.sessionId)
       });
     }
 
@@ -182,6 +201,51 @@
       if (!Number.isInteger(id)) return { ok: false, reason: "invalid_extension_session_id" };
       return this.chrome?.tabs?.sendMessage?.(id, message);
     }
+
+    async reconcileAgents() {
+      for (const agent of this.listAgents()) {
+        const sessionId = this.sessionIdForAgent(agent);
+        if (!sessionId) continue;
+        try {
+          const session = await this.getSession(sessionId);
+          if (!session) {
+            await this.markSessionOffline(sessionId, "session_missing_after_restart");
+            continue;
+          }
+          await this.updateSessionNavigation(sessionId, session.url || "");
+          await this.bindAgentToSession(agent.agentId, session, { chatUrl: session.url || agent.chatUrl, status: "CONNECTING" });
+          await this.refreshAgent(agent.agentId);
+        } catch (error) {
+          await this.markSessionOffline(sessionId, "session_missing_after_restart");
+          this.logger?.warn?.("[ChatGPT Orchestra] extension_reconcile_failed", agent.agentId, asError(error));
+        }
+      }
+      return { ok: true, agents: this.listAgents() };
+    }
+
+    async openAgent({ agentId = null, role = "worker", label = "" } = {}) {
+      let session = null;
+      if (role === "lead") {
+        session = await this.getActiveSession();
+        if (!session?.id || !isChatGPTUrl(session.url)) return { ok: false, reason: "active_tab_is_not_chatgpt" };
+        const bound = this.getAgentBySessionId(session.id);
+        if (bound?.role === "worker") return { ok: false, reason: "active_tab_is_worker", agentId: bound.agentId };
+        const existing = agentId ? this.getAgent(agentId) : null;
+        const existingSessionId = existing ? this.sessionIdForAgent(existing) : null;
+        if (existingSessionId && existingSessionId !== String(session.id)) return { ok: false, reason: "lead_already_registered", agentId: existing.agentId };
+      } else {
+        session = await this.createSession({ url: this.workerUrl, active: false });
+      }
+
+      const existing = agentId ? this.getAgent(agentId) : null;
+      const agent = existing
+        ? await this.bindAgentToSession(existing.agentId, session, { chatUrl: session.url || this.workerUrl, status: "CONNECTING" })
+        : await this.createAgentForSession({ role, session, chatUrl: session.url || this.workerUrl, label, status: "CONNECTING" });
+      if (!agent) return { ok: false, reason: role === "lead" ? "lead_open_failed" : "worker_open_failed" };
+      return { ok: true, agent };
+    }
+
+    async refreshAgent(agentId) { return this.pingAgent(agentId); }
 
     async pingAgent(agentId) {
       const agent = this.getAgent(agentId);

@@ -62,14 +62,15 @@ function makeOrchestrator() {
   return { orchestrator, registry, agentRuntime, chromeApi };
 }
 
-test("normal ChatGPT session is ignored until explicitly registered", async () => {
-  const { orchestrator, registry } = makeOrchestrator();
+test("unregistered extension session is ignored until explicitly registered", async () => {
+  const { orchestrator, registry, agentRuntime } = makeOrchestrator();
   await orchestrator.init();
-  const response = await orchestrator.handleContentMessage(
-    { type: globalThis.ChatGPTOrchestra.MESSAGE_TYPES.CONTENT_READY, payload: { availability: "ready" } },
-    { tab: { id: 77, url: "https://chatgpt.com/c/random" } }
+  const updated = await agentRuntime.updateHeartbeat(
+    "77",
+    { availability: "ready", generating: false },
+    "https://chatgpt.com/c/random"
   );
-  assert.equal(response.ignored, true);
+  assert.equal(updated, null);
   assert.equal(registry.getAgentByTabId(77), null);
 });
 
@@ -82,7 +83,7 @@ test("active ChatGPT session becomes Lead only through explicit registration", a
   assert.equal(registry.getAgentByTabId(1).status, "IDLE");
 });
 
-test("workers are bound before navigation to ChatGPT", async () => {
+test("worker creation stays adapter-owned and returns logical agent ids", async () => {
   const { orchestrator, registry, chromeApi } = makeOrchestrator();
   await orchestrator.init();
   const response = await orchestrator.createWorkers(3);
@@ -92,26 +93,28 @@ test("workers are bound before navigation to ChatGPT", async () => {
   assert.equal(workers.length, 3);
   for (const worker of workers) {
     assert.equal(chromeApi.tabStore.get(worker.tabId).url, "https://chatgpt.com/");
-    assert.equal(worker.status, "CONNECTING");
+    assert.equal(worker.status, "IDLE");
   }
 });
 
 test("heartbeat after reload keeps same logical agent id", async () => {
-  const { orchestrator, registry } = makeOrchestrator();
+  const { orchestrator, registry, agentRuntime } = makeOrchestrator();
   await orchestrator.init();
   const created = await orchestrator.createWorkers(1);
   const agentId = created.created[0];
   const tabId = registry.getAgent(agentId).tabId;
 
-  await orchestrator.handleContentMessage(
-    { type: globalThis.ChatGPTOrchestra.MESSAGE_TYPES.CONTENT_READY, payload: { availability: "ready", generating: false } },
-    { tab: { id: tabId, url: "https://chatgpt.com/" } }
+  await agentRuntime.updateHeartbeat(
+    String(tabId),
+    { availability: "ready", generating: false },
+    "https://chatgpt.com/"
   );
   assert.equal(registry.getAgent(agentId).status, "IDLE");
 
-  await orchestrator.handleContentMessage(
-    { type: globalThis.ChatGPTOrchestra.MESSAGE_TYPES.CONTENT_HEARTBEAT, payload: { availability: "generating", generating: true } },
-    { tab: { id: tabId, url: "https://chatgpt.com/c/new" } }
+  await agentRuntime.updateHeartbeat(
+    String(tabId),
+    { availability: "generating", generating: true },
+    "https://chatgpt.com/c/new"
   );
   assert.equal(registry.getAgent(agentId).agentId, agentId);
   assert.equal(registry.getAgent(agentId).status, "BUSY");
@@ -132,13 +135,13 @@ test("prompt routing targets only selected agent through AgentRuntime", async ()
   assert.equal(promptMessages[0].message.payload.prompt, "task B");
 });
 
-test("closing registered session marks agent offline", async () => {
-  const { orchestrator, registry } = makeOrchestrator();
+test("closing registered session marks agent offline in the extension adapter", async () => {
+  const { orchestrator, registry, agentRuntime } = makeOrchestrator();
   await orchestrator.init();
   const created = await orchestrator.createWorkers(1);
   const agentId = created.created[0];
   const tabId = registry.getAgent(agentId).tabId;
-  await orchestrator.handleSessionRemoved(String(tabId));
+  await agentRuntime.markSessionOffline(String(tabId), "session_closed");
   assert.equal(registry.getAgent(agentId).status, "OFFLINE");
   assert.equal(registry.getAgent(agentId).tabId, null);
 });
@@ -148,23 +151,23 @@ test("orchestrator control commands are rejected from agent sessions", async () 
   await orchestrator.init();
   const response = await orchestrator.handleRuntimeMessage(
     { type: globalThis.ChatGPTOrchestra.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS, payload: { count: 4 } },
-    { tab: { id: 99, url: "https://chatgpt.com/c/random" } }
+    { agentId: "A-browser", runtimeKind: "extension", bindingPresent: true }
   );
   assert.equal(response.ok, false);
-  assert.equal(response.reason, "orchestrator_command_forbidden_from_agent_session");
+  assert.equal(response.reason, "orchestrator_command_forbidden_from_agent");
 });
 
 test("explicit createWorkers reuses an offline worker identity", async () => {
-  const { orchestrator, registry } = makeOrchestrator();
+  const { orchestrator, registry, agentRuntime } = makeOrchestrator();
   await orchestrator.init();
   const first = await orchestrator.createWorkers(1);
   const agentId = first.created[0];
   const oldTabId = registry.getAgent(agentId).tabId;
-  await orchestrator.handleSessionRemoved(String(oldTabId));
+  await agentRuntime.markSessionOffline(String(oldTabId), "session_closed");
 
   const second = await orchestrator.createWorkers(1);
   assert.equal(second.ok, true);
   assert.equal(second.created[0], agentId);
   assert.notEqual(registry.getAgent(agentId).tabId, oldTabId);
-  assert.equal(registry.getAgent(agentId).status, "CONNECTING");
+  assert.equal(registry.getAgent(agentId).status, "IDLE");
 });

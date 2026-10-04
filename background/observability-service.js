@@ -226,11 +226,17 @@
           lifecycleChangedAt: agent.lifecycleChangedAt || 0,
           readinessCheckedAt: agent.readinessCheckedAt || null
         };
+        const runtime = this.registry?.runtimeMetadata?.(agent) || {
+          runtimeKind: String(agent.runtimeKind || "unknown"),
+          bindingPresent: Boolean(this.registry?.isAgentConnected?.(agent))
+        };
         return {
           agentId: String(agent.agentId || ""),
           role: String(agent.role || "worker"),
           label: text(agent.label || "", 300),
           status: String(agent.status || "UNKNOWN"),
+          runtimeKind: String(runtime.runtimeKind || "unknown"),
+          bindingPresent: runtime.bindingPresent === true,
           lifecycleState: String(lifecycle.lifecycleState || "UNAVAILABLE"),
           lifecycleReason: lifecycle.lifecycleReason ? text(lifecycle.lifecycleReason, 300) : null,
           lifecycleChangedAt: number(lifecycle.lifecycleChangedAt),

@@ -23,18 +23,18 @@ function event(overrides = {}) {
 }
 
 async function setup({ stateStore = new MemoryStateStore() } = {}) {
-  const runtime = new FakeAgentRuntime({ agents: [{ agentId: "A1", role: "worker", status: "IDLE", sessionId: "session-7" }] });
+  const runtime = new FakeAgentRuntime({ agents: [{ agentId: "A1", role: "worker", status: "IDLE" }] });
   const store = new EventStore({ stateStore });
   const bus = new EventBus({ registry: runtime, store, logger: { warn() {} } });
   await bus.load();
   bus.subscribe("*", async () => {});
-  const sender = runtime.normalizeSender({ agentId: "A1" });
+  const sender = { agentId: "A1", runtimeKind: "fake", bindingPresent: true };
   return { runtime, store, bus, sender, stateStore };
 }
 
 test("accepts an event exactly once and treats exact replay as duplicate", async () => {
   const { bus, store, sender } = await setup();
-  const source = { responseFingerprint: "fp-1", pathname: "/c/x", messageCount: 8 };
+  const source = { responseFingerprint: "fp-1" };
   const first = await bus.handleEvent(event(), sender, source);
   const second = await bus.handleEvent(event(), sender, source);
   assert.equal(first.accepted, true);
@@ -42,9 +42,10 @@ test("accepts an event exactly once and treats exact replay as duplicate", async
   assert.equal(store.summary().acceptedEvents, 1);
   const stored = store.recentEvents(1)[0];
   assert.equal(stored.source.responseFingerprint, source.responseFingerprint);
-  assert.equal(stored.source.pathname, source.pathname);
-  assert.equal(stored.source.messageCount, source.messageCount);
-  assert.deepEqual(stored.runtimeSource, { kind: "agent-session", sessionId: "session-7", agentId: "A1" });
+  assert.deepEqual(stored.source.runtime, { runtimeKind: "fake", bindingPresent: true });
+  assert.equal("runtimeSource" in stored, false);
+  assert.equal(JSON.stringify(stored).includes("sessionId"), false);
+  assert.equal(JSON.stringify(stored).includes("tabId"), false);
 });
 
 test("same eventId with changed payload is an id collision", async () => {
@@ -65,7 +66,7 @@ test("rejects stale sequence", async () => {
 test("rejects wrong agent and unregistered runtime sender", async () => {
   const { bus, sender } = await setup();
   assert.equal((await bus.handleEvent(event({ agentId: "OTHER" }), sender)).reason, "agent_mismatch");
-  assert.equal((await bus.handleEvent(event(), { kind: "agent-session", sessionId: "session-99", agentId: null })).reason, "unregistered_sender");
+  assert.equal((await bus.handleEvent(event(), { agentId: "missing", runtimeKind: "fake", bindingPresent: false })).reason, "unregistered_sender");
 });
 
 test("bound protocol context rejects stale task/run identity", async () => {

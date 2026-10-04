@@ -7,7 +7,6 @@ const { ManagedBrowserAgentRuntime } = require("./managed-browser-agent-runtime.
 const { CompletionAwareManagedBrowserRuntime } = require("./completion-aware-managed-browser-runtime.js");
 const { ManagedBrowserCompletionMonitor } = require("./managed-browser-completion-monitor.js");
 const { ManagedBrowserProtocolAdapter } = require("./managed-browser-protocol-adapter.js");
-const { ManagedBrowserRecoveryRegistry } = require("./managed-browser-recovery-registry.js");
 const { ElectronManagedBrowserDriver, DEFAULT_CHATGPT_URL } = require("./electron-managed-browser-driver.js");
 const { ElectronPreloadChatGPTPageAdapter } = require("./electron-preload-chatgpt-page-adapter.js");
 const { bindManagedBrowserAgentRuntime } = require("./managed-browser-host-binding.js");
@@ -36,13 +35,6 @@ class ManagedBrowserDesktopHost extends DesktopHost {
   constructor(options = {}) {
     if (typeof options.agentRuntime?.bindHostHandlers !== "function") throw new TypeError("managed_browser_agent_runtime_required");
     super({ ...options, autoSeedFakeLead: false });
-    this.managedBrowserRecoveryRegistry = new ManagedBrowserRecoveryRegistry(this.agentRuntime);
-    // Preserve synthetic tabId only for legacy diagnostics. Core lifecycle decisions
-    // delegate through the compatibility adapter to the actual AgentRuntime.
-    this.schedulerEngine.registry = this.managedBrowserRecoveryRegistry;
-    this.reviewEngine.registry = this.managedBrowserRecoveryRegistry;
-    this.integrationEngine.registry = this.managedBrowserRecoveryRegistry;
-    this.recoveryController.registry = this.managedBrowserRecoveryRegistry;
     this.managedBrowserValidationObservations = {
       runtimeMessages: 0,
       assistantCompletions: 0,

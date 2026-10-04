@@ -132,7 +132,7 @@ test("Resume reconciles before opening dispatch gate", async () => {
   await store.attachProject("P1", { status: "STOPPED" });
   const order = [];
   controller.setActions({
-    reconcileTabs: async () => { order.push("tabs"); },
+    reconcileRuntime: async () => { order.push("runtime"); },
     createWorkers: async () => { order.push("workers"); return { ok: true }; }
   });
   fx.schedulerEngine.reconcileForResume = async () => { order.push("scheduler"); return { ok: true, issues: [] }; };
@@ -147,7 +147,7 @@ test("Resume reconciles before opening dispatch gate", async () => {
   assert.equal(result.ok, true);
   assert.equal(store.summary().status, "RUNNING");
   assert.equal(controller.canDispatchNewPrompts(), true);
-  assert.deepEqual(order.slice(0, 5), ["tabs", "workers", "scheduler", "reviews", "integration"]);
+  assert.deepEqual(order.slice(0, 5), ["runtime", "workers", "scheduler", "reviews", "integration"]);
   assert.ok(order.indexOf("scheduler-kick") > order.indexOf("integration"));
 });
 
@@ -160,7 +160,7 @@ test("Resume removes offline worker identities before creating replacement tabs"
   await store.attachProject("P1", { status: "STOPPED" });
   let observedOldIdentity = null;
   controller.setActions({
-    reconcileTabs: async () => {},
+    reconcileRuntime: async () => {},
     createWorkers: async () => {
       observedOldIdentity = fx.agents.has("A-old");
       fx.agents.set("A-new", { agentId: "A-new", role: "worker", status: "CONNECTING", lifecycleState: "UNAVAILABLE", lifecycleReason: "runtime_starting", tabId: 20, protocolContext: null });

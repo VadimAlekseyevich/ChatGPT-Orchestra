@@ -47,8 +47,6 @@ function createLocalOrchestrator(BaseOrchestrator) {
 
       return this.eventBus.handleEvent(event, senderContext, {
         responseFingerprint: payload.responseFingerprint || "",
-        pathname: payload.pathname || "",
-        messageCount: payload.messageCount || 0,
         planningArtifact: payload.planningArtifact || null,
         planningArtifactSignature: payload.planningArtifactSignature || "",
         workerArtifact,

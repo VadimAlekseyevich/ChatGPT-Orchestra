@@ -2,7 +2,6 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const Contracts = root.PlatformContracts || (typeof require === "function" ? require("./contracts.js") : null);
   const Lifecycle = root.AgentLifecycle || (typeof require === "function" ? require("./agent-lifecycle.js") : null);
 
   function clone(value) {
@@ -37,9 +36,7 @@
       this.responses = { ...responses };
       this.prompts = [];
       this.stops = [];
-      this.sessions = new Map();
       this.runtimeStatus = "idle";
-      this.nextSession = 1;
       this.nextAgent = 1;
       this.agentEventListeners = new Set();
       for (const agent of agents) this.addAgent(agent);
@@ -67,38 +64,28 @@
       return result;
     }
 
-    async setAgentLifecycle(agentId, state, options = {}) {
-      const result = this.transitionAgent(String(agentId || ""), state, options);
-      return result ? this.getAgent(agentId) : null;
-    }
-
     addAgent(agent = {}) {
       const agentId = String(agent.agentId || `agent-${this.nextAgent++}`);
-      const sessionId = agent.sessionId === null || agent.sessionId === undefined ? `session-${this.nextSession++}` : String(agent.sessionId);
-      const legacyTabId = Number.isInteger(agent.tabId) ? agent.tabId : 10000 + this.nextSession;
       const now = this.clock();
       const item = {
         agentId,
         role: agent.role === "lead" ? "lead" : "worker",
         label: String(agent.label || ""),
-        status: agent.status || "IDLE",
+        status: String(agent.status || "IDLE"),
         protocolContext: agent.protocolContext ? clone(agent.protocolContext) : null,
         lastSeenAt: Number(agent.lastSeenAt) || now,
-        sessionId,
-        tabId: legacyTabId,
-        chatUrl: String(agent.chatUrl || "https://chatgpt.com/"),
         lastError: agent.lastError ?? null,
         lifecycleState: agent.lifecycleState,
         lifecycleReason: agent.lifecycleReason,
         lifecycleChangedAt: agent.lifecycleChangedAt,
         readinessCheckedAt: agent.readinessCheckedAt,
         lifecycleDetails: agent.lifecycleDetails ? clone(agent.lifecycleDetails) : null,
+        runtimeKind: "fake",
         createdAt: Number(agent.createdAt) || now,
         updatedAt: Number(agent.updatedAt) || now
       };
       Lifecycle.initializeAgentLifecycle(item, { at: now });
       this.agents.set(agentId, item);
-      this.sessions.set(sessionId, { id: sessionId, url: item.chatUrl, active: Boolean(agent.active) });
       this.emitAgentEvent({ type: "agent-added", agentId, state: item.lifecycleState, reason: item.lifecycleReason, at: now, role: item.role });
       return clone(item);
     }
@@ -107,6 +94,7 @@
     snapshot() {
       return {
         schemaVersion: 1,
+        runtimeKind: "fake",
         runtimeStatus: this.runtimeStatus,
         updatedAt: this.clock(),
         agents: Object.fromEntries([...this.agents].map(([id, agent]) => [id, clone(agent)]))
@@ -115,18 +103,9 @@
     listAgents() { return [...this.agents.values()].map(clone); }
     getAgent(agentId) { const agent = this.agents.get(String(agentId || "")); return agent ? clone(agent) : null; }
     getAgentLifecycle(agentId) { return Lifecycle.lifecycleForAgent(this.agents.get(String(agentId || ""))); }
-    getAgentBySessionId(sessionId) {
-      const id = String(sessionId || "");
-      const agent = [...this.agents.values()].find((item) => item.sessionId === id);
-      return agent ? clone(agent) : null;
-    }
-    getAgentByTabId(tabId) {
-      const agent = [...this.agents.values()].find((item) => item.tabId === Number(tabId));
-      return agent ? clone(agent) : null;
-    }
     isAgentConnected(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
-      return Boolean(agent && agent.sessionId && this.sessions.has(String(agent.sessionId)) && agent.status !== "OFFLINE");
+      return Boolean(agent && agent.status !== "OFFLINE");
     }
     isAgentReady(agentOrId) {
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
@@ -140,16 +119,13 @@
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
       return this.isAgentConnected(agent) && Lifecycle.isAvailable(agent);
     }
-    runtimeBinding(agentOrId) {
-      const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : agentOrId;
-      return agent?.sessionId ? { kind: "fake-session", sessionId: String(agent.sessionId) } : null;
-    }
-    sessionIdForAgent(agentOrId) { return this.runtimeBinding(agentOrId)?.sessionId || null; }
+    runtimeMetadata(agentOrId) { return { runtimeKind: "fake", bindingPresent: this.isAgentConnected(agentOrId) }; }
     async setRuntimeStatus(status) { this.runtimeStatus = String(status || "idle"); return this.snapshot(); }
     async setProtocolContext(agentId, context) {
       const agent = this.agents.get(String(agentId || ""));
       if (!agent) return null;
       agent.protocolContext = context ? clone(context) : null;
+      agent.updatedAt = this.clock();
       return this.getAgent(agentId);
     }
     async clearProtocolContext(agentId) { return this.setProtocolContext(agentId, null); }
@@ -157,152 +133,46 @@
       const id = String(agentId || "");
       const agent = this.agents.get(id);
       if (!agent) return false;
-      if (agent.sessionId) this.sessions.delete(agent.sessionId);
       this.agents.delete(id);
       this.emitAgentEvent({ type: "agent-removed", agentId: id, previousState: agent.lifecycleState, at: this.clock(), role: agent.role });
       return true;
     }
-
-    normalizeSender(sender = {}) {
-      const requestedAgentId = sender.agentId ? String(sender.agentId) : null;
-      const byAgent = requestedAgentId ? this.agents.get(requestedAgentId) : null;
-      const bySession = sender.sessionId ? this.getAgentBySessionId(sender.sessionId) : null;
-      const agent = byAgent || bySession;
-      return Contracts.normalizeRuntimeSender({
-        kind: agent ? "agent-session" : "test-ui",
-        sessionId: agent?.sessionId || sender.sessionId || null,
-        agentId: agent?.agentId || null,
-        url: agent?.chatUrl || sender.url || ""
-      });
-    }
-
-    async getActiveSession() {
-      const active = [...this.sessions.values()].find((session) => session.active) || [...this.sessions.values()][0] || null;
-      return active ? clone(active) : null;
-    }
-    async getSession(sessionId) {
-      const session = this.sessions.get(String(sessionId || ""));
-      if (!session) throw new Error("fake_session_missing");
-      return clone(session);
-    }
-    async createSession({ url = "about:blank", active = false } = {}) {
-      const id = `session-${this.nextSession++}`;
-      const session = { id, url: String(url || ""), active: Boolean(active) };
-      this.sessions.set(id, session);
-      return clone(session);
-    }
-    async navigateSession(sessionId, url) {
-      const session = this.sessions.get(String(sessionId || ""));
-      if (!session) throw new Error("fake_session_missing");
-      session.url = String(url || "");
-      const agent = this.getAgentBySessionId(session.id);
-      if (agent) this.agents.get(agent.agentId).chatUrl = session.url;
-      return clone(session);
-    }
-    async removeSession(sessionId) {
-      const id = String(sessionId || "");
-      const agent = this.getAgentBySessionId(id);
-      this.sessions.delete(id);
-      if (agent) {
-        const mutable = this.agents.get(agent.agentId);
-        mutable.status = "OFFLINE";
-        mutable.sessionId = null;
-        mutable.tabId = null;
-        mutable.lastError = "session_missing";
-        this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
-        this.emitAgentEvent({ type: "agent-binding-changed", agentId: mutable.agentId, binding: null, at: this.clock(), role: mutable.role });
-      }
-    }
-    async bindAgentToSession(agentId, session, { status = "CONNECTING", chatUrl = "" } = {}) {
-      const agent = this.agents.get(String(agentId || ""));
-      if (!agent || !session?.id) return null;
-      if (!this.sessions.has(String(session.id))) this.sessions.set(String(session.id), clone(session));
-      agent.sessionId = String(session.id);
-      agent.tabId = Number.isInteger(Number(session.legacyTabId)) ? Number(session.legacyTabId) : agent.tabId || 10000 + this.nextSession;
-      agent.chatUrl = String(chatUrl || session.url || agent.chatUrl || "");
-      agent.status = String(status || "CONNECTING");
-      agent.lastError = null;
-      const target = Lifecycle.stateForLegacyStatus(agent.status);
-      this.transitionAgent(agent, target, {
-        reason: target === Lifecycle.STATES.READY ? "prompt_ready" : target === Lifecycle.STATES.BUSY ? "prompt_active" : "runtime_starting",
-        legacyStatus: agent.status,
-        readinessCheckedAt: target === Lifecycle.STATES.READY ? this.clock() : null,
-        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED
-      });
-      this.emitAgentEvent({
-        type: "agent-binding-changed",
-        agentId: agent.agentId,
-        binding: this.runtimeBinding(agent),
-        at: this.clock(),
-        role: agent.role
-      });
-      return this.getAgent(agentId);
-    }
-    async createAgentForSession({ role, session, chatUrl = "", label = "", status = "CONNECTING" } = {}) {
-      return this.addAgent({ role, sessionId: session?.id, chatUrl: chatUrl || session?.url, label, status });
-    }
-    async markSessionOffline(sessionId, reason = "session_unavailable") {
-      const agent = this.getAgentBySessionId(sessionId);
-      if (!agent) return null;
-      const mutable = this.agents.get(agent.agentId);
-      mutable.status = "OFFLINE";
-      mutable.lastError = String(reason || "session_unavailable");
-      mutable.sessionId = null;
-      mutable.tabId = null;
-      this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
-      this.emitAgentEvent({ type: "agent-binding-changed", agentId: mutable.agentId, binding: null, at: this.clock(), role: mutable.role });
-      return this.getAgent(agent.agentId);
-    }
-    async updateSessionNavigation(sessionId, url) {
-      const session = this.sessions.get(String(sessionId || ""));
-      if (session) session.url = String(url || "");
-      const agent = this.getAgentBySessionId(sessionId);
-      if (!agent) return null;
-      const mutable = this.agents.get(agent.agentId);
-      mutable.chatUrl = String(url || mutable.chatUrl || "");
-      return this.getAgent(agent.agentId);
-    }
-    async updateHeartbeat(sessionId, payload = {}, url = "") {
-      const agent = this.getAgentBySessionId(sessionId);
-      if (!agent) return null;
-      const mutable = this.agents.get(agent.agentId);
-      const normalized = Lifecycle.normalizeHeartbeat(payload, { hasBinding: this.isAgentConnected(mutable) });
-      mutable.lastSeenAt = this.clock();
-      mutable.updatedAt = mutable.lastSeenAt;
-      mutable.lastError = normalized.state === Lifecycle.STATES.UNAVAILABLE
-        ? String(payload.reason || payload.error || normalized.reason)
-        : null;
-      mutable.chatState = {
-        generating: Boolean(payload.generating),
-        availability: String(payload.availability || "unknown"),
-        composerOccupied: payload.composerOccupied === null || payload.composerOccupied === undefined ? null : Boolean(payload.composerOccupied),
-        pathname: String(payload.pathname || "")
-      };
-      if (url) mutable.chatUrl = String(url);
-      this.transitionAgent(mutable, normalized.state, {
-        reason: normalized.reason,
-        legacyStatus: normalized.legacyStatus,
-        readinessCheckedAt: normalized.state === Lifecycle.STATES.READY ? mutable.lastSeenAt : null
-      });
-      return this.getAgent(agent.agentId);
-    }
-    async pingAgent(agentId) {
+    async reconcileAgents() { return { ok: true, agents: this.listAgents() }; }
+    async refreshAgent(agentId) {
       const id = String(agentId || "");
       const mutable = this.agents.get(id);
-      if (!this.isAgentConnected(mutable)) {
-        if (mutable) this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: "session_missing", legacyStatus: "OFFLINE" });
+      if (!mutable || mutable.status === "OFFLINE") {
+        if (mutable) this.transitionAgent(mutable, Lifecycle.STATES.UNAVAILABLE, { reason: "runtime_unavailable", legacyStatus: "OFFLINE" });
         return { ok: false, reason: "agent_offline", agentId: id, agent: this.getAgent(id) };
       }
-      if (mutable.lifecycleState === Lifecycle.STATES.FAILED) {
-        return { ok: false, reason: mutable.lifecycleReason || "runtime_failure", agentId: id, agent: this.getAgent(id) };
-      }
+      if (mutable.lifecycleState === Lifecycle.STATES.FAILED) return { ok: false, reason: mutable.lifecycleReason || "runtime_failure", agentId: id, agent: this.getAgent(id) };
+      mutable.status = "IDLE";
       mutable.lastSeenAt = this.clock();
-      this.transitionAgent(mutable, Lifecycle.STATES.READY, {
+      mutable.updatedAt = mutable.lastSeenAt;
+      this.transitionAgent(mutable, Lifecycle.STATES.READY, { reason: "prompt_ready", legacyStatus: "IDLE", readinessCheckedAt: mutable.lastSeenAt });
+      return { ok: true, agentId: id, agent: this.getAgent(id) };
+    }
+    async openAgent({ agentId = null, role = "worker", label = "" } = {}) {
+      let agent = agentId ? this.agents.get(String(agentId)) : null;
+      if (!agent) {
+        const created = this.addAgent({ agentId: agentId || undefined, role, label, status: "IDLE" });
+        agent = this.agents.get(created.agentId);
+      }
+      agent.role = role === "lead" ? "lead" : "worker";
+      if (label) agent.label = String(label);
+      agent.status = "IDLE";
+      agent.lastError = null;
+      agent.lastSeenAt = this.clock();
+      agent.updatedAt = agent.lastSeenAt;
+      this.transitionAgent(agent, Lifecycle.STATES.READY, {
         reason: "prompt_ready",
         legacyStatus: "IDLE",
-        readinessCheckedAt: mutable.lastSeenAt
+        readinessCheckedAt: agent.lastSeenAt,
+        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED,
+        validated: true
       });
-      return { ok: true, availability: "ready", generating: false, composerOccupied: false, agent: this.getAgent(id) };
+      this.emitAgentEvent({ type: "agent-binding-changed", agentId: agent.agentId, binding: this.runtimeMetadata(agent), at: agent.updatedAt, role: agent.role });
+      return { ok: true, agent: this.getAgent(agent.agentId) };
     }
     async sendPrompt(agentId, prompt) {
       const id = String(agentId || "");
@@ -321,12 +191,9 @@
       const result = typeof response === "function" ? await response(id) : { ok: true, agentId: id };
       if (result?.ok !== false && this.agents.get(id)?.lifecycleState !== Lifecycle.STATES.FAILED) {
         const mutable = this.agents.get(id);
+        mutable.status = "IDLE";
         mutable.lastSeenAt = this.clock();
-        this.transitionAgent(mutable, Lifecycle.STATES.READY, {
-          reason: "prompt_ready",
-          legacyStatus: "IDLE",
-          readinessCheckedAt: mutable.lastSeenAt
-        });
+        this.transitionAgent(mutable, Lifecycle.STATES.READY, { reason: "prompt_ready", legacyStatus: "IDLE", readinessCheckedAt: mutable.lastSeenAt });
       }
       return result;
     }
@@ -352,8 +219,5 @@
   root.MemoryStateStore = MemoryStateStore;
   root.FakeAgentRuntime = FakeAgentRuntime;
   root.DeterministicTimerRuntime = DeterministicTimerRuntime;
-
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = { MemoryStateStore, FakeAgentRuntime, DeterministicTimerRuntime };
-  }
+  if (typeof module !== "undefined" && module.exports) module.exports = { MemoryStateStore, FakeAgentRuntime, DeterministicTimerRuntime };
 })();

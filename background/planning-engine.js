@@ -16,7 +16,7 @@
     "task_graph_tasks_missing"
   ]);
 
-  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "sessionId", "dispatchKind", "startedAt"];
+  const TRACE_FIELDS = ["traceId", "projectId", "taskId", "runId", "agentId", "stage", "dispatchKind", "startedAt"];
 
   function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
   function hasItems(value) { return Array.isArray(value) && value.length > 0; }
@@ -75,7 +75,7 @@
     isAvailable(agent) { return Boolean(agent && this.registry?.isAgentAvailable?.(agent)); }
     getPublicState() { return this.projectStore.summary(); }
 
-    createTrace({ projectId, taskId, runId, agentId, stage, sessionId = null, dispatchKind = "normal" } = {}) {
+    createTrace({ projectId, taskId, runId, agentId, stage, dispatchKind = "normal" } = {}) {
       return traceContext({
         traceId: `trace-${this.traceIdFactory()}`,
         projectId,
@@ -83,7 +83,6 @@
         runId,
         agentId,
         stage,
-        sessionId,
         dispatchKind,
         startedAt: this.clock()
       });
@@ -96,7 +95,6 @@
         runId: record?.event?.runId,
         agentId: record?.event?.agentId,
         stage: record?.event?.payload?.stage,
-        sessionId: record?.runtimeSource?.sessionId
       });
     }
 
@@ -105,8 +103,8 @@
       if (!lead) return { ok: false, reason: "lead_not_ready", lifecycle: null };
 
       let ping = null;
-      if (typeof this.registry?.pingAgent === "function") {
-        try { ping = await this.registry.pingAgent(lead.agentId); }
+      if (typeof this.registry?.refreshAgent === "function") {
+        try { ping = await this.registry.refreshAgent(lead.agentId); }
         catch (error) {
           ping = { ok: false, reason: "lead_readiness_check_failed", message: String(error?.message || error) };
         }
@@ -268,7 +266,6 @@
         runId,
         agentId: lead.agentId,
         stage,
-        sessionId: this.registry?.sessionIdForAgent?.(lead),
         dispatchKind
       });
       await this.registry.setProtocolContext(lead.agentId, {
@@ -337,7 +334,6 @@
             runId: failedRunId,
             agentId: lead?.agentId || null,
             stage,
-            sessionId: lead ? this.registry?.sessionIdForAgent?.(lead) : null,
             dispatchKind: resolvedDispatchKind
           });
           await this.projectStore.beginStage(projectId, { stage, runId: failedRunId });
@@ -366,7 +362,6 @@
         runId,
         agentId: lead.agentId,
         stage,
-        sessionId: this.registry?.sessionIdForAgent?.(lead),
         dispatchKind: resolvedDispatchKind
       });
       await this.registry.setProtocolContext(lead.agentId, { projectId, taskId, runId });

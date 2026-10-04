@@ -4,9 +4,9 @@ const Contracts = require("../../platform/contracts.js");
 async function agentRuntimeConformance(runtime) {
   Contracts.assertAgentRuntime(runtime);
   await runtime.load();
-  const session = await runtime.createSession({ url: "about:blank", active: true });
-  assert.ok(session?.id);
-  const agent = await runtime.createAgentForSession({ role: "worker", session, label: "contract" });
+  const opened = await runtime.openAgent({ role: "worker", label: "contract" });
+  assert.equal(opened?.ok, true);
+  const agent = opened.agent;
   assert.ok(agent?.agentId);
   assert.equal(runtime.isAgentConnected(agent.agentId), true);
   assert.equal(typeof runtime.subscribeAgentEvents, "function");
@@ -14,8 +14,8 @@ async function agentRuntimeConformance(runtime) {
   assert.equal(typeof runtime.isAgentReady, "function");
   assert.equal(typeof runtime.isAgentBusy, "function");
   assert.equal(typeof runtime.isAgentAvailable, "function");
-  const ping = await runtime.pingAgent(agent.agentId);
-  assert.equal(ping?.ok, true);
+  const refreshed = await runtime.refreshAgent(agent.agentId);
+  assert.equal(refreshed?.ok, true);
   assert.equal(runtime.isAgentReady(agent.agentId), true);
   assert.equal(runtime.getAgentLifecycle(agent.agentId).lifecycleState, "READY");
   await runtime.setProtocolContext(agent.agentId, { projectId: "P1", taskId: "T1", runId: "R1" });
@@ -27,7 +27,7 @@ async function agentRuntimeConformance(runtime) {
   assert.equal(stopped?.ok, true);
   await runtime.clearProtocolContext(agent.agentId);
   assert.equal(runtime.getAgent(agent.agentId).protocolContext, null);
-  await runtime.removeSession(session.id);
+  assert.equal(await runtime.removeAgent(agent.agentId), true);
 }
 
 async function stateStoreConformance(store) {

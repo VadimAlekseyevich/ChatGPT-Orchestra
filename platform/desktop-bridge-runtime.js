@@ -200,7 +200,7 @@
     isAgentConnected(agentOrId) {
       this.syncTransportLifecycle();
       const agent = typeof agentOrId === "string" ? this.agents.get(agentOrId) : this.agents.get(String(agentOrId?.agentId || "")) || agentOrId;
-      return Boolean(agent && this.sessionIdForAgent(agent) && agent.status !== "OFFLINE");
+      return Boolean(agent && agent.status !== "OFFLINE");
     }
 
     isAgentReady(agentOrId) {
@@ -230,7 +230,11 @@
       return sessionId ? { kind: "extension-companion", sessionId } : null;
     }
 
-    normalizeSender(sender = {}) {
+    runtimeMetadata(agentOrId) {
+      return { runtimeKind: "extension-companion", bindingPresent: Boolean(this.sessionIdForAgent(agentOrId)) };
+    }
+
+    resolveSender(sender = {}) {
       if (sender?.kind && Object.prototype.hasOwnProperty.call(sender, "sessionId")) return Contracts.normalizeRuntimeSender(sender);
       const agent = sender?.agentId ? this.getAgent(sender.agentId) : sender?.sessionId ? this.getAgentBySessionId(sender.sessionId) : null;
       return Contracts.normalizeRuntimeSender({
@@ -239,6 +243,15 @@
         agentId: agent?.agentId || sender?.agentId || null,
         url: agent?.chatUrl || sender?.url || "",
         legacyTabId: Number.isInteger(sender?.legacyTabId) ? sender.legacyTabId : null
+      });
+    }
+
+    normalizeSender(sender = {}) {
+      const host = this.resolveSender(sender);
+      return Contracts.normalizePortableSender({
+        agentId: host.agentId,
+        runtimeKind: "extension-companion",
+        bindingPresent: Boolean(host.sessionId)
       });
     }
 
@@ -266,6 +279,22 @@
     async setRuntimeStatus(status) {
       const snapshot = await this.remote("setRuntimeStatus", { status });
       return this.applySnapshot(snapshot);
+    }
+    async reconcileAgents() {
+      const result = await this.remote("reconcileAgents");
+      if (result?.snapshot) this.applySnapshot(result.snapshot);
+      else this.applySnapshot(await this.remote("snapshot"));
+      return { ...(result || {}), ok: result?.ok !== false, agents: this.listAgents() };
+    }
+    async openAgent(options = {}) {
+      const result = await this.remote("openAgent", options);
+      if (result?.agent) this.upsertAgent(result.agent);
+      return result;
+    }
+    async refreshAgent(agentId) {
+      const result = await this.remote("refreshAgent", { agentId });
+      if (result?.agent) this.upsertAgent(result.agent);
+      return result;
     }
     async setProtocolContext(agentId, context) { return this.upsertAgent(await this.remote("setProtocolContext", { agentId, context })); }
     async clearProtocolContext(agentId) { return this.upsertAgent(await this.remote("clearProtocolContext", { agentId })); }

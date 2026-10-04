@@ -12,12 +12,12 @@ test("desktop companion binding routes runtime and session events through existi
     agentRuntime: {
       bindHostHandlers(value) { handlers = value; return () => { unbound = true; }; },
       getAgent(id) { return agents.get(id) || null; },
-      getAgentBySessionId(id) { return [...agents.values()].find((agent) => agent.sessionId === id) || null; }
+      getAgentBySessionId(id) { return [...agents.values()].find((agent) => agent.sessionId === id) || null; },
+      async refreshAgent(id) { calls.push(["refresh", id]); return { ok: true, agent: agents.get(id) || null }; },
+      async markSessionOffline(id, reason) { calls.push(["offline", id, reason]); return agents.get("A1") || null; }
     },
     orchestrator: {
-      async handleRuntimeMessage(message, sender) { calls.push(["runtime", message.type, sender.agentId]); return { ok: true }; },
-      async handleSessionRemoved(id) { calls.push(["removed", id]); },
-      async handleSessionUpdated(id, changeInfo) { calls.push(["updated", id, changeInfo.status]); }
+      async handleRuntimeMessage(message, sender) { calls.push(["runtime", message.type, sender.agentId]); return { ok: true }; }
     },
     integrationEngine: {
       async handleAgentStateChanged(agent) { calls.push(["state", agent.agentId]); },
@@ -40,10 +40,10 @@ test("desktop companion binding routes runtime and session events through existi
     ["runtime", "CONTENT_HEARTBEAT", "A1"],
     ["state", "A1"],
     ["recovery", "companion:CONTENT_HEARTBEAT"],
-    ["updated", "S1", "complete"],
+    ["refresh", "A1"],
     ["state", "A1"],
     ["recovery", "companion:session_updated"],
-    ["removed", "S1"],
+    ["offline", "S1", "session_closed"],
     ["unavailable", "A1", "session_closed"],
     ["recovery", "companion:session_removed"]
   ]);

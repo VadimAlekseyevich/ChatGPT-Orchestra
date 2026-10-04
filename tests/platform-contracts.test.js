@@ -29,6 +29,8 @@ test("FakeAgentRuntime satisfies AgentRuntime contract without Chrome globals", 
       ]
     });
     Contracts.assertAgentRuntime(runtime);
+    assert.equal(typeof runtime.createSession, "undefined");
+    assert.equal(typeof runtime.sessionIdForAgent, "undefined");
     await runtime.load();
     assert.equal(runtime.isAgentConnected("lead-1"), true);
     assert.equal((await runtime.sendPrompt("worker-1", "task")).ok, true);
@@ -44,7 +46,7 @@ test("FakeAgentRuntime satisfies AgentRuntime contract without Chrome globals", 
 
 test("runtime connectivity is distinct from agent health", () => {
   const fakeRuntime = new FakeAgentRuntime({
-    agents: [{ agentId: "worker-error", role: "worker", status: "ERROR", sessionId: "session-error" }]
+    agents: [{ agentId: "worker-error", role: "worker", status: "ERROR" }]
   });
   assert.equal(fakeRuntime.isAgentConnected("worker-error"), true);
   fakeRuntime.agents.get("worker-error").status = "OFFLINE";
@@ -77,6 +79,7 @@ test("DeterministicTimerRuntime satisfies TimerRuntime and fires only on demand"
 
 test("contract assertions fail closed for partial implementations", () => {
   assert.throws(() => Contracts.assertAgentRuntime({ sendPrompt() {} }), /agent_runtime_contract_missing/);
+  assert.throws(() => Contracts.assertRuntimeHostControl({ createSession() {} }), /runtime_host_control_contract_missing/);
   assert.throws(() => Contracts.assertStateStore({ get() {} }), /state_store_contract_missing/);
   assert.throws(() => Contracts.assertTimerRuntime({ cancel() {} }), /timer_runtime_contract_missing/);
 });
