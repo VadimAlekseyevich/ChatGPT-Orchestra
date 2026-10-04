@@ -18,12 +18,13 @@ function harness() {
     agentRuntime: {
       bindHostHandlers(value) { handlers = value; return () => { handlers = null; }; },
       getAgent(agentId) { return agentId === "A1" ? { ...agent } : null; },
-      getAgentBySessionId(sessionId) { return sessionId === "S1" ? { ...agent } : null; }
+      getAgentBySessionId(sessionId) { return sessionId === "S1" ? { ...agent } : null; },
+      async updateSessionNavigation(sessionId, url) { calls.push(["navigation", sessionId, url]); return { ...agent, chatUrl: url }; },
+      async refreshAgent(agentId) { calls.push(["refresh", agentId]); return { ok: true, agent: { ...agent } }; },
+      async markSessionOffline(sessionId, reason) { calls.push(["offline", sessionId, reason]); return { ...agent, status: "OFFLINE" }; }
     },
     orchestrator: {
-      async handleRuntimeMessage(message, sender) { calls.push(["runtime", message, sender]); return { ok: true, accepted: true }; },
-      async handleSessionRemoved(sessionId) { calls.push(["removed", sessionId]); },
-      async handleSessionUpdated(sessionId, changeInfo, session) { calls.push(["updated", sessionId, changeInfo, session]); }
+      async handleRuntimeMessage(message, sender) { calls.push(["runtime", message, sender]); return { ok: true, accepted: true }; }
     },
     integrationEngine: {
       async handleAgentStateChanged(value) { calls.push(["integration-state", value.agentId]); },
@@ -61,8 +62,8 @@ test("managed browser host binding forwards session close/navigation into existi
   const handlers = getHandlers();
   await handlers.onSessionUpdated("S1", { url: "https://chatgpt.com/c/next" }, { id: "S1", url: "https://chatgpt.com/c/next" });
   await handlers.onSessionRemoved("S1");
-  assert.ok(calls.some((entry) => entry[0] === "updated" && entry[1] === "S1"));
-  assert.ok(calls.some((entry) => entry[0] === "removed" && entry[1] === "S1"));
+  assert.ok(calls.some((entry) => entry[0] === "navigation" && entry[1] === "S1"));
+  assert.ok(calls.some((entry) => entry[0] === "offline" && entry[1] === "S1"));
   assert.ok(calls.some((entry) => entry[0] === "integration-unavailable" && entry[1] === "A1"));
   assert.ok(calls.some((entry) => entry[0] === "recovery" && entry[1] === "direct-browser:session_updated"));
   assert.ok(calls.some((entry) => entry[0] === "recovery" && entry[1] === "direct-browser:session_removed"));
@@ -72,7 +73,7 @@ test("agent browser sessions cannot call desktop Orchestrator API commands", asy
   const { host } = harness();
   const blocked = await handleManagedApiMessage(host, { type: "API_EXECUTE", payload: { name: "stopNow" } }, { sessionId: "S1", agentId: "A1" });
   assert.equal(blocked.ok, false);
-  assert.equal(blocked.reason, "orchestrator_command_forbidden_from_agent_session");
+  assert.equal(blocked.reason, "orchestrator_command_forbidden_from_agent");
 });
 
 test("non-agent desktop browser UI messages may use the normal API boundary", async () => {

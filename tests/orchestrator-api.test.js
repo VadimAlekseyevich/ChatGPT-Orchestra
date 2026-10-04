@@ -162,14 +162,14 @@ test("legacy extension messages remain compatibility transport", async () => {
   assert.deepEqual(calls.at(-1), ["createWorkers", 4]);
 });
 
-test("agent/browser sessions cannot issue privileged generic API commands", async () => {
+test("agent identities cannot issue privileged generic API commands", async () => {
   const { api } = makeApi();
   const result = await api.handleLegacyMessage(
     { type: MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE, payload: { name: "cancelTask", payload: { taskId: "T1" } } },
-    { kind: "agent-session", sessionId: "42", agentId: "A1" }
+    { agentId: "A1", runtimeKind: "extension", bindingPresent: true }
   );
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "orchestrator_command_forbidden_from_agent_session");
+  assert.equal(result.reason, "orchestrator_command_forbidden_from_agent");
 });
 
 test("unknown API names fail closed", async () => {

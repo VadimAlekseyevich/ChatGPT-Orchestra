@@ -3,7 +3,15 @@
 const path = require("node:path");
 const Contracts = require("../../../platform/contracts.js");
 const Lifecycle = require("../../../platform/agent-lifecycle.js");
+const MESSAGE_TYPES = require("../../../content/message-types.js");
 const { normalizeTraceContext, traceDetails } = require("./runtime-trace.js");
+
+const RUNTIME_STATE_MESSAGE_TYPES = new Set([
+  MESSAGE_TYPES.CONTENT_READY,
+  MESSAGE_TYPES.CONTENT_HEARTBEAT,
+  MESSAGE_TYPES.CHAT_STATE,
+  MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
+]);
 
 const MANAGED_BROWSER_DRIVER_METHODS = Object.freeze([
   "start",
@@ -238,7 +246,17 @@ class ManagedBrowserAgentRuntime {
   async publishRuntimeMessage(message, sender = {}) {
     const handler = this.hostHandlers?.onRuntimeMessage;
     if (!handler) return { ok: false, reason: "managed_browser_host_unbound" };
-    return handler(message, this.normalizeSender(sender));
+
+    const hostSender = this.resolveSender(sender);
+    if (hostSender.sessionId && RUNTIME_STATE_MESSAGE_TYPES.has(message?.type)) {
+      await this.updateHeartbeat(hostSender.sessionId, message?.payload || {}, hostSender.url || sender?.url || "");
+    }
+
+    return handler(message, Contracts.normalizePortableSender({
+      agentId: hostSender.agentId,
+      runtimeKind: "desktop-managed-browser",
+      bindingPresent: Boolean(hostSender.sessionId)
+    }));
   }
 
   async publishApiMessage(message, sender = {}) {

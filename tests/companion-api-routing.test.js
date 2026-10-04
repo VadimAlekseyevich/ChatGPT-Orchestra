@@ -12,7 +12,7 @@ async function createFixture() {
   const desktopRpc = new CompanionRpcPeer({ transport: pair.desktop, requestTimeoutMs: 1000 });
   const extensionRpc = new CompanionRpcPeer({ transport: pair.extension, requestTimeoutMs: 1000 });
   const extensionRuntime = new FakeAgentRuntime({
-    agents: [{ agentId: "lead-1", role: "lead", status: "IDLE", sessionId: "42" }]
+    agents: [{ agentId: "lead-1", role: "lead", status: "IDLE" }]
   });
   const extensionEndpoint = new ExtensionCompanionEndpoint({ rpc: extensionRpc, agentRuntime: extensionRuntime });
   const desktopRuntime = new DesktopBridgeAgentRuntime({ rpc: desktopRpc });
@@ -42,8 +42,10 @@ test("extension UI message reaches desktop Orchestrator API handler over compani
     assert.equal(result.ok, true);
     assert.deepEqual(result.echoed, message.payload);
     assert.equal(fixture.apiCalls.length, 1);
-    assert.equal(fixture.apiCalls[0].sender.kind, "test-ui");
-    assert.equal(fixture.apiCalls[0].sender.sessionId, null);
+    assert.equal(fixture.apiCalls[0].sender.agentId, null);
+    assert.equal(fixture.apiCalls[0].sender.runtimeKind, "unknown");
+    assert.equal(fixture.apiCalls[0].sender.bindingPresent, false);
+    assert.equal("sessionId" in fixture.apiCalls[0].sender, false);
   } finally {
     await fixture.desktopRuntime.close();
     await fixture.extensionEndpoint.stop();

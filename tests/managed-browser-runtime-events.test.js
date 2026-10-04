@@ -43,8 +43,39 @@ test("managed browser runtime publishes agent messages through bound host handle
   assert.equal(result.accepted, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].sender.agentId, agent.agentId);
-  assert.equal(calls[0].sender.sessionId, session.id);
-  assert.equal(calls[0].sender.kind, "agent-session");
+  assert.equal(calls[0].sender.runtimeKind, "desktop-managed-browser");
+  assert.equal(calls[0].sender.bindingPresent, true);
+  assert.equal("sessionId" in calls[0].sender, false);
+  await runtime.close();
+});
+
+
+test("managed browser runtime applies lifecycle signals before forwarding a portable sender", async () => {
+  const { runtime } = createRuntime();
+  await runtime.load();
+  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
+  const agent = await runtime.createAgentForSession({ role: "worker", session, status: "BUSY" });
+  const calls = [];
+  runtime.bindHostHandlers({
+    onRuntimeMessage: async (message, sender) => {
+      calls.push({ message, sender, lifecycleState: runtime.getAgent(agent.agentId).lifecycleState });
+      return { ok: true };
+    }
+  });
+
+  const result = await runtime.publishRuntimeMessage(
+    { type: "orchestra/content-heartbeat", payload: { availability: "ready", generating: false } },
+    { agentId: agent.agentId, sessionId: session.id, url: session.url }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleState, "READY");
+  assert.equal(calls[0].lifecycleState, "READY");
+  assert.deepEqual(calls[0].sender, {
+    agentId: agent.agentId,
+    runtimeKind: "desktop-managed-browser",
+    bindingPresent: true
+  });
   await runtime.close();
 });
 
