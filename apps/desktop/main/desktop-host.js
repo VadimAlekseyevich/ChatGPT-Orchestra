@@ -197,7 +197,7 @@ class DesktopHost {
     this.recoveryController.setActions({
       stopAgent: (agentId) => this.agentRuntime.stopAgent(agentId),
       createWorkers: (count) => this.orchestrator.createWorkers(count),
-      reconcileTabs: () => this.orchestrator.reconcileRegisteredSessions()
+      reconcileRuntime: () => this.orchestrator.reconcileAgents()
     });
 
     this.observabilityService = new root.ObservabilityService({
@@ -358,8 +358,8 @@ class DesktopHost {
     if (!this.autoSeedFakeLead || !(this.agentRuntime instanceof this.root.FakeAgentRuntime)) return null;
     const existing = this.agentRuntime.listAgents().find((agent) => agent.role === "lead");
     if (existing) return existing;
-    const session = await this.agentRuntime.createSession({ url: "https://chatgpt.com/", active: true });
-    return this.agentRuntime.createAgentForSession({ role: "lead", session, chatUrl: session.url, label: "Lead", status: "IDLE" });
+    const opened = await this.agentRuntime.openAgent({ role: "lead", label: "Lead" });
+    return opened?.agent || null;
   }
 
   async readyFakeWorkers(reason = "desktop_fake_runtime") {
@@ -367,7 +367,7 @@ class DesktopHost {
     let ready = 0;
     for (const agent of this.agentRuntime.listAgents()) {
       if (agent.role !== "worker" || agent.status !== "CONNECTING") continue;
-      const ping = await this.agentRuntime.pingAgent(agent.agentId);
+      const ping = await this.agentRuntime.refreshAgent(agent.agentId);
       if (ping?.ok) ready += 1;
     }
     if (ready > 0) await this.schedulerEngine.tick({ reason: `fake_workers_ready:${reason}` });
