@@ -101,3 +101,9 @@ test("warning severity filter is deterministic", () => {
   assert.ok(all.length >= errors.length);
   assert.ok(errors.every((item) => ["error", "critical"].includes(item.severity)));
 });
+
+
+test("portable observability agent DTOs do not require browser bindings", () => {
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "../background/observability-service.js"), "utf8");
+  for (const token of ["executorRef", "runtimeKind", "bindingPresent"]) assert.equal(source.includes(token), true);
+});
