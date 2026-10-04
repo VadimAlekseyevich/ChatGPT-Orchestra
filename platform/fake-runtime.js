@@ -168,7 +168,8 @@
         reason: "prompt_ready",
         legacyStatus: "IDLE",
         readinessCheckedAt: agent.lastSeenAt,
-        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED
+        explicitRecovery: agent.lifecycleState === Lifecycle.STATES.FAILED,
+        validated: true
       });
       this.emitAgentEvent({ type: "agent-binding-changed", agentId: agent.agentId, binding: this.runtimeMetadata(agent), at: agent.updatedAt, role: agent.role });
       return { ok: true, agent: this.getAgent(agent.agentId) };

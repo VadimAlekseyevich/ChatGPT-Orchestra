@@ -43,7 +43,7 @@ test("extension UI message reaches desktop Orchestrator API handler over compani
     assert.deepEqual(result.echoed, message.payload);
     assert.equal(fixture.apiCalls.length, 1);
     assert.equal(fixture.apiCalls[0].sender.agentId, null);
-    assert.equal(fixture.apiCalls[0].sender.runtimeKind, "unknown");
+    assert.equal(fixture.apiCalls[0].sender.runtimeKind, "extension-companion");
     assert.equal(fixture.apiCalls[0].sender.bindingPresent, false);
     assert.equal("sessionId" in fixture.apiCalls[0].sender, false);
   } finally {
