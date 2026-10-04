@@ -271,7 +271,7 @@ async function approveQueuedReviews(host, projectId) {
           payload: approvalPayload(task)
         }
       });
-      const readiness = await host.agentRuntime.pingAgent(review.reviewerAgentId);
+      const readiness = await host.agentRuntime.refreshAgent(review.reviewerAgentId);
       assert.equal(readiness?.ok, true, "synthetic review completion must publish fresh readiness evidence");
     }
   }
@@ -312,6 +312,10 @@ test("desktop SQLite host pauses at a safe point, restarts, resumes reviews and 
 
   try {
     await host.init();
+    for (const agent of host.agentRuntime.listAgents()) {
+      assert.equal("tabId" in agent, false);
+      assert.equal("sessionId" in agent, false);
+    }
     const started = await host.execute("startProject", {
       goal: "Exercise planning, parallel fake workers, review, restart recovery and integration.",
       repositoryUrl: "https://github.com/acme/widget"
@@ -416,6 +420,10 @@ test("desktop SQLite host pauses at a safe point, restarts, resumes reviews and 
     assert.equal(host.integrationStore.summary().status, "INTEGRATION_VERIFIED");
     assert.equal(host.schedulerStore.summary().status, "INTEGRATION_VERIFIED");
     assert.equal(host.projectStore.getActiveProject().status, "INTEGRATION_VERIFIED");
+    for (const agent of host.agentRuntime.listAgents()) {
+      assert.equal("tabId" in agent, false);
+      assert.equal("sessionId" in agent, false);
+    }
 
     const dashboard = await host.query("dashboard");
     assert.equal(dashboard.ok, true);

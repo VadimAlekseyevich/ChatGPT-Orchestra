@@ -86,7 +86,7 @@ test("ExtensionAgentRuntime and ManagedBrowserAgentRuntime pass the same portabl
   await managed.close();
 });
 
-test("extension tab senders and managed page senders normalize to the same agent-session boundary", async () => {
+test("extension tabs and managed pages resolve to the same portable logical sender boundary", async () => {
   const extension = extensionRuntime();
   await extension.load();
   const extSession = await extension.createSession({ url: "https://chatgpt.com/", active: true });
@@ -99,13 +99,20 @@ test("extension tab senders and managed page senders normalize to the same agent
   const managedAgent = await managed.createAgentForSession({ role: "lead", session: managedSession, status: "IDLE" });
   const managedSender = managed.normalizeSender({ sessionId: managedSession.id, url: managedSession.url });
 
-  assert.equal(extSender.kind, "agent-session");
-  assert.equal(managedSender.kind, "agent-session");
   assert.equal(extSender.agentId, extAgent.agentId);
   assert.equal(managedSender.agentId, managedAgent.agentId);
-  assert.ok(extSender.sessionId);
-  assert.ok(managedSender.sessionId);
-  assert.equal(managedSender.legacyTabId, null);
+  assert.equal(extSender.runtimeKind, "extension");
+  assert.equal(managedSender.runtimeKind, "desktop-managed-browser");
+  assert.equal(extSender.bindingPresent, true);
+  assert.equal(managedSender.bindingPresent, true);
+  assert.equal("sessionId" in extSender, false);
+  assert.equal("sessionId" in managedSender, false);
+  assert.equal("legacyTabId" in extSender, false);
+  assert.equal("legacyTabId" in managedSender, false);
+
+  const extensionHostSender = extension.resolveSender({ tab: { id: Number(extSession.id), url: extSession.url } });
+  assert.equal(extensionHostSender.agentId, extAgent.agentId);
+  assert.equal(extensionHostSender.sessionId, extSession.id);
 
   await managed.close();
 });

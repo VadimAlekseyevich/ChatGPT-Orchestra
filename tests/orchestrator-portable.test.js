@@ -27,8 +27,10 @@ test("ServiceWorkerOrchestrator manages agents through FakeAgentRuntime with no 
     assert.equal(runtime.listAgents().filter((agent) => agent.role === "worker").length, 2);
 
     const target = workers.created[0];
-    assert.equal((await runtime.pingAgent(target)).ok, true);
+    assert.equal((await runtime.refreshAgent(target)).ok, true);
     assert.equal(runtime.isAgentReady(target), true);
+    assert.equal("tabId" in runtime.getAgent(target), false);
+    assert.equal("sessionId" in runtime.getAgent(target), false);
     assert.equal((await orchestrator.sendPromptToAgent(target, "portable task")).ok, true);
     assert.deepEqual(runtime.prompts.at(-1), { agentId: target, prompt: "portable task" });
   } finally {
@@ -40,11 +42,11 @@ test("portable sender context still forbids admin commands from agent sessions",
   const runtime = new FakeAgentRuntime({ agents: [{ agentId: "worker-1", role: "worker", status: "IDLE" }] });
   const orchestrator = new ServiceWorkerOrchestrator({ agentRuntime: runtime, logger: { warn() {} } });
   await orchestrator.init();
-  const sender = runtime.normalizeSender({ agentId: "worker-1" });
+  const sender = { agentId: "worker-1", runtimeKind: "fake", bindingPresent: true };
   const result = await orchestrator.handleRuntimeMessage(
     { type: globalThis.ChatGPTOrchestra.MESSAGE_TYPES.ORCHESTRATOR_CREATE_WORKERS, payload: { count: 2 } },
     sender
   );
   assert.equal(result.ok, false);
-  assert.equal(result.reason, "orchestrator_command_forbidden_from_agent_session");
+  assert.equal(result.reason, "orchestrator_command_forbidden_from_agent");
 });

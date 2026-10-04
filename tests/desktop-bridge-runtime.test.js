@@ -27,12 +27,12 @@ test("DesktopBridgeAgentRuntime controls an extension-side AgentRuntime through 
     assert.equal(runtime.handshake.role, "extension-companion");
     assert.equal(runtime.getAgent("lead-1").role, "lead");
 
-    const session = await runtime.createSession({ url: "https://chatgpt.com/", active: false });
-    const worker = await runtime.createAgentForSession({ role: "worker", session, label: "Worker 1", status: "CONNECTING" });
-    assert.equal(runtime.sessionIdForAgent(worker.agentId), session.id);
+    const opened = await runtime.openAgent({ role: "worker", label: "Worker 1" });
+    assert.equal(opened.ok, true);
+    const worker = opened.agent;
 
-    const ping = await runtime.pingAgent(worker.agentId);
-    assert.equal(ping.ok, true);
+    const refreshed = await runtime.refreshAgent(worker.agentId);
+    assert.equal(refreshed.ok, true);
     assert.equal(runtime.getAgent(worker.agentId).status, "IDLE");
     assert.equal(runtime.getAgentLifecycle(worker.agentId).lifecycleState, "READY");
     assert.equal(runtime.isAgentReady(worker.agentId), true);
@@ -46,7 +46,7 @@ test("DesktopBridgeAgentRuntime controls an extension-side AgentRuntime through 
     runtime.bindHostHandlers({
       onRuntimeMessage: async (message, sender) => ({ ok: true, echo: message.type, agentId: sender.agentId })
     });
-    const forwarded = await endpoint.forwardRuntimeMessage({ type: "CONTENT_HEARTBEAT" }, { sessionId: session.id });
+    const forwarded = await endpoint.forwardRuntimeMessage({ type: "CONTENT_HEARTBEAT" }, { agentId: worker.agentId, runtimeKind: "fake", bindingPresent: true });
     assert.equal(forwarded.ok, true);
     assert.equal(forwarded.echo, "CONTENT_HEARTBEAT");
     assert.equal(forwarded.agentId, worker.agentId);
@@ -101,7 +101,7 @@ test("DesktopBridgeAgentRuntime demotes cached READY on transport loss and reval
       && event.reason === "transport_disconnected"));
 
     await pair.extension.connect();
-    const ping = await runtime.pingAgent("lead-transport");
+    const ping = await runtime.refreshAgent("lead-transport");
     assert.equal(ping.ok, true);
     assert.equal(runtime.getAgentLifecycle("lead-transport").lifecycleState, "READY");
     assert.equal(runtime.isAgentReady("lead-transport"), true);
@@ -148,7 +148,7 @@ test("DesktopBridgeAgentRuntime fails cached agents closed on contract-version m
     }
   });
 
-  await assert.rejects(runtime.pingAgent("lead-incompatible"), /companion_contract_version_mismatch/);
+  await assert.rejects(runtime.refreshAgent("lead-incompatible"), /companion_contract_version_mismatch/);
   assert.equal(runtime.getAgentLifecycle("lead-incompatible").lifecycleState, "FAILED");
   assert.equal(runtime.getAgentLifecycle("lead-incompatible").lifecycleReason, "runtime_incompatible");
   assert.equal(runtime.isAgentReady("lead-incompatible"), false);
