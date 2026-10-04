@@ -92,7 +92,6 @@
         status: agent.status,
         lifecycleState: lifecycleState(this.registry, agent),
         lifecycleReason: this.registry?.getAgentLifecycle?.(agent.agentId)?.lifecycleReason || agent.lifecycleReason || null,
-        tabId: Number.isInteger(agent.tabId) ? agent.tabId : null,
         protocolContext: agent.protocolContext ? clone(agent.protocolContext) : null,
         lastSeenAt: agent.lastSeenAt || 0
       }));
@@ -337,7 +336,7 @@
       });
 
       const issues = [];
-      try { await this.actions.reconcileTabs?.(); } catch (error) { issues.push({ code: "tab_reconciliation_failed", message: error?.message || String(error) }); }
+      try { await this.actions.reconcileRuntime?.(); } catch (error) { issues.push({ code: "runtime_reconciliation_failed", message: error?.message || String(error) }); }
 
       const schedulerSummary = this.schedulerStore?.summary?.();
       if (schedulerSummary?.taskCount > 0 && schedulerSummary.status !== "INTEGRATION_VERIFIED") {
