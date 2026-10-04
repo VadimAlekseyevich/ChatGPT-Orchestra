@@ -2,11 +2,23 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const CONTRACT_VERSION = 6;
+  const CONTRACT_VERSION = 7;
 
   const AGENT_RUNTIME_METHODS = Object.freeze([
-    "load","snapshot","listAgents","getAgent","getAgentBySessionId","getAgentLifecycle","isAgentConnected","isAgentReady","isAgentBusy","isAgentAvailable","subscribeAgentEvents","sessionIdForAgent","runtimeBinding","setRuntimeStatus","setProtocolContext","clearProtocolContext","removeAgent","normalizeSender","getActiveSession","getSession","createSession","navigateSession","removeSession","bindAgentToSession","createAgentForSession","markSessionOffline","updateSessionNavigation","updateHeartbeat","pingAgent","sendPrompt","stopAgent"
+    "load","snapshot","listAgents","getAgent","getAgentLifecycle",
+    "isAgentConnected","isAgentReady","isAgentBusy","isAgentAvailable",
+    "subscribeAgentEvents","runtimeMetadata","setRuntimeStatus",
+    "setProtocolContext","clearProtocolContext","removeAgent",
+    "reconcileAgents","refreshAgent","openAgent","sendPrompt","stopAgent"
   ]);
+
+  const RUNTIME_HOST_CONTROL_METHODS = Object.freeze([
+    "getAgentBySessionId","sessionIdForAgent","runtimeBinding","resolveSender",
+    "getActiveSession","getSession","createSession","navigateSession","removeSession",
+    "bindAgentToSession","createAgentForSession","markSessionOffline",
+    "updateSessionNavigation","updateHeartbeat"
+  ]);
+
   const STATE_STORE_METHODS = Object.freeze(["get", "set"]);
   const TRANSACTIONAL_STATE_STORE_METHODS = Object.freeze(["get", "set", "remove", "clear", "transaction"]);
   const TIMER_RUNTIME_METHODS = Object.freeze(["scheduleRecurring", "cancel"]);
@@ -30,11 +42,20 @@
     return value;
   }
   function assertAgentRuntime(value) { return assertContract("agent_runtime", value, AGENT_RUNTIME_METHODS); }
+  function assertRuntimeHostControl(value) { return assertContract("runtime_host_control", value, RUNTIME_HOST_CONTROL_METHODS); }
   function assertStateStore(value) { return assertContract("state_store", value, STATE_STORE_METHODS); }
   function assertTransactionalStateStore(value) { return assertContract("transactional_state_store", value, TRANSACTIONAL_STATE_STORE_METHODS); }
   function assertTimerRuntime(value) { return assertContract("timer_runtime", value, TIMER_RUNTIME_METHODS); }
   function assertCompanionTransport(value) { return assertContract("companion_transport", value, COMPANION_TRANSPORT_METHODS); }
   function assertGitWorkspace(value) { return assertContract("git_workspace", value, GIT_WORKSPACE_METHODS); }
+
+  function normalizePortableSender(sender = {}) {
+    return {
+      agentId: sender?.agentId ? String(sender.agentId) : null,
+      runtimeKind: String(sender?.runtimeKind || sender?.kind || "unknown"),
+      bindingPresent: sender?.bindingPresent === true
+    };
+  }
 
   function normalizeRuntimeSender(sender = {}) {
     const kind = String(sender.kind || "unknown");
@@ -46,6 +67,7 @@
   root.PlatformContracts = {
     CONTRACT_VERSION,
     AGENT_RUNTIME_METHODS,
+    RUNTIME_HOST_CONTROL_METHODS,
     STATE_STORE_METHODS,
     TRANSACTIONAL_STATE_STORE_METHODS,
     TIMER_RUNTIME_METHODS,
@@ -54,11 +76,13 @@
     API_COMMANDS,
     API_QUERIES,
     assertAgentRuntime,
+    assertRuntimeHostControl,
     assertStateStore,
     assertTransactionalStateStore,
     assertTimerRuntime,
     assertCompanionTransport,
     assertGitWorkspace,
+    normalizePortableSender,
     normalizeRuntimeSender
   };
 
