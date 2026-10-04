@@ -70,6 +70,7 @@ agentRuntime.activateAgent = async (agentId) => {
   }
 };
 root.PlatformContracts.assertAgentRuntime(agentRuntime);
+root.PlatformContracts.assertRuntimeHostControl(agentRuntime);
 
 const eventStore = new root.EventStore({ stateStore });
 const eventBus = new root.EventBus({ registry: agentRuntime, store: eventStore });
@@ -164,7 +165,7 @@ root.RecoveryRuntime.controller = recoveryController;
 recoveryController.setActions({
   stopAgent: (agentId) => agentRuntime.stopAgent(agentId),
   createWorkers: (count) => orchestrator.createWorkers(count),
-  reconcileTabs: () => orchestrator.reconcileRegisteredSessions()
+  reconcileRuntime: () => orchestrator.reconcileAgents()
 });
 
 const observabilityService = new root.ObservabilityService({
@@ -325,25 +326,49 @@ async function companionUnavailable() {
   return { ok: false, reason: "companion_disconnected", companion: status };
 }
 
+const ADAPTER_RUNTIME_SIGNALS = new Set([
+  root.MESSAGE_TYPES.CONTENT_READY,
+  root.MESSAGE_TYPES.CONTENT_HEARTBEAT,
+  root.MESSAGE_TYPES.CHAT_STATE,
+  root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED
+]);
+
+async function applyExtensionRuntimeSignal(message, hostSender) {
+  if (!ADAPTER_RUNTIME_SIGNALS.has(message?.type) || !hostSender?.sessionId) return null;
+  const updated = await agentRuntime.updateHeartbeat(hostSender.sessionId, message?.payload || {}, hostSender.url || "");
+  if (!updated) return { ok: true, ignored: true, reason: "unregistered_runtime_sender" };
+  await schedulerEngine?.handleAgentStateChanged?.(updated);
+  await integrationEngine?.handleAgentStateChanged?.(updated);
+  return { ok: true, agent: updated };
+}
+
+async function handleLocalAgentMessage(message, hostSender, senderContext) {
+  const signal = await applyExtensionRuntimeSignal(message, hostSender);
+  if (signal) return signal;
+  return orchestrator.handleRuntimeMessage(message, senderContext);
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   withReady(async () => {
     const control = await handleCompanionControl(message);
     if (control) return control;
 
+    const hostSender = agentRuntime.resolveSender(sender);
+    const senderContext = agentRuntime.normalizeSender(sender);
+
     if (companionController.isEnabled()) {
       const unavailable = await companionUnavailable();
       if (unavailable) return unavailable;
-      const senderContext = agentRuntime.normalizeSender(sender);
-      return senderContext.sessionId
+      if (hostSender.sessionId) await applyExtensionRuntimeSignal(message, hostSender);
+      return hostSender.sessionId
         ? companionController.forwardRuntimeMessage(message, sender)
         : companionController.forwardApiMessage(message, sender);
     }
 
     if (!localRuntimeActive) await initializeLocalRuntime();
     if (portableReloadPending) return { ok: false, reason: "portable_reload_pending" };
-    const senderContext = agentRuntime.normalizeSender(sender);
     const genericCommand = message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE ? String(message?.payload?.name || "") : "";
-    const isPortableImport = !senderContext.sessionId && (
+    const isPortableImport = !hostSender.sessionId && (
       message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_IMPORT_PROJECT
       || (message?.type === root.MESSAGE_TYPES.ORCHESTRATOR_API_EXECUTE && genericCommand === "importProjectBundle")
     );
@@ -351,8 +376,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     let result;
     try {
-      result = senderContext.sessionId
-        ? await orchestrator.handleRuntimeMessage(message, senderContext)
+      result = hostSender.sessionId
+        ? await handleLocalAgentMessage(message, hostSender, senderContext)
         : await orchestratorApi.handleLegacyMessage(message, senderContext);
     } catch (error) {
       if (isPortableImport) portableReloadPending = false;
@@ -401,8 +426,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     }
     if (!localRuntimeActive) await initializeLocalRuntime();
     const agent = agentRuntime.getAgentBySessionId(sessionId);
-    await orchestrator.handleSessionRemoved(sessionId);
-    if (agent) await integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
+    await agentRuntime.markSessionOffline(sessionId, "session_closed");
+    if (agent?.role === "lead") await planningEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
+    if (agent) {
+      await schedulerEngine?.handleAgentUnavailable?.(agent.agentId, "session_closed");
+      await integrationEngine.handleAgentUnavailable(agent.agentId, "session_closed");
+    }
     await recoveryController.tick({ reason: "session_removed" });
   }).catch((error) => {
     console.warn("[ChatGPT Orchestra] session_removed_handler_failed", error);
@@ -420,8 +449,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       return;
     }
     if (!localRuntimeActive) await initializeLocalRuntime();
-    await orchestrator.handleSessionUpdated(sessionId, changeInfo, session);
-    const agent = agentRuntime.getAgentBySessionId(sessionId);
+    if (changeInfo?.url) await agentRuntime.updateSessionNavigation(sessionId, changeInfo.url);
+    let agent = agentRuntime.getAgentBySessionId(sessionId);
+    if (agent && changeInfo?.status === "complete" && root.isChatGPTUrl(session?.url || changeInfo?.url)) {
+      const refreshed = await agentRuntime.refreshAgent(agent.agentId);
+      agent = refreshed?.agent || agentRuntime.getAgent(agent.agentId);
+    }
     if (agent) await integrationEngine.handleAgentStateChanged(agent);
     await recoveryController.tick({ reason: "session_updated" });
   }).catch((error) => {
