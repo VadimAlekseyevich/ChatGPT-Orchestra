@@ -4,6 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
+
+function portableRelativePath(relative) {
+  return String(relative || "").replace(/\\/g, "/");
+}
+
 const CORE_FILES = [
   "background/planning-engine.js",
   "background/scheduler-engine.js",
@@ -24,11 +29,12 @@ const CORE_FILES = [
 ];
 
 function walk(relative) {
-  const absolute = path.join(ROOT, relative);
+  const normalizedRelative = portableRelativePath(relative);
+  const absolute = path.join(ROOT, normalizedRelative);
   const stat = fs.statSync(absolute);
-  if (stat.isFile()) return [relative];
+  if (stat.isFile()) return [normalizedRelative];
   return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
-    const child = path.join(relative, entry.name);
+    const child = portableRelativePath(path.join(normalizedRelative, entry.name));
     if (entry.isDirectory()) return walk(child);
     return entry.isFile() && entry.name.endsWith(".js") ? [child] : [];
   });
@@ -60,6 +66,13 @@ const HANDLE_ALLOWLIST = new Set([
   "context/context-packets.js",
   "persistence/portable-state.js"
 ]);
+
+test("portable path normalization keeps Windows-discovered files compatible with repo-style allowlists", () => {
+  const windowsPath = "context\\context-packets.js";
+  const normalized = portableRelativePath(windowsPath);
+  assert.equal(normalized, "context/context-packets.js");
+  assert.equal(HANDLE_ALLOWLIST.has(normalized), true);
+});
 
 test("portable Core source does not depend on browser or DOM implementations", () => {
   for (const relative of PORTABLE_FILES) {
