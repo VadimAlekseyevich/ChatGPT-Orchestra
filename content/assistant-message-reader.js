@@ -2,51 +2,27 @@
   "use strict";
 
   const root = globalThis.ChatGPTOrchestra = globalThis.ChatGPTOrchestra || {};
-  const Utils = root.Utils || (typeof require === "function" ? require("./utils.js") : null);
+  const AssistantTurnTracker = root.AssistantTurnTracker
+    || (typeof require === "function" ? require("./assistant-turn-tracker.js") : null);
   const SELECTORS = root.SELECTORS || (typeof require === "function" ? require("./selectors.js") : null);
 
   class AssistantMessageReader {
-    constructor({ documentRef = globalThis.document, locationRef = globalThis.location } = {}) {
+    constructor({ documentRef = globalThis.document, locationRef = globalThis.location, tracker = null } = {}) {
       this.documentRef = documentRef;
       this.locationRef = locationRef;
+      this.tracker = tracker || new AssistantTurnTracker({
+        documentRef,
+        locationRef,
+        selectors: SELECTORS
+      });
     }
 
     normalizeMessageElement(element) {
-      if (!element) return null;
-      try {
-        return element.closest?.('[data-testid^="conversation-turn-"], article[data-turn="assistant"], section[data-turn="assistant"]') || element;
-      } catch (_) {
-        return element;
-      }
+      return this.tracker.resolveCanonicalElement(element);
     }
 
     getMessages() {
-      const messages = [];
-      const seen = new Set();
-      for (const selector of SELECTORS.assistantMessages) {
-        let current = [];
-        try {
-          current = Array.from(this.documentRef?.querySelectorAll?.(selector) || []);
-        } catch (_) {
-          current = [];
-        }
-        for (const element of current) {
-          const normalized = this.normalizeMessageElement(element);
-          if (!normalized || seen.has(normalized)) continue;
-          seen.add(normalized);
-          messages.push(normalized);
-        }
-      }
-      messages.sort((left, right) => {
-        if (left === right || typeof left?.compareDocumentPosition !== "function") return 0;
-        try {
-          const position = left.compareDocumentPosition(right);
-          if (position & 4) return -1;
-          if (position & 2) return 1;
-        } catch (_) {}
-        return 0;
-      });
-      return messages;
+      return this.tracker.getCanonicalTurnElements();
     }
 
     getLastMessageElement() {
@@ -54,16 +30,7 @@
     }
 
     getMessageText(element) {
-      if (!element) return "";
-
-      let body = null;
-      for (const selector of SELECTORS.assistantBodies) {
-        body = element.querySelector?.(selector);
-        if (body) break;
-      }
-
-      const source = body || element;
-      return Utils.normalizeText(source.innerText || source.textContent || "");
+      return this.tracker.extractText(element);
     }
 
     getLastAssistantText() {
@@ -71,20 +38,46 @@
     }
 
     getSnapshot() {
-      const messages = this.getMessages();
-      const last = messages.at(-1) || null;
-      const text = this.getMessageText(last);
-      const messageCount = messages.length;
-      const pathname = String(this.locationRef?.pathname || "");
-      const fingerprint = text
-        ? Utils.hashString(`${pathname}:${messageCount}:${text}`)
-        : "";
+      const snapshot = this.tracker.getSnapshot();
+      if (!snapshot?.ok) {
+        return {
+          ok: false,
+          reason: snapshot?.reason || "assistant_turn_snapshot_failed",
+          text: "",
+          messageCount: Math.max(0, Number(snapshot?.mountedTurnCount) || 0),
+          pathname: String(snapshot?.conversationKey || this.locationRef?.pathname || ""),
+          conversationKey: String(snapshot?.conversationKey || this.locationRef?.pathname || ""),
+          fingerprint: "",
+          turnId: "",
+          latestTurnId: "",
+          latestTextFingerprint: "",
+          textFingerprint: "",
+          observedTurnCount: Math.max(0, Number(snapshot?.assistantTurnCountObserved) || 0),
+          identitySource: "",
+          turnChanged: false,
+          textChanged: false,
+          conversationChanged: Boolean(snapshot?.conversationChanged),
+          hydrationCandidate: false
+        };
+      }
 
       return {
-        text,
-        messageCount,
-        pathname,
-        fingerprint
+        ok: true,
+        text: snapshot.latestText,
+        messageCount: snapshot.mountedTurnCount,
+        pathname: snapshot.conversationKey,
+        conversationKey: snapshot.conversationKey,
+        fingerprint: snapshot.responseFingerprint,
+        turnId: snapshot.latestTurnId,
+        latestTurnId: snapshot.latestTurnId,
+        latestTextFingerprint: snapshot.latestTextFingerprint,
+        textFingerprint: snapshot.latestTextFingerprint,
+        observedTurnCount: snapshot.assistantTurnCountObserved,
+        identitySource: snapshot.latestIdentitySource,
+        turnChanged: snapshot.turnChanged,
+        textChanged: snapshot.textChanged,
+        conversationChanged: snapshot.conversationChanged,
+        hydrationCandidate: snapshot.hydrationCandidate
       };
     }
   }
