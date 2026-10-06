@@ -214,6 +214,12 @@ test("assistant snapshot is normalized, bounded and fingerprinted in the main pr
       ok: true,
       text: "answer\u200b\n",
       messageCount: 3,
+      observedTurnCount: 7,
+      turnId: "turn-abc-7",
+      textFingerprint: "renderer-fingerprint",
+      identitySource: "dom-attribute",
+      conversationKey: "/c/abc",
+      assistantTurnStatus: "ok",
       pathname: "/c/abc",
       url: "https://chatgpt.com/c/abc",
       availability: "ready",
@@ -224,6 +230,12 @@ test("assistant snapshot is normalized, bounded and fingerprinted in the main pr
   assert.equal(snapshot.ok, true);
   assert.equal(snapshot.text, "answer");
   assert.equal(snapshot.messageCount, 3);
+  assert.equal(snapshot.observedTurnCount, 7);
+  assert.equal(snapshot.turnId, "turn-abc-7");
+  assert.equal(snapshot.latestTurnId, "turn-abc-7");
+  assert.equal(snapshot.identitySource, "dom-attribute");
+  assert.equal(snapshot.conversationKey, "/c/abc");
+  assert.match(snapshot.textFingerprint, /^[0-9a-f]+$/);
   assert.match(snapshot.fingerprint, /^[0-9a-f]+$/);
   adapter.close();
 });
@@ -256,5 +268,51 @@ test("send prompt has an explicit outer IPC budget longer than the base status t
   const result = await adapter.sendPrompt(contents, "next planning stage");
   assert.equal(result.ok, true);
   assert.equal(result.confirmed, true);
+  adapter.close();
+});
+
+
+test("page adapter keeps identical text distinct when preload supplies different turn IDs", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000, maxAssistantBytes: 4096 });
+  let turn = 1;
+  const contents = webContents(78, (message) => {
+    queueMicrotask(() => respond(ipcMain, 78, message.requestId, {
+      ok: true,
+      text: "DONE",
+      messageCount: 1,
+      observedTurnCount: turn,
+      turnId: `turn-same-${turn}`,
+      conversationKey: "/c/same",
+      pathname: "/c/same",
+      assistantTurnStatus: "ok",
+      availability: "ready",
+      generating: false
+    }));
+  });
+
+  const first = await adapter.readAssistantSnapshot(contents);
+  turn = 2;
+  const second = await adapter.readAssistantSnapshot(contents);
+
+  assert.equal(first.textFingerprint, second.textFingerprint);
+  assert.notEqual(first.turnId, second.turnId);
+  assert.notEqual(first.fingerprint, second.fingerprint);
+  adapter.close();
+});
+
+test("page adapter propagates ambiguous tracker snapshot without manufacturing identity", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(79, (message) => {
+    queueMicrotask(() => respond(ipcMain, 79, message.requestId, {
+      ok: false,
+      reason: "assistant_turn_identity_ambiguous",
+      conversationKey: "/c/ambiguous"
+    }));
+  });
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, false);
+  assert.equal(snapshot.reason, "assistant_turn_identity_ambiguous");
   adapter.close();
 });
