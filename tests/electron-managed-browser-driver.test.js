@@ -57,7 +57,18 @@ class FakeBrowserWindow extends EventEmitter {
 function harness() {
   FakeBrowserWindow.instances.length = 0;
   const fromPathCalls = [];
-  const browserSession = { kind: "fake-session" };
+  const preloadScripts = [];
+  const unregisteredPreloads = [];
+  const browserSession = {
+    kind: "fake-session",
+    registerPreloadScript(script) {
+      preloadScripts.push(script);
+      return `preload-${preloadScripts.length}`;
+    },
+    unregisterPreloadScript(id) {
+      unregisteredPreloads.push(String(id));
+    }
+  };
   const externalUrls = [];
   const electronApi = {
     BrowserWindow: FakeBrowserWindow,
@@ -97,13 +108,17 @@ function harness() {
   const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter, logger });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, pageCalls, externalUrls, profileDirectory, logs };
+  return { driver, electronApi, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, pageCalls, externalUrls, profileDirectory, logs };
 }
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
-  const { driver, browserSession, fromPathCalls, profileDirectory } = harness();
+  const { driver, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, profileDirectory } = harness();
   await driver.start({ profileDirectory });
   assert.deepEqual(fromPathCalls, [{ profileDirectory: path.resolve(profileDirectory), options: { cache: true } }]);
+  assert.equal(preloadScripts.length, 1);
+  assert.equal(preloadScripts[0].type, "frame");
+  assert.equal(path.isAbsolute(preloadScripts[0].filePath), true);
+  assert.match(preloadScripts[0].filePath.replace(/\\/g, "/"), /content\/assistant-turn-tracker\.js$/);
 
   const session = await driver.createSession({ url: "https://chatgpt.com/", active: true });
   assert.match(session.id, /^electron-page-/);
@@ -118,6 +133,7 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   assert.deepEqual(win.webContents.windowOpenHandler({ url: "https://example.com" }), { action: "deny" });
   assert.equal(session.active, true);
   await driver.close();
+  assert.deepEqual(unregisteredPreloads, ["preload-1"]);
 });
 
 
