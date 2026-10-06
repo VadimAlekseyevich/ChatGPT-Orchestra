@@ -221,7 +221,7 @@ test("stable DOM turn identifier preserves identity across element replacement",
   assert.equal(second.ok, true);
   assert.equal(second.latestTurnId, first.latestTurnId);
   assert.equal(second.textChanged, true);
-  assert.equal(second.identitySource, "dom-attribute");
+  assert.equal(second.latestIdentitySource, "dom-attribute");
 });
 
 test("structural evidence can preserve an unstable turn across same-text rerender", () => {
@@ -233,7 +233,7 @@ test("structural evidence can preserve an unstable turn across same-text rerende
   const second = tracker.getSnapshot();
   assert.equal(second.ok, true);
   assert.equal(second.latestTurnId, first.latestTurnId);
-  assert.equal(second.identitySource, "structural");
+  assert.equal(second.latestIdentitySource, "structural");
 });
 
 test("virtualization may reduce mounted count while a newer turn is still detected", () => {
