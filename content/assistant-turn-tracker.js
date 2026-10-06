@@ -500,18 +500,24 @@
       const latestTurnId = latest?.turnId || "";
       const latestText = latest?.text || "";
       const latestTextFingerprint = latest?.textFingerprint || "";
-      const turnChanged = Boolean(previousLatest && latestTurnId && latestTurnId !== previousLatest.latestTurnId);
-      const textChanged = Boolean(
-        previousLatest
-        && latestTurnId
-        && latestTurnId === previousLatest.latestTurnId
-        && latestTextFingerprint !== previousLatest.latestTextFingerprint
-      );
       const hydrationCandidate = Boolean(
         this.hasObserved
         && !this.hasEverSeenTurn
         && this.previousTurns.length === 0
         && turns.length > 0
+      );
+      const turnChanged = Boolean(
+        !hydrationCandidate
+        && previousLatest
+        && latestTurnId
+        && latestTurnId !== previousLatest.latestTurnId
+      );
+      const textChanged = Boolean(
+        !hydrationCandidate
+        && previousLatest
+        && latestTurnId
+        && latestTurnId === previousLatest.latestTurnId
+        && latestTextFingerprint !== previousLatest.latestTextFingerprint
       );
       const responseFingerprint = latestText
         ? hashString(`${conversationKey}:${latestTurnId}:${latestText}`)
