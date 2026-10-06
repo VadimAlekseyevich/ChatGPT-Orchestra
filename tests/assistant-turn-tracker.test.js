@@ -235,6 +235,24 @@ test("text equality alone never proves turn identity across a rerender", () => {
   assert.equal(second.reason, "assistant_turn_identity_ambiguous");
 });
 
+test("structural anchors preserve an unstable turn without relying on its text", () => {
+  const before = createTurn({ key: "before", text: "before", order: 1 });
+  const unstable = createTurn({ key: "unstable", text: "draft", order: 2, stable: false });
+  const after = createTurn({ key: "after", text: "after", order: 3 });
+  const replacement = createTurn({ key: "replacement", text: "completely different", order: 2, stable: false });
+  const { tracker, documentRef } = trackerHarness([before, unstable, after]);
+  const first = tracker.getSnapshot();
+  const unstableId = first.turns[1].turnId;
+
+  documentRef.setTurns([before, replacement, after]);
+  const second = tracker.getSnapshot();
+
+  assert.equal(second.ok, true);
+  assert.equal(second.turns[1].turnId, unstableId);
+  assert.equal(second.turns[1].identitySource, "structural");
+  assert.notEqual(second.turns[1].textFingerprint, first.turns[1].textFingerprint);
+});
+
 test("virtualization may reduce mounted count while a newer turn is still detected", () => {
   const turns = ["A", "B", "C", "D", "E", "F"].map((key, index) => createTurn({ key, text: key, order: index + 1 }));
   const { tracker, documentRef } = trackerHarness(turns.slice(0, 5));
