@@ -101,7 +101,6 @@
       this.latestSnapshot = null;
       this.identityRegistry = new Map();
       this.identityOrder = [];
-      this.turnOrdinals = new Map();
       this.nextOrdinal = 1;
       this.observedTurnCount = 0;
       this.hasObserved = false;
@@ -134,7 +133,6 @@
       this.latestSnapshot = null;
       this.identityRegistry.clear();
       this.identityOrder = [];
-      this.turnOrdinals.clear();
       this.nextOrdinal = 1;
       this.observedTurnCount = 0;
       this.hasEverSeenTurn = false;
@@ -288,7 +286,6 @@
     newTurnId(conversationKey) {
       const ordinal = this.nextOrdinal++;
       const id = `turn-${hashString(conversationKey)}-${ordinal}`;
-      this.turnOrdinals.set(id, ordinal);
       this.observedTurnCount += 1;
       return id;
     }
@@ -457,7 +454,7 @@
         turnId: descriptor.turnId,
         role: "assistant",
         conversationKey,
-        ordinal: this.turnOrdinals.get(descriptor.turnId) || (index + 1),
+        ordinal: Number(String(descriptor.turnId || "").split("-").at(-1)) || (index + 1),
         identitySource: descriptor.identitySource,
         text: descriptor.text,
         textFingerprint: descriptor.textFingerprint,
