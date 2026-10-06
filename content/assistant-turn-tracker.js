@@ -113,10 +113,13 @@
       this.turnRootSelectors = uniqueSelectors(this.selectors.turnRoots, DEFAULT_TURN_ROOTS);
       this.roleSelectors = uniqueSelectors(this.selectors.assistantRoleMarkers, DEFAULT_ASSISTANT_ROLE_MARKERS);
       this.bodySelectors = uniqueSelectors(this.selectors.assistantBodies, DEFAULT_ASSISTANT_BODIES);
-      this.discoverySelectors = uniqueSelectors([
+      this.assistantDiscoverySelectors = new Set(uniqueSelectors([
         ...(Array.isArray(this.selectors.assistantMessages) ? this.selectors.assistantMessages : []),
-        ...this.turnRootSelectors,
         ...this.roleSelectors
+      ]));
+      this.discoverySelectors = uniqueSelectors([
+        ...this.assistantDiscoverySelectors,
+        ...this.turnRootSelectors
       ]).sort();
       this.turnRootQuery = [...this.turnRootSelectors].sort().join(",");
     }
@@ -166,7 +169,7 @@
       return markers;
     }
 
-    isAssistantTurn(element) {
+    isAssistantTurn(element, assistantHint = false) {
       if (!element) return false;
       const explicitRole = [
         readAttribute(element, "data-message-author-role"),
@@ -176,7 +179,8 @@
       ].map((value) => value.toLowerCase()).filter(Boolean);
       if (explicitRole.includes("assistant")) return true;
       if (explicitRole.some((value) => value && value !== "assistant")) return false;
-      return this.roleMarkersWithin(element).length > 0;
+      if (this.roleMarkersWithin(element).length > 0) return true;
+      return Boolean(assistantHint);
     }
 
     stableIdentityKey(element) {
@@ -210,20 +214,26 @@
     }
 
     discoverCandidates() {
-      const candidates = new Set();
+      const candidates = new Map();
       for (const selector of this.discoverySelectors) {
-        for (const element of safeQueryAll(this.documentRef, selector)) candidates.add(element);
+        const assistantHint = this.assistantDiscoverySelectors.has(selector);
+        for (const element of safeQueryAll(this.documentRef, selector)) {
+          candidates.set(element, Boolean(candidates.get(element)) || assistantHint);
+        }
       }
-      return [...candidates];
+      return [...candidates].map(([element, assistantHint]) => ({ element, assistantHint }));
     }
 
-    dedupeCanonicalTurns(elements) {
+    dedupeCanonicalTurns(entries) {
+      const canonicalHints = new Map();
+      for (const entry of entries) {
+        const rootElement = this.resolveCanonicalElement(entry?.element);
+        if (!rootElement) continue;
+        canonicalHints.set(rootElement, Boolean(canonicalHints.get(rootElement)) || Boolean(entry?.assistantHint));
+      }
       const canonical = [];
-      const seenElements = new Set();
-      for (const candidate of elements) {
-        const rootElement = this.resolveCanonicalElement(candidate);
-        if (!rootElement || seenElements.has(rootElement) || !this.isAssistantTurn(rootElement)) continue;
-        seenElements.add(rootElement);
+      for (const [rootElement, assistantHint] of canonicalHints) {
+        if (!this.isAssistantTurn(rootElement, assistantHint)) continue;
         canonical.push(rootElement);
       }
 
