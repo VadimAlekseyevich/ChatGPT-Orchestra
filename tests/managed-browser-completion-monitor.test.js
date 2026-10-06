@@ -359,3 +359,52 @@ test("completion monitor fails closed after repeated ambiguous turn snapshots", 
   assert.equal(errors.length, 1);
   assert.equal(errors[0].reason, "assistant_turn_identity_ambiguous");
 });
+
+
+test("completion monitor accepts expected new-chat path transition from an empty baseline", async () => {
+  const { runtime } = runtimeHarness();
+  const base = snapshot({
+    pathname: "/",
+    conversationKey: "/",
+    text: "",
+    fingerprint: "",
+    turnId: "",
+    latestTurnId: "",
+    textFingerprint: "",
+    latestTextFingerprint: "",
+    messageCount: 0
+  });
+  const next = snapshot({
+    pathname: "/c/new-chat",
+    conversationKey: "/c/new-chat",
+    text: "DONE",
+    fingerprint: "response-new",
+    turnId: "turn-new-1",
+    latestTurnId: "turn-new-1",
+    textFingerprint: "done-text",
+    latestTextFingerprint: "done-text",
+    messageCount: 1
+  });
+  const sequence = [base, next, next, next];
+  const completions = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: { async readAssistantSnapshot() { return sequence.shift() || next; } },
+    protocolAdapter: {
+      async publishCompletion(_runtime, _agentId, value) { completions.push(value); return { ok: true }; },
+      async publishProtocolError() { return { ok: true }; }
+    },
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 1000,
+    sleep: async () => {}
+  });
+
+  const prepared = await monitor.prepare(runtime, "A1");
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].conversationKey, "/c/new-chat");
+  assert.equal(completions[0].turnId, "turn-new-1");
+});
