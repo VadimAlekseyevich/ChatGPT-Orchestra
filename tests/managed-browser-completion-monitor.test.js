@@ -211,3 +211,151 @@ test("completion monitor survives transient preload snapshot failures and still 
   assert.equal(completions[0].value.fingerprint, "f1");
   assert.equal(errors.length, 0);
 });
+
+
+test("completion monitor detects a new turn even when mounted message count decreases and text is identical", async () => {
+  const { runtime } = runtimeHarness();
+  const base = snapshot({
+    text: "DONE",
+    fingerprint: "response-a",
+    textFingerprint: "same-text",
+    latestTextFingerprint: "same-text",
+    turnId: "turn-a",
+    latestTurnId: "turn-a",
+    conversationKey: "/c/test",
+    messageCount: 5,
+    observedTurnCount: 5
+  });
+  const next = snapshot({
+    text: "DONE",
+    fingerprint: "response-b",
+    textFingerprint: "same-text",
+    latestTextFingerprint: "same-text",
+    turnId: "turn-b",
+    latestTurnId: "turn-b",
+    conversationKey: "/c/test",
+    messageCount: 3,
+    observedTurnCount: 6
+  });
+  const sequence = [base, next, next, next];
+  const completions = [];
+  const errors = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: { async readAssistantSnapshot() { return sequence.shift() || next; } },
+    protocolAdapter: {
+      async publishCompletion(_runtime, agentId, value) { completions.push({ agentId, value }); return { ok: true }; },
+      async publishProtocolError(_runtime, agentId, value, payload) { errors.push({ agentId, value, payload }); return { ok: true }; }
+    },
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 1000,
+    sleep: async () => {}
+  });
+
+  const prepared = await monitor.prepare(runtime, "A1");
+  assert.equal(prepared.baseline.turnId, "turn-a");
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].value.turnId, "turn-b");
+  assert.equal(completions[0].value.messageCount, 3);
+  assert.equal(errors.length, 0);
+});
+
+test("completion monitor does not publish streaming changes from the baseline turn as a new response", async () => {
+  const { runtime } = runtimeHarness();
+  const base = snapshot({
+    text: "PL",
+    fingerprint: "response-a-1",
+    textFingerprint: "text-a-1",
+    latestTextFingerprint: "text-a-1",
+    turnId: "turn-a",
+    latestTurnId: "turn-a",
+    conversationKey: "/c/test",
+    messageCount: 4
+  });
+  let index = 0;
+  const driver = {
+    async readAssistantSnapshot() {
+      index += 1;
+      if (index === 1) return base;
+      return snapshot({
+        text: "PLAN complete",
+        fingerprint: "response-a-2",
+        textFingerprint: "text-a-2",
+        latestTextFingerprint: "text-a-2",
+        turnId: "turn-a",
+        latestTurnId: "turn-a",
+        conversationKey: "/c/test",
+        messageCount: 2
+      });
+    }
+  };
+  const completions = [];
+  const errors = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver,
+    protocolAdapter: {
+      async publishCompletion(...args) { completions.push(args); return { ok: true }; },
+      async publishProtocolError(_runtime, _agentId, _value, payload) { errors.push(payload); return { ok: true }; }
+    },
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 300,
+    sleep: async () => {}
+  });
+
+  const prepared = await monitor.prepare(runtime, "A1");
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "managed_browser_completion_timeout");
+  assert.equal(completions.length, 0);
+  assert.equal(errors.length, 1);
+});
+
+test("completion monitor fails closed after repeated ambiguous turn snapshots", async () => {
+  const { runtime } = runtimeHarness();
+  let calls = 0;
+  const driver = {
+    async readAssistantSnapshot() {
+      calls += 1;
+      if (calls === 1) return snapshot({
+        turnId: "turn-a",
+        latestTurnId: "turn-a",
+        textFingerprint: "text-a",
+        latestTextFingerprint: "text-a",
+        conversationKey: "/c/test"
+      });
+      return { ok: false, reason: "assistant_turn_identity_ambiguous" };
+    }
+  };
+  const completions = [];
+  const errors = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver,
+    protocolAdapter: {
+      async publishCompletion(...args) { completions.push(args); return { ok: true }; },
+      async publishProtocolError(_runtime, _agentId, _value, payload) { errors.push(payload); return { ok: true }; }
+    },
+    maxSnapshotErrors: 2,
+    snapshotErrorGraceMs: 1000,
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 1000,
+    sleep: async () => {}
+  });
+
+  const prepared = await monitor.prepare(runtime, "A1");
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "assistant_turn_identity_ambiguous");
+  assert.equal(completions.length, 0);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].reason, "assistant_turn_identity_ambiguous");
+});
