@@ -326,18 +326,51 @@ class ElectronPreloadChatGPTPageAdapter {
     const text = Utils.normalizeText(result.text || "");
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > this.maxAssistantBytes) return { ok: false, reason: "assistant_response_too_large", bytes, maxBytes: this.maxAssistantBytes };
-    const pathname = String(result.pathname || "");
+
+    const conversationKey = String(result.conversationKey || result.pathname || "");
+    const pathname = String(result.pathname || conversationKey);
     const messageCount = Math.max(0, Number(result.messageCount) || 0);
+    const observedTurnCount = Math.max(0, Number(result.observedTurnCount) || 0);
+    const turnId = String(result.turnId || result.latestTurnId || "");
+    const textFingerprint = text ? Utils.hashString(text) : "";
+    const fingerprint = text
+      ? Utils.hashString(turnId
+        ? `${conversationKey}:${turnId}:${text}`
+        : `${conversationKey}:${messageCount}:${text}`)
+      : "";
+
+    if (text && !turnId && String(result.assistantTurnStatus || "") === "ok") {
+      return {
+        ok: false,
+        reason: "assistant_turn_identity_missing",
+        conversationKey,
+        pathname,
+        messageCount,
+        observedTurnCount
+      };
+    }
+
     return {
       ok: true,
       text,
       bytes,
       messageCount,
+      observedTurnCount,
+      conversationKey,
       pathname,
       url: String(result.url || ""),
       availability: String(result.availability || "unavailable"),
       generating: Boolean(result.generating),
-      fingerprint: text ? Utils.hashString(`${pathname}:${messageCount}:${text}`) : ""
+      turnId,
+      latestTurnId: turnId,
+      identitySource: String(result.identitySource || ""),
+      textFingerprint,
+      latestTextFingerprint: textFingerprint,
+      turnChanged: Boolean(result.turnChanged),
+      textChanged: Boolean(result.textChanged),
+      conversationChanged: Boolean(result.conversationChanged),
+      hydrationCandidate: Boolean(result.hydrationCandidate),
+      fingerprint
     };
   }
 
