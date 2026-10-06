@@ -149,6 +149,10 @@
           this.messenger.send(root.MESSAGE_TYPES.ASSISTANT_RESPONSE_COMPLETED, {
             ...this.getStatus(),
             fingerprint: event.snapshot?.fingerprint || "",
+            turnId: event.snapshot?.latestTurnId || event.snapshot?.turnId || "",
+            textFingerprint: event.snapshot?.latestTextFingerprint || event.snapshot?.textFingerprint || "",
+            observedTurnCount: event.snapshot?.observedTurnCount || 0,
+            conversationKey: event.snapshot?.conversationKey || event.snapshot?.pathname || "",
             messageCount: event.snapshot?.messageCount || 0,
             pathname: event.snapshot?.pathname || ""
           });
@@ -184,6 +188,9 @@
         availability: this.composer.getAvailability(),
         generating: this.composer.isGenerating(),
         responseFingerprint: response.fingerprint,
+        assistantTurnId: response.latestTurnId || response.turnId || "",
+        assistantTextFingerprint: response.latestTextFingerprint || response.textFingerprint || "",
+        assistantObservedTurnCount: response.observedTurnCount || 0,
         messageCount: response.messageCount,
         pathname: response.pathname,
         detector: this.detector.machine.snapshot()
