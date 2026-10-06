@@ -129,7 +129,14 @@ class ManagedBrowserCompletionMonitor {
       text: String(snapshot.text || ""),
       fingerprint: String(snapshot.fingerprint || ""),
       messageCount: Math.max(0, Number(snapshot.messageCount) || 0),
-      pathname: String(snapshot.pathname || ""),
+      observedTurnCount: Math.max(0, Number(snapshot.observedTurnCount) || 0),
+      conversationKey: String(snapshot.conversationKey || snapshot.pathname || ""),
+      turnId: String(snapshot.latestTurnId || snapshot.turnId || ""),
+      latestTurnId: String(snapshot.latestTurnId || snapshot.turnId || ""),
+      textFingerprint: String(snapshot.latestTextFingerprint || snapshot.textFingerprint || ""),
+      latestTextFingerprint: String(snapshot.latestTextFingerprint || snapshot.textFingerprint || ""),
+      identitySource: String(snapshot.identitySource || ""),
+      pathname: String(snapshot.pathname || snapshot.conversationKey || ""),
       url: String(snapshot.url || ""),
       availability: String(snapshot.availability || "unavailable"),
       generating: Boolean(snapshot.generating)
@@ -185,9 +192,10 @@ class ManagedBrowserCompletionMonitor {
     const requiredStablePolls = 1 + Math.ceil(this.quietMs / this.pollMs);
     const maxPolls = 1 + Math.ceil(this.timeoutMs / this.pollMs);
     const monitorStartedAt = this.clock();
-    let stableFingerprint = "";
+    let stableCandidateKey = "";
     let stablePolls = 0;
-    let candidateFingerprint = "";
+    let candidateKey = "";
+    let activeTurnId = "";
     let sawGenerating = false;
     let generationStoppedLogged = false;
     let sawChange = false;
@@ -277,49 +285,87 @@ class ManagedBrowserCompletionMonitor {
         }));
       }
 
+      const turnAware = Boolean(baseline.turnId || snapshot.turnId);
+      const conversationChanged = Boolean(
+        baseline.conversationKey
+        && snapshot.conversationKey
+        && snapshot.conversationKey !== baseline.conversationKey
+      );
       const fingerprintChanged = Boolean(snapshot.fingerprint && snapshot.fingerprint !== baseline.fingerprint);
       const messageAdvanced = snapshot.messageCount > baseline.messageCount;
-      if (fingerprintChanged || messageAdvanced) {
+      const turnAdvanced = Boolean(snapshot.turnId && snapshot.turnId !== baseline.turnId);
+      const unexpectedConversationChange = conversationChanged && !sawGenerating;
+
+      if (conversationChanged) {
+        this.logger?.debug?.("managed_browser_conversation_changed", traceDetails(trace, {
+          pollIndex: poll,
+          elapsedMs: elapsedMs(),
+          fromConversationKey: baseline.conversationKey,
+          toConversationKey: snapshot.conversationKey,
+          sawGenerating,
+          turnId: snapshot.turnId
+        }));
+      }
+
+      const legacyChange = !turnAware && (fingerprintChanged || messageAdvanced);
+      const newTurnCandidate = turnAware && turnAdvanced && !unexpectedConversationChange;
+      if (newTurnCandidate || legacyChange) {
         sawChange = true;
+        if (newTurnCandidate) activeTurnId = snapshot.turnId;
         if (!changeLogged) {
           changeLogged = true;
           this.logger?.info?.("managed_browser_assistant_change_detected", traceDetails(trace, {
             pollIndex: poll,
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
+            baselineTextFingerprint: baseline.textFingerprint,
+            currentTextFingerprint: snapshot.textFingerprint,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             messageAdvanced,
             availability: snapshot.availability,
-            generating: snapshot.generating,
-            responseFingerprint: snapshot.fingerprint || ""
+            generating: snapshot.generating
           }));
         }
       }
 
-      const candidate = sawChange
+      const activeTurnMatches = turnAware
+        ? Boolean(activeTurnId && snapshot.turnId === activeTurnId && activeTurnId !== baseline.turnId)
+        : sawChange;
+      const stabilityFingerprint = String(snapshot.textFingerprint || snapshot.fingerprint || "");
+      const currentCandidateKey = turnAware
+        ? `${snapshot.turnId}:${stabilityFingerprint}`
+        : snapshot.fingerprint;
+      const candidate = activeTurnMatches
         && !snapshot.generating
         && snapshot.availability === "ready"
         && Boolean(snapshot.text.trim())
-        && Boolean(snapshot.fingerprint);
+        && Boolean(stabilityFingerprint);
 
       if (candidate) {
-        if (stableFingerprint === snapshot.fingerprint) stablePolls += 1;
+        if (stableCandidateKey === currentCandidateKey) stablePolls += 1;
         else {
-          stableFingerprint = snapshot.fingerprint;
+          stableCandidateKey = currentCandidateKey;
           stablePolls = 1;
         }
-        if (candidateFingerprint !== snapshot.fingerprint) {
-          candidateFingerprint = snapshot.fingerprint;
+        if (candidateKey !== currentCandidateKey) {
+          candidateKey = currentCandidateKey;
           this.logger?.info?.("managed_browser_completion_candidate", traceDetails(trace, {
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             stablePollCount: stablePolls,
             requiredStablePolls,
             responseBytes: byteLength(snapshot.text),
             responseFingerprint: snapshot.fingerprint,
+            textFingerprint: snapshot.textFingerprint,
             availability: snapshot.availability,
             generating: snapshot.generating
           }));
@@ -327,12 +373,16 @@ class ManagedBrowserCompletionMonitor {
         if (stablePolls >= requiredStablePolls) {
           this.logger?.info?.("managed_browser_completion_stable", traceDetails(trace, {
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             stablePollCount: stablePolls,
             responseBytes: byteLength(snapshot.text),
             responseFingerprint: snapshot.fingerprint,
+            textFingerprint: snapshot.textFingerprint,
             availability: snapshot.availability,
             generating: snapshot.generating
           }));
@@ -379,9 +429,9 @@ class ManagedBrowserCompletionMonitor {
           };
         }
       } else {
-        stableFingerprint = "";
+        stableCandidateKey = "";
         stablePolls = 0;
-        candidateFingerprint = "";
+        candidateKey = "";
       }
 
       if (poll + 1 < maxPolls) await this.sleep(this.pollMs);
