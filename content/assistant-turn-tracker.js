@@ -355,30 +355,6 @@
         usedPrevious.add(previousIndex);
       });
 
-      const previousFingerprintCounts = new Map();
-      const currentFingerprintCounts = new Map();
-      previous.forEach((item, index) => {
-        if (usedPrevious.has(index) || !item.textFingerprint) return;
-        const list = previousFingerprintCounts.get(item.textFingerprint) || [];
-        list.push(index);
-        previousFingerprintCounts.set(item.textFingerprint, list);
-      });
-      descriptors.forEach((descriptor, index) => {
-        if (descriptor.turnId || !descriptor.textFingerprint) return;
-        const list = currentFingerprintCounts.get(descriptor.textFingerprint) || [];
-        list.push(index);
-        currentFingerprintCounts.set(descriptor.textFingerprint, list);
-      });
-      for (const [fingerprint, currentIndexes] of currentFingerprintCounts) {
-        const previousIndexes = previousFingerprintCounts.get(fingerprint) || [];
-        if (currentIndexes.length !== 1 || previousIndexes.length !== 1) continue;
-        const currentIndex = currentIndexes[0];
-        const previousIndex = previousIndexes[0];
-        if (usedPrevious.has(previousIndex)) continue;
-        this.matchDescriptor(descriptors[currentIndex], previous[previousIndex], previousIndex, "structural");
-        usedPrevious.add(previousIndex);
-      }
-
       const anchors = descriptors
         .map((item, currentIndex) => ({ currentIndex, previousIndex: item.matchedPreviousIndex }))
         .filter((item) => item.previousIndex >= 0)
