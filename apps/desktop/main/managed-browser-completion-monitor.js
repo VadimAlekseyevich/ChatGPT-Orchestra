@@ -294,7 +294,7 @@ class ManagedBrowserCompletionMonitor {
       const fingerprintChanged = Boolean(snapshot.fingerprint && snapshot.fingerprint !== baseline.fingerprint);
       const messageAdvanced = snapshot.messageCount > baseline.messageCount;
       const turnAdvanced = Boolean(snapshot.turnId && snapshot.turnId !== baseline.turnId);
-      const unexpectedConversationChange = conversationChanged && !sawGenerating;
+      const unexpectedConversationChange = conversationChanged && !sawGenerating && Boolean(baseline.turnId);
 
       if (conversationChanged) {
         this.logger?.debug?.("managed_browser_conversation_changed", traceDetails(trace, {
