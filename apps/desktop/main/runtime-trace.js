@@ -73,7 +73,12 @@ function safeProtocolValue(value) {
 function snapshotMetadata(snapshot = {}) {
   return {
     messageCount: Math.max(0, Number(snapshot.messageCount) || 0),
+    observedTurnCount: Math.max(0, Number(snapshot.observedTurnCount) || 0),
     fingerprint: String(snapshot.fingerprint || ""),
+    turnId: String(snapshot.latestTurnId || snapshot.turnId || ""),
+    identitySource: String(snapshot.identitySource || ""),
+    textFingerprint: String(snapshot.latestTextFingerprint || snapshot.textFingerprint || ""),
+    conversationKey: String(snapshot.conversationKey || snapshot.pathname || ""),
     availability: String(snapshot.availability || "unavailable"),
     generating: Boolean(snapshot.generating),
     pathname: String(snapshot.pathname || "")
