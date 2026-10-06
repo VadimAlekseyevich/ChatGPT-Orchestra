@@ -11,6 +11,18 @@
       'button[aria-label="Stop generating"]',
       'button[aria-label*="Stop" i][data-testid]'
     ]),
+    turnRoots: Object.freeze([
+      '[data-testid^="conversation-turn-"]',
+      'article[data-turn]',
+      'section[data-turn]',
+      'article[data-message-author-role]'
+    ]),
+    assistantRoleMarkers: Object.freeze([
+      '[data-message-author-role="assistant"]',
+      '[data-role="assistant"]',
+      '[data-message-author="assistant"]',
+      '[data-turn="assistant"]'
+    ]),
     assistantMessages: Object.freeze([
       '[data-message-author-role="assistant"]',
       '[data-role="assistant"]',
