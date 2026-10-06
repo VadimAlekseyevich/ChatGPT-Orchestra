@@ -32,6 +32,8 @@
       this.framePending = false;
       this.started = false;
       this.lastPathname = null;
+      this.lastTurnId = "";
+      this.lastTextFingerprint = "";
       this.fingerprintFallbackNotBefore = 0;
     }
 
@@ -67,12 +69,16 @@
         fingerprint: snapshot.fingerprint,
         now
       });
+      this.lastTurnId = String(snapshot.latestTurnId || snapshot.turnId || "");
+      this.lastTextFingerprint = String(snapshot.latestTextFingerprint || snapshot.textFingerprint || "");
       this.fingerprintFallbackNotBefore = now + this.hydrationGraceMs;
       this.logger?.debug?.("generation_baseline_established", {
         reason,
         pathname: snapshot.pathname,
         busy,
         fingerprint: snapshot.fingerprint,
+        turnId: this.lastTurnId,
+        textFingerprint: this.lastTextFingerprint,
         fallbackNotBefore: this.fingerprintFallbackNotBefore
       });
     }
@@ -83,6 +89,19 @@
       const snapshot = this.reader.getSnapshot();
       const busy = this.composer.isGenerating();
       const now = this.clock();
+
+      if (snapshot?.ok === false) {
+        this.logger?.warn?.("assistant_turn_snapshot_ambiguous", {
+          reason: snapshot.reason || "assistant_turn_snapshot_failed",
+          pathname: snapshot.pathname || snapshot.conversationKey || "",
+          observedTurnCount: snapshot.observedTurnCount || 0
+        });
+        this.emit({
+          type: "assistant_turn_ambiguous",
+          reason: snapshot.reason || "assistant_turn_snapshot_failed"
+        }, snapshot);
+        return;
+      }
 
       if (this.lastPathname === null) {
         this.lastPathname = snapshot.pathname;
@@ -133,6 +152,31 @@
         return;
       }
 
+      const currentTurnId = String(snapshot.latestTurnId || snapshot.turnId || "");
+      const currentTextFingerprint = String(snapshot.latestTextFingerprint || snapshot.textFingerprint || "");
+      const turnChanged = Boolean(currentTurnId && currentTurnId !== this.lastTurnId);
+      const textChanged = Boolean(
+        currentTurnId
+        && currentTurnId === this.lastTurnId
+        && currentTextFingerprint !== this.lastTextFingerprint
+      );
+
+      if (turnChanged) {
+        this.emit({
+          type: "assistant_turn_started",
+          previousTurnId: this.lastTurnId || null,
+          turnId: currentTurnId,
+          identitySource: snapshot.identitySource || ""
+        }, snapshot);
+      } else if (textChanged) {
+        this.emit({
+          type: "assistant_turn_changed",
+          turnId: currentTurnId
+        }, snapshot);
+      }
+      this.lastTurnId = currentTurnId;
+      this.lastTextFingerprint = currentTextFingerprint;
+
       const events = this.machine.observe({
         busy,
         fingerprint: snapshot.fingerprint,
@@ -144,6 +188,8 @@
           this.logger?.info?.("assistant_response_completed", {
             reason,
             fingerprint: snapshot.fingerprint,
+            turnId: snapshot.latestTurnId || snapshot.turnId || "",
+            textFingerprint: snapshot.latestTextFingerprint || snapshot.textFingerprint || "",
             messageCount: snapshot.messageCount,
             stableFor: event.stableFor
           });
@@ -151,6 +197,8 @@
           this.logger?.debug?.("response_changed", {
             reason,
             fingerprint: snapshot.fingerprint,
+            turnId: snapshot.latestTurnId || snapshot.turnId || "",
+            textFingerprint: snapshot.latestTextFingerprint || snapshot.textFingerprint || "",
             messageCount: snapshot.messageCount,
             detectorState: this.machine.state
           });
@@ -207,6 +255,8 @@
       this.pollHandle = null;
       this.framePending = false;
       this.lastPathname = null;
+      this.lastTurnId = "";
+      this.lastTextFingerprint = "";
       this.fingerprintFallbackNotBefore = 0;
     }
   }
