@@ -224,16 +224,15 @@ test("stable DOM turn identifier preserves identity across element replacement",
   assert.equal(second.latestIdentitySource, "dom-attribute");
 });
 
-test("structural evidence can preserve an unstable turn across same-text rerender", () => {
+test("text equality alone never proves turn identity across a rerender", () => {
   const original = createTurn({ key: "x", text: "same text", order: 1, stable: false });
   const replacement = createTurn({ key: "y", text: "same text", order: 1, stable: false });
   const { tracker, documentRef } = trackerHarness([original]);
-  const first = tracker.getSnapshot();
+  tracker.getSnapshot();
   documentRef.setTurns([replacement]);
   const second = tracker.getSnapshot();
-  assert.equal(second.ok, true);
-  assert.equal(second.latestTurnId, first.latestTurnId);
-  assert.equal(second.latestIdentitySource, "structural");
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, "assistant_turn_identity_ambiguous");
 });
 
 test("virtualization may reduce mounted count while a newer turn is still detected", () => {
