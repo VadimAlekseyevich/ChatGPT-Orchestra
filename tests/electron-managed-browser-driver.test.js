@@ -7,8 +7,6 @@ const { EventEmitter } = require("node:events");
 
 const {
   ElectronManagedBrowserDriver,
-  sanitizeManagedBrowserUserAgent,
-  unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 } = require("../apps/desktop/main/electron-managed-browser-driver.js");
 
@@ -60,17 +58,8 @@ function harness() {
   const fromPathCalls = [];
   const preloadScripts = [];
   const unregisteredPreloads = [];
-  const userAgents = [];
-  let clearCacheCalls = 0;
   const browserSession = {
     kind: "fake-session",
-    currentUserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Electron/44.3.0 Chrome/142.0.0.0 Safari/537.36",
-    getUserAgent() { return this.currentUserAgent; },
-    setUserAgent(value) {
-      this.currentUserAgent = String(value);
-      userAgents.push(this.currentUserAgent);
-    },
-    async clearCache() { clearCacheCalls += 1; },
     registerPreloadScript(script) {
       preloadScripts.push(script);
       return `preload-${preloadScripts.length}`;
@@ -118,32 +107,8 @@ function harness() {
   const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter, logger });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, userAgents, getClearCacheCalls: () => clearCacheCalls, pageCalls, externalUrls, profileDirectory, logs };
+  return { driver, electronApi, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, pageCalls, externalUrls, profileDirectory, logs };
 }
-
-test("managed browser user agent removes only the Electron product token", () => {
-  const source = "Mozilla/5.0 Electron/44.3.0 Chrome/142.0.0.0 Safari/537.36";
-  const sanitized = sanitizeManagedBrowserUserAgent(source);
-  assert.equal(sanitized, "Mozilla/5.0 Chrome/142.0.0.0 Safari/537.36");
-  assert.equal(sanitizeManagedBrowserUserAgent(sanitized), sanitized);
-});
-
-test("managed browser applies the Chrome-compatible user agent before page creation", async () => {
-  const { driver, browserSession, userAgents, getClearCacheCalls, profileDirectory, logs } = harness();
-  await driver.start({ profileDirectory });
-
-  assert.deepEqual(userAgents, [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-  ]);
-  assert.equal(browserSession.getUserAgent().includes("Electron/"), false);
-  assert.equal(getClearCacheCalls(), 1);
-  assert.ok(logs.some((item) =>
-    item.event === "managed_browser_user_agent_sanitized"
-    && item.details.electronTokenRemoved === true
-  ));
-
-  await driver.close();
-});
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
   const { driver, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, profileDirectory } = harness();
@@ -203,8 +168,6 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.equal(assertManagedNavigationUrl("https://setup.auth.openai.com/login"), "https://setup.auth.openai.com/login");
   assert.equal(assertManagedNavigationUrl("https://auth0.openai.com/authorize"), "https://auth0.openai.com/authorize");
   assert.equal(assertManagedNavigationUrl("https://accounts.google.com/o/oauth2/v2/auth"), "https://accounts.google.com/o/oauth2/v2/auth");
-  assert.equal(unsupportedEmbeddedAuthProvider("https://accounts.google.com/o/oauth2/v2/auth"), "google");
-  assert.equal(unsupportedEmbeddedAuthProvider("https://chatgpt.com/"), null);
   assert.equal(assertManagedNavigationUrl("https://appleid.apple.com/auth/authorize"), "https://appleid.apple.com/auth/authorize");
   assert.equal(assertManagedNavigationUrl("https://login.microsoftonline.com/common/oauth2/v2.0/authorize"), "https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
   assert.equal(assertManagedNavigationUrl("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/"), "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/");
@@ -214,47 +177,21 @@ test("managed browser navigation allows current OpenAI auth hosts and known iden
   assert.throws(() => assertManagedNavigationUrl("not a url"), /managed_browser_navigation_url_invalid/);
 });
 
-test("Google auth server redirects are blocked before the embedded page leaves ChatGPT", async () => {
-  const { driver, profileDirectory, logs } = harness();
-  const events = [];
-  await driver.start({ profileDirectory });
-  driver.subscribe((event) => events.push(event));
-  const session = await driver.createSession({ url: "https://chatgpt.com/auth/login_with", active: true });
-  const win = FakeBrowserWindow.instances[0];
-  let prevented = false;
-
-  win.webContents.emit(
-    "will-redirect",
-    { preventDefault() { prevented = true; } },
-    "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fauth.openai.com"
-  );
-
-  assert.equal(prevented, true);
-  assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login_with");
-  assert.ok(events.some((event) =>
-    event.type === "unsupported-auth-provider"
-    && event.sessionId === session.id
-    && event.provider === "google"
-  ));
-  assert.ok(logs.some((item) =>
-    item.event === "managed_browser_auth_provider_blocked"
-    && item.details.provider === "google"
-    && item.details.source === "will-redirect"
-    && item.details.origin === "https://accounts.google.com"
-  ));
-
-  const ping = await driver.pingSession(session.id);
-  assert.equal(ping.unsupportedAuthProvider, "google");
-  await driver.close();
-});
-
-test("Google auth stays inside Orchestra and never opens the system browser", async () => {
-  const { driver, externalUrls, profileDirectory } = harness();
+test("Google auth follows the same allowlisted in-window navigation path as main", async () => {
+  const { driver, profileDirectory } = harness();
   const events = [];
   await driver.start({ profileDirectory });
   driver.subscribe((event) => events.push(event));
   const session = await driver.createSession({ url: "https://chatgpt.com/auth/login", active: true });
   const win = FakeBrowserWindow.instances[0];
+
+  let prevented = false;
+  win.webContents.emit(
+    "will-navigate",
+    { preventDefault() { prevented = true; } },
+    "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fauth.openai.com"
+  );
+  assert.equal(prevented, false);
 
   assert.deepEqual(
     win.webContents.windowOpenHandler({ url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test" }),
@@ -262,17 +199,12 @@ test("Google auth stays inside Orchestra and never opens the system browser", as
   );
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(win.webContents.getURL(), "https://chatgpt.com/auth/login");
-  assert.equal(win.isVisible(), true);
-  assert.deepEqual(externalUrls, []);
-  assert.ok(events.some((event) => event.type === "unsupported-auth-provider" && event.provider === "google"));
-
-  const ping = await driver.pingSession(session.id);
-  assert.equal(ping.unsupportedAuthProvider, "google");
-
-  await driver.activateSession(session.id);
-  const afterReopen = await driver.pingSession(session.id);
-  assert.equal(afterReopen.unsupportedAuthProvider, null);
+  assert.equal(win.webContents.getURL(), "https://accounts.google.com/o/oauth2/v2/auth?client_id=test");
+  assert.ok(events.some((event) =>
+    event.type === "auth-navigation-redirected"
+    && event.sessionId === session.id
+  ));
+  assert.equal(events.some((event) => event.type === "unsupported-auth-provider"), false);
   await driver.close();
 });
 
