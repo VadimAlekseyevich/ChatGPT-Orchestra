@@ -34,12 +34,6 @@ function isAllowedManagedNavigation(parsed) {
   return ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
-function unsupportedEmbeddedAuthProvider(value) {
-  let parsed;
-  try { parsed = new URL(String(value || "")); } catch (_) { return null; }
-  return parsed.origin === "https://accounts.google.com" ? "google" : null;
-}
-
 function assertManagedNavigationUrl(value) {
   const raw = String(value || "").trim();
   if (raw === "about:blank") return raw;
