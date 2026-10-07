@@ -114,10 +114,7 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   const { driver, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, profileDirectory } = harness();
   await driver.start({ profileDirectory });
   assert.deepEqual(fromPathCalls, [{ profileDirectory: path.resolve(profileDirectory), options: { cache: true } }]);
-  assert.equal(preloadScripts.length, 1);
-  assert.equal(preloadScripts[0].type, "frame");
-  assert.equal(path.isAbsolute(preloadScripts[0].filePath), true);
-  assert.match(preloadScripts[0].filePath.replace(/\\/g, "/"), /content\/assistant-turn-tracker\.js$/);
+  assert.equal(preloadScripts.length, 0, "login/auth pages must not receive a session-wide tracker preload");
 
   const session = await driver.createSession({ url: "https://chatgpt.com/", active: true });
   assert.match(session.id, /^electron-page-/);
@@ -132,7 +129,7 @@ test("Electron managed driver opens a dedicated persistent Session by absolute a
   assert.deepEqual(win.webContents.windowOpenHandler({ url: "https://example.com" }), { action: "deny" });
   assert.equal(session.active, true);
   await driver.close();
-  assert.deepEqual(unregisteredPreloads, ["preload-1"]);
+  assert.deepEqual(unregisteredPreloads, []);
 });
 
 
