@@ -120,13 +120,29 @@
       </details>`;
     }
 
-    renderUnsupportedAuth(status) {
-      if (status?.unsupportedAuthProvider !== "google") return "";
+    renderFallback(status) {
+      const availability = String(status?.availability || "unavailable");
+      const embeddedLoginBlocked = Boolean(
+        status?.loginRequired
+        && status?.sessionOpen
+        && ["unavailable", "error"].includes(availability)
+      );
+      const googleBlocked = status?.unsupportedAuthProvider === "google";
+      if (!embeddedLoginBlocked && !googleBlocked) return "";
+      const titleKey = googleBlocked ? "managed.googleUnsupportedTitle" : "managed.embeddedFallbackTitle";
+      const titleFallback = googleBlocked
+        ? "Google sign-in is unavailable inside embedded browsers"
+        : "Embedded ChatGPT login is not working";
+      const textKey = googleBlocked ? "managed.googleUnsupportedText" : "managed.embeddedFallbackText";
+      const textFallback = googleBlocked
+        ? "Google blocks OAuth sign-in inside embedded user-agents. Switch Orchestra to the Chrome / Edge extension runtime and sign in in your normal browser."
+        : "The embedded browser is not reaching a usable ChatGPT page. Switch to the Chrome / Edge extension runtime to use a normal signed-in browser session.";
       return `<div class="dashboard-error managed-auth-fallback">
-        <strong>${escapeHtml(this.tr("managed.googleUnsupportedTitle", "Google sign-in is unavailable inside embedded browsers"))}</strong>
-        <p>${escapeHtml(this.tr("managed.googleUnsupportedText", "Google blocks OAuth sign-in inside embedded user-agents. Orchestra will stay inside the application and will not open an external browser. Use another ChatGPT sign-in method in this window."))}</p>
+        <strong>${escapeHtml(this.tr(titleKey, titleFallback))}</strong>
+        <p>${escapeHtml(this.tr(textKey, textFallback))}</p>
         <div class="dashboard-task-controls">
-          <button data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Use another sign-in method"))}</button>
+          <button data-managed-browser-action="companion">${escapeHtml(this.tr("managed.useCompanion", "Switch to Chrome / Edge extension runtime"))}</button>
+          <button class="secondary" data-managed-browser-action="open">${escapeHtml(this.tr("managed.otherMethod", "Try embedded browser again"))}</button>
         </div>
       </div>`;
     }
@@ -161,7 +177,7 @@
         <div class="dashboard-section-head"><h3>${escapeHtml(title)}</h3><span>${escapeHtml(availability)}</span></div>
         <p>${lead}</p>
         <p class="dashboard-muted">${escapeHtml(this.tr("managed.loginHint", "Sign in only inside Orchestra\'s isolated browser profile. ChatGPT credentials and cookies are not copied into Orchestra state."))}</p>
-        ${this.renderUnsupportedAuth(status)}
+        ${this.renderFallback(status)}
         <div class="dashboard-task-controls">
           ${action}
           <button class="secondary" data-managed-browser-action="refresh">${escapeHtml(this.tr("managed.refresh", "Refresh status"))}</button>
@@ -176,6 +192,15 @@
       if (normalized === "open") {
         await this.transport.execute("openManagedBrowser", {});
         return this.refresh();
+      }
+      if (normalized === "companion") {
+        if (typeof this.transport.openChatGPTExternal === "function") {
+          try { await this.transport.openChatGPTExternal(); } catch (_) {}
+        }
+        if (typeof this.transport.switchRuntime !== "function") {
+          return { ok: false, reason: "desktop_runtime_switch_unavailable" };
+        }
+        return this.transport.switchRuntime("companion");
       }
       if (normalized === "register") {
         const result = await this.transport.execute("registerManagedBrowserLead", {});
