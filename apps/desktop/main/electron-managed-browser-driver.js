@@ -29,6 +29,15 @@ const ALLOWED_HOST_SUFFIXES = Object.freeze([
 
 function asError(error) { return String(error?.message || error || "unknown_error"); }
 
+function sanitizeManagedBrowserUserAgent(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return raw;
+  return raw
+    .replace(/\sElectron\/[^\s]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function isAllowedManagedNavigation(parsed) {
   if (ALLOWED_ORIGINS.has(parsed.origin)) return true;
   const hostname = String(parsed.hostname || "").toLowerCase();
@@ -93,6 +102,22 @@ class ElectronManagedBrowserDriver {
     }
     this.profileDirectory = normalized;
     this.browserSession = electron.session.fromPath(normalized, { cache: true });
+
+    // OpenAI/Cloudflare can classify Electron's default UA as an embedded
+    // client and challenge or deny page assets. Keep the exact Chromium
+    // version shipped by Electron, but remove only the Electron product token
+    // so requests use a stable Chrome-compatible UA throughout the session.
+    if (typeof this.browserSession?.getUserAgent === "function"
+      && typeof this.browserSession?.setUserAgent === "function") {
+      const currentUserAgent = this.browserSession.getUserAgent();
+      const managedUserAgent = sanitizeManagedBrowserUserAgent(currentUserAgent);
+      if (managedUserAgent && managedUserAgent !== currentUserAgent) {
+        this.browserSession.setUserAgent(managedUserAgent);
+        this.logger?.info?.("managed_browser_user_agent_sanitized", {
+          electronTokenRemoved: true
+        });
+      }
+    }
     if (typeof this.browserSession?.registerPreloadScript !== "function") {
       throw new TypeError("electron_session_preload_registration_unavailable");
     }
@@ -457,6 +482,7 @@ module.exports = {
   DEFAULT_TURN_TRACKER_PRELOAD,
   ALLOWED_ORIGINS,
   ALLOWED_HOST_SUFFIXES,
+  sanitizeManagedBrowserUserAgent,
   unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 };
