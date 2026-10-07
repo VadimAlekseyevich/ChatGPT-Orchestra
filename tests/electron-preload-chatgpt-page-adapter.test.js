@@ -240,6 +240,51 @@ test("assistant snapshot is normalized, bounded and fingerprinted in the main pr
   adapter.close();
 });
 
+test("assistant snapshots use lazy isolated-world tracking when Electron supports it", async () => {
+  const ipcMain = new FakeIpcMain();
+  const isolatedCalls = [];
+  const sent = [];
+  const adapter = new ElectronPreloadChatGPTPageAdapter({
+    ipcMain,
+    requestTimeoutMs: 1000,
+    maxAssistantBytes: 4096,
+    turnTrackerSource: "/* tracker fixture */"
+  });
+  const contents = webContents(81, (message) => {
+    sent.push(message.name);
+    queueMicrotask(() => respond(ipcMain, 81, message.requestId, {
+      ok: true,
+      availability: "ready",
+      generating: false,
+      composerOccupied: false,
+      url: "https://chatgpt.com/c/lazy"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async (worldId, scripts) => {
+    isolatedCalls.push({ worldId, scripts });
+    return {
+      ok: true,
+      text: "lazy answer",
+      messageCount: 2,
+      observedTurnCount: 2,
+      turnId: "turn-lazy-2",
+      identitySource: "dom-attribute",
+      conversationKey: "/c/lazy",
+      pathname: "/c/lazy",
+      assistantTurnStatus: "ok"
+    };
+  };
+
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.turnId, "turn-lazy-2");
+  assert.deepEqual(sent, ["status"]);
+  assert.equal(isolatedCalls.length, 1);
+  assert.equal(isolatedCalls[0].worldId, 1001);
+  assert.equal(isolatedCalls[0].scripts.length, 2);
+  adapter.close();
+});
+
 test("closing the page adapter resolves pending commands fail-closed", async () => {
   const ipcMain = new FakeIpcMain();
   const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 5000 });
