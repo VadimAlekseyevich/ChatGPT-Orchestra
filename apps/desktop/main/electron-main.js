@@ -88,11 +88,6 @@ if (registrationRequest) {
   const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
   const { resolveCompanionExtensionDirectory, prepareCompanionFallback } = require("./companion-fallback.js");
 
-  // Keep QUIC disabled for the managed ChatGPT window on Windows. The earlier
-  // HTTP/2 disablement fixed the blank shell but could leave auth.openai.com
-  // waiting indefinitely after a successful Cloudflare challenge. Preserve
-  // normal HTTP/2 so the authentication redirect can complete.
-  app.commandLine.appendSwitch("disable-quic");
 
   let host = null;
   let unregisterIpc = null;
