@@ -113,8 +113,12 @@ class ElectronManagedBrowserDriver {
       const managedUserAgent = sanitizeManagedBrowserUserAgent(currentUserAgent);
       if (managedUserAgent && managedUserAgent !== currentUserAgent) {
         this.browserSession.setUserAgent(managedUserAgent);
+        if (typeof this.browserSession.clearCache === "function") {
+          await this.browserSession.clearCache();
+        }
         this.logger?.info?.("managed_browser_user_agent_sanitized", {
-          electronTokenRemoved: true
+          electronTokenRemoved: true,
+          cacheCleared: typeof this.browserSession.clearCache === "function"
         });
       }
     }
