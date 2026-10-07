@@ -5,7 +5,6 @@ const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-t
 
 const DEFAULT_CHATGPT_URL = "https://chatgpt.com/";
 const DEFAULT_AGENT_PRELOAD = path.join(__dirname, "..", "agent-preload.js");
-const DEFAULT_TURN_TRACKER_PRELOAD = path.join(__dirname, "..", "..", "..", "content", "assistant-turn-tracker.js");
 
 // Top-level navigation remains fail-closed. The first-party suffixes cover
 // OpenAI's current auth hosts such as setup.auth.openai.com and auth0.openai.com,
@@ -56,16 +55,13 @@ class ElectronManagedBrowserDriver {
     pageAdapter = null,
     logger = console,
     windowOptions = null,
-    preloadPath = DEFAULT_AGENT_PRELOAD,
-    turnTrackerPreloadPath = DEFAULT_TURN_TRACKER_PRELOAD
+    preloadPath = DEFAULT_AGENT_PRELOAD
   } = {}) {
     this.electronApi = electronApi;
     this.pageAdapter = pageAdapter;
     this.logger = logger;
     this.windowOptions = windowOptions || {};
     this.preloadPath = path.resolve(String(preloadPath || DEFAULT_AGENT_PRELOAD));
-    this.turnTrackerPreloadPath = path.resolve(String(turnTrackerPreloadPath || DEFAULT_TURN_TRACKER_PRELOAD));
-    this.turnTrackerPreloadId = null;
     this.browserSession = null;
     this.profileDirectory = null;
     this.sessions = new Map();
@@ -94,13 +90,6 @@ class ElectronManagedBrowserDriver {
     this.profileDirectory = normalized;
     this.browserSession = electron.session.fromPath(normalized, { cache: true });
 
-    if (typeof this.browserSession?.registerPreloadScript !== "function") {
-      throw new TypeError("electron_session_preload_registration_unavailable");
-    }
-    this.turnTrackerPreloadId = this.browserSession.registerPreloadScript({
-      type: "frame",
-      filePath: this.turnTrackerPreloadPath
-    });
     this.pageAdapter?.start?.();
     this.started = true;
     this.closing = false;
@@ -409,10 +398,6 @@ class ElectronManagedBrowserDriver {
     }
     this.listeners.clear();
     try { this.pageAdapter?.close?.(); } catch (_) {}
-    if (this.turnTrackerPreloadId && typeof this.browserSession?.unregisterPreloadScript === "function") {
-      try { this.browserSession.unregisterPreloadScript(this.turnTrackerPreloadId); } catch (_) {}
-    }
-    this.turnTrackerPreloadId = null;
     this.browserSession = null;
     this.profileDirectory = null;
     this.started = false;
@@ -424,7 +409,6 @@ module.exports = {
   ElectronManagedBrowserDriver,
   DEFAULT_CHATGPT_URL,
   DEFAULT_AGENT_PRELOAD,
-  DEFAULT_TURN_TRACKER_PRELOAD,
   ALLOWED_ORIGINS,
   ALLOWED_HOST_SUFFIXES,
   assertManagedNavigationUrl
