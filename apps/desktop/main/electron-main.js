@@ -88,14 +88,11 @@ if (registrationRequest) {
   const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
   const { resolveCompanionExtensionDirectory, prepareCompanionFallback } = require("./companion-fallback.js");
 
-  // ChatGPT's CDN has intermittently challenged Electron's HTTP/2/QUIC
-  // requests on Windows, leaving the remote page as a blank/black shell even
-  // though the top-level document loaded. Force the managed browser onto the
-  // HTTP/1.1 path before Chromium networking starts. These switches are
-  // process-wide but only affect Chromium network traffic; local file:// UI and
-  // Node-side transports are unchanged.
+  // Keep QUIC disabled for the managed ChatGPT window on Windows. The earlier
+  // HTTP/2 disablement fixed the blank shell but could leave auth.openai.com
+  // waiting indefinitely after a successful Cloudflare challenge. Preserve
+  // normal HTTP/2 so the authentication redirect can complete.
   app.commandLine.appendSwitch("disable-quic");
-  app.commandLine.appendSwitch("disable-http2");
 
   let host = null;
   let unregisterIpc = null;
