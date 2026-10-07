@@ -17,13 +17,9 @@ test("Electron entrypoint selects the managed browser host only through explicit
   assert.match(main, /createDesktopHost/);
 });
 
-test("Electron keeps QUIC compatibility workaround without disabling HTTP/2 auth", () => {
+test("Electron keeps Chromium network defaults for ChatGPT authentication", () => {
   const main = source("apps/desktop/main/electron-main.js");
-  const disableQuic = main.indexOf('app.commandLine.appendSwitch("disable-quic")');
-  const whenReady = main.indexOf("app.whenReady()");
-
-  assert.ok(disableQuic >= 0, "disable-quic switch must be configured");
-  assert.ok(whenReady > disableQuic, "disable-quic must be configured before app.whenReady()");
+  assert.doesNotMatch(main, /appendSwitch\(["']disable-quic["']\)/);
   assert.doesNotMatch(main, /appendSwitch\(["']disable-http2["']\)/);
 });
 
