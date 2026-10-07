@@ -29,15 +29,6 @@ const ALLOWED_HOST_SUFFIXES = Object.freeze([
 
 function asError(error) { return String(error?.message || error || "unknown_error"); }
 
-function sanitizeManagedBrowserUserAgent(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return raw;
-  return raw
-    .replace(/\sElectron\/[^\s]+/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
 function isAllowedManagedNavigation(parsed) {
   if (ALLOWED_ORIGINS.has(parsed.origin)) return true;
   const hostname = String(parsed.hostname || "").toLowerCase();
@@ -103,25 +94,6 @@ class ElectronManagedBrowserDriver {
     this.profileDirectory = normalized;
     this.browserSession = electron.session.fromPath(normalized, { cache: true });
 
-    // OpenAI/Cloudflare can classify Electron's default UA as an embedded
-    // client and challenge or deny page assets. Keep the exact Chromium
-    // version shipped by Electron, but remove only the Electron product token
-    // so requests use a stable Chrome-compatible UA throughout the session.
-    if (typeof this.browserSession?.getUserAgent === "function"
-      && typeof this.browserSession?.setUserAgent === "function") {
-      const currentUserAgent = this.browserSession.getUserAgent();
-      const managedUserAgent = sanitizeManagedBrowserUserAgent(currentUserAgent);
-      if (managedUserAgent && managedUserAgent !== currentUserAgent) {
-        this.browserSession.setUserAgent(managedUserAgent);
-        if (typeof this.browserSession.clearCache === "function") {
-          await this.browserSession.clearCache();
-        }
-        this.logger?.info?.("managed_browser_user_agent_sanitized", {
-          electronTokenRemoved: true,
-          cacheCleared: typeof this.browserSession.clearCache === "function"
-        });
-      }
-    }
     if (typeof this.browserSession?.registerPreloadScript !== "function") {
       throw new TypeError("electron_session_preload_registration_unavailable");
     }
@@ -168,45 +140,17 @@ class ElectronManagedBrowserDriver {
 
   attachWindow(sessionId, window) {
     const id = String(sessionId);
-    const blockUnsupportedAuth = (rawUrl, source = "navigation") => {
-      const provider = unsupportedEmbeddedAuthProvider(rawUrl);
-      if (!provider) return false;
-      const entry = this.entry(id);
-      if (entry) entry.unsupportedAuthProvider = provider;
-      this.logger?.warn?.("managed_browser_auth_provider_blocked", {
-        sessionId: id,
-        provider,
-        source,
-        origin: (() => {
-          try { return new URL(String(rawUrl || "")).origin; } catch (_) { return ""; }
-        })()
-      });
-      this.emit({ type: "unsupported-auth-provider", sessionId: id, provider });
-      return true;
-    };
     const onNavigation = (_event, url) => {
       const entry = this.entry(id);
-      if (entry) {
-        entry.url = String(url || "");
-        if (!unsupportedEmbeddedAuthProvider(url)) entry.unsupportedAuthProvider = null;
-      }
+      if (entry) entry.url = String(url || "");
       this.emit({ type: "session-navigation", sessionId: id, url: String(url || "") });
     };
-    const guardNavigation = (source) => (event, url) => {
-      if (blockUnsupportedAuth(url, source)) {
-        event?.preventDefault?.();
-        return;
-      }
+    window.webContents?.on?.("will-navigate", (event, url) => {
       try { assertManagedNavigationUrl(url); } catch (error) {
         event?.preventDefault?.();
         this.emit({ type: "navigation-blocked", sessionId: id, url: String(url || ""), reason: asError(error) });
       }
-    };
-    window.webContents?.on?.("will-navigate", guardNavigation("will-navigate"));
-    // Server-side redirects (ChatGPT -> Google OAuth) do not reliably surface as
-    // will-navigate. Intercept them before commit so the managed page never lands
-    // on Google's embedded-user-agent flow.
-    window.webContents?.on?.("will-redirect", guardNavigation("will-redirect"));
+    });
     window.webContents?.on?.("did-navigate", onNavigation);
     window.webContents?.on?.("did-navigate-in-page", onNavigation);
     window.webContents?.on?.("did-start-loading", () => {
@@ -262,7 +206,6 @@ class ElectronManagedBrowserDriver {
     // BrowserWindow/session. Unknown destinations remain denied.
     window.webContents?.setWindowOpenHandler?.((details = {}) => {
       const rawUrl = String(details.url || "");
-      if (blockUnsupportedAuth(rawUrl, "window-open")) return { action: "deny" };
       let targetUrl;
       try {
         targetUrl = assertManagedNavigationUrl(rawUrl);
@@ -308,7 +251,7 @@ class ElectronManagedBrowserDriver {
         devTools: false
       }
     });
-    this.sessions.set(id, { window, url: targetUrl, unsupportedAuthProvider: null, lastLoadError: null });
+    this.sessions.set(id, { window, url: targetUrl, lastLoadError: null });
     this.attachWindow(id, window);
     try {
       await window.loadURL(targetUrl);
@@ -362,7 +305,6 @@ class ElectronManagedBrowserDriver {
     const id = String(sessionId ?? "");
     const entry = this.entry(id);
     if (!entry?.window || entry.window.isDestroyed?.()) throw new Error("managed_browser_session_missing");
-    entry.unsupportedAuthProvider = null;
     entry.window.show?.();
     entry.window.restore?.();
     entry.window.focus?.();
@@ -390,11 +332,10 @@ class ElectronManagedBrowserDriver {
         ...result,
         ...(result?.ok === false && entry.lastLoadError
           ? { reason: result.reason || "managed_browser_page_load_failed", loadError: { ...entry.lastLoadError } }
-          : {}),
-        unsupportedAuthProvider: entry.unsupportedAuthProvider || null
+          : {})
       };
     }
-    return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || ""), unsupportedAuthProvider: entry.unsupportedAuthProvider || null };
+    return { ok: true, availability: "unavailable", url: String(entry.window.webContents?.getURL?.() || entry.url || "") };
   }
 
   async readAssistantSnapshot(sessionId) {
@@ -486,7 +427,5 @@ module.exports = {
   DEFAULT_TURN_TRACKER_PRELOAD,
   ALLOWED_ORIGINS,
   ALLOWED_HOST_SUFFIXES,
-  sanitizeManagedBrowserUserAgent,
-  unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 };
