@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const SELECTORS = require("../../../content/selectors.js");
 const Utils = require("../../../content/utils.js");
 const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-trace.js");
@@ -7,6 +9,8 @@ const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-t
 const COMMAND_CHANNEL = "orchestra:agent:command";
 const RESPONSE_CHANNEL = "orchestra:agent:response";
 const DEFAULT_MAX_ASSISTANT_BYTES = 384 * 1024;
+const ASSISTANT_TRACKER_WORLD_ID = 1001;
+const DEFAULT_TURN_TRACKER_PATH = path.join(__dirname, "..", "..", "..", "content", "assistant-turn-tracker.js");
 
 function currentUrl(webContents) {
   try { return String(webContents?.getURL?.() || ""); } catch (_) { return ""; }
@@ -18,12 +22,18 @@ class ElectronPreloadChatGPTPageAdapter {
     selectors = SELECTORS,
     requestTimeoutMs = 7000,
     maxAssistantBytes = DEFAULT_MAX_ASSISTANT_BYTES,
+    turnTrackerPath = DEFAULT_TURN_TRACKER_PATH,
+    turnTrackerSource = null,
     logger = console
   } = {}) {
     this.ipcMain = ipcMain;
     this.selectors = selectors;
     this.requestTimeoutMs = Math.max(500, Math.min(30000, Number(requestTimeoutMs) || 7000));
     this.maxAssistantBytes = Math.max(4096, Number(maxAssistantBytes) || DEFAULT_MAX_ASSISTANT_BYTES);
+    this.turnTrackerPath = path.resolve(String(turnTrackerPath || DEFAULT_TURN_TRACKER_PATH));
+    this.turnTrackerSource = turnTrackerSource === null
+      ? fs.readFileSync(this.turnTrackerPath, "utf8")
+      : String(turnTrackerSource || "");
     this.logger = logger;
     this.pending = new Map();
     this.nextRequest = 1;
@@ -320,8 +330,64 @@ class ElectronPreloadChatGPTPageAdapter {
     return this.request(webContents, "stop-generation");
   }
 
+  async observeAssistantSnapshot(webContents) {
+    if (typeof webContents?.executeJavaScriptInIsolatedWorld !== "function") {
+      return this.request(webContents, "read-assistant");
+    }
+    const selectors = JSON.stringify(this.selectors || {});
+    const bootstrap = `if (!globalThis.ChatGPTOrchestra?.AssistantTurnTracker) {\n${this.turnTrackerSource}\n}`;
+    const observe = `(() => {
+      const Tracker = globalThis.ChatGPTOrchestra?.AssistantTurnTracker;
+      if (typeof Tracker !== "function") return { ok: false, reason: "assistant_turn_tracker_unavailable" };
+      const selectors = ${selectors};
+      let tracker = globalThis.__orchestraAssistantTurnTracker;
+      if (!tracker) {
+        tracker = new Tracker({ documentRef: document, locationRef: location, selectors });
+        globalThis.__orchestraAssistantTurnTracker = tracker;
+      } else {
+        tracker.setSelectors(selectors);
+      }
+      const snapshot = tracker.getSnapshot();
+      return {
+        ok: snapshot?.ok !== false,
+        reason: snapshot?.ok === false ? String(snapshot.reason || "assistant_turn_snapshot_failed") : null,
+        conversationKey: String(snapshot?.conversationKey || location.pathname || ""),
+        pathname: String(snapshot?.conversationKey || location.pathname || ""),
+        messageCount: Math.max(0, Number(snapshot?.mountedTurnCount) || 0),
+        observedTurnCount: Math.max(0, Number(snapshot?.assistantTurnCountObserved) || 0),
+        turnId: String(snapshot?.latestTurnId || ""),
+        latestTurnId: String(snapshot?.latestTurnId || ""),
+        identitySource: String(snapshot?.latestIdentitySource || ""),
+        text: String(snapshot?.latestText || ""),
+        turnChanged: Boolean(snapshot?.turnChanged),
+        textChanged: Boolean(snapshot?.textChanged),
+        conversationChanged: Boolean(snapshot?.conversationChanged),
+        hydrationCandidate: Boolean(snapshot?.hydrationCandidate),
+        assistantTurnStatus: snapshot?.ok === false ? "ambiguous" : "ok"
+      };
+    })()`;
+    try {
+      return await webContents.executeJavaScriptInIsolatedWorld(
+        ASSISTANT_TRACKER_WORLD_ID,
+        [{ code: bootstrap }, { code: observe }]
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "assistant_turn_tracker_execution_failed",
+        message: String(error?.message || error)
+      };
+    }
+  }
+
   async readAssistantSnapshot(webContents) {
-    const result = await this.request(webContents, "read-assistant");
+    const [status, observed] = await Promise.all([
+      this.request(webContents, "status"),
+      this.observeAssistantSnapshot(webContents)
+    ]);
+    if (!status?.ok) return status || { ok: false, reason: "assistant_status_failed" };
+    if (!observed?.ok) return observed || { ok: false, reason: "assistant_snapshot_failed" };
+    const result = { ...status, ...observed, url: String(status.url || currentUrl(webContents) || "") };
     if (!result?.ok) return result || { ok: false, reason: "assistant_snapshot_failed" };
     const text = Utils.normalizeText(result.text || "");
     const bytes = Buffer.byteLength(text, "utf8");
@@ -389,5 +455,7 @@ module.exports = {
   ElectronPreloadChatGPTPageAdapter,
   COMMAND_CHANNEL,
   RESPONSE_CHANNEL,
-  DEFAULT_MAX_ASSISTANT_BYTES
+  DEFAULT_MAX_ASSISTANT_BYTES,
+  ASSISTANT_TRACKER_WORLD_ID,
+  DEFAULT_TURN_TRACKER_PATH
 };
