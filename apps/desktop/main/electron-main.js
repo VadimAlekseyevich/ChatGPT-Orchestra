@@ -88,6 +88,15 @@ if (registrationRequest) {
   const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
   const { resolveCompanionExtensionDirectory, prepareCompanionFallback } = require("./companion-fallback.js");
 
+  // ChatGPT's CDN has intermittently challenged Electron's HTTP/2/QUIC
+  // requests on Windows, leaving the remote page as a blank/black shell even
+  // though the top-level document loaded. Force the managed browser onto the
+  // HTTP/1.1 path before Chromium networking starts. These switches are
+  // process-wide but only affect Chromium network traffic; local file:// UI and
+  // Node-side transports are unchanged.
+  app.commandLine.appendSwitch("disable-quic");
+  app.commandLine.appendSwitch("disable-http2");
+
   let host = null;
   let unregisterIpc = null;
   let mainWindow = null;
