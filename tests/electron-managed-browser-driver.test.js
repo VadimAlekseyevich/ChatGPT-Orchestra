@@ -7,6 +7,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   ElectronManagedBrowserDriver,
+  sanitizeManagedBrowserUserAgent,
   unsupportedEmbeddedAuthProvider,
   assertManagedNavigationUrl
 } = require("../apps/desktop/main/electron-managed-browser-driver.js");
@@ -59,8 +60,15 @@ function harness() {
   const fromPathCalls = [];
   const preloadScripts = [];
   const unregisteredPreloads = [];
+  const userAgents = [];
   const browserSession = {
     kind: "fake-session",
+    currentUserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Electron/44.3.0 Chrome/142.0.0.0 Safari/537.36",
+    getUserAgent() { return this.currentUserAgent; },
+    setUserAgent(value) {
+      this.currentUserAgent = String(value);
+      userAgents.push(this.currentUserAgent);
+    },
     registerPreloadScript(script) {
       preloadScripts.push(script);
       return `preload-${preloadScripts.length}`;
@@ -108,8 +116,31 @@ function harness() {
   const driver = new ElectronManagedBrowserDriver({ electronApi, pageAdapter, logger });
   const profileDirectory = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "orchestra-electron-driver-")), "profile");
   fs.mkdirSync(profileDirectory, { recursive: true });
-  return { driver, electronApi, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, pageCalls, externalUrls, profileDirectory, logs };
+  return { driver, electronApi, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, userAgents, pageCalls, externalUrls, profileDirectory, logs };
 }
+
+test("managed browser user agent removes only the Electron product token", () => {
+  const source = "Mozilla/5.0 Electron/44.3.0 Chrome/142.0.0.0 Safari/537.36";
+  const sanitized = sanitizeManagedBrowserUserAgent(source);
+  assert.equal(sanitized, "Mozilla/5.0 Chrome/142.0.0.0 Safari/537.36");
+  assert.equal(sanitizeManagedBrowserUserAgent(sanitized), sanitized);
+});
+
+test("managed browser applies the Chrome-compatible user agent before page creation", async () => {
+  const { driver, browserSession, userAgents, profileDirectory, logs } = harness();
+  await driver.start({ profileDirectory });
+
+  assert.deepEqual(userAgents, [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+  ]);
+  assert.equal(browserSession.getUserAgent().includes("Electron/"), false);
+  assert.ok(logs.some((item) =>
+    item.event === "managed_browser_user_agent_sanitized"
+    && item.details.electronTokenRemoved === true
+  ));
+
+  await driver.close();
+});
 
 test("Electron managed driver opens a dedicated persistent Session by absolute app-data path", async () => {
   const { driver, browserSession, fromPathCalls, preloadScripts, unregisteredPreloads, profileDirectory } = harness();
