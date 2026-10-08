@@ -370,6 +370,107 @@ test("identity registry and retained reconciliation history stay bounded", () =>
   assert.ok(tracker.previousTurns.length <= 8);
 });
 
+function groupedFixture(key, { userText = "private user prompt", answer = "DONE", role = "assistant", markerOnly = false } = {}) {
+  const userBody = { innerText: userText, textContent: userText };
+  const assistantBody = { innerText: answer, textContent: answer };
+  let group;
+  const assistantNode = {
+    innerText: answer,
+    textContent: answer,
+    closest() { return group; },
+    querySelectorAll(selector) {
+      return selector === ".markdown" ? [assistantBody] : [];
+    },
+    compareDocumentPosition(other) {
+      return other === userBody ? 2 : 0;
+    }
+  };
+  const startMarker = {
+    closest() { return group; },
+    compareDocumentPosition(other) { return other === assistantBody ? 4 : 0; }
+  };
+  group = {
+    innerText: userText + "\n" + answer,
+    textContent: userText + "\n" + answer,
+    closest() { return this; },
+    getAttribute(name) {
+      return name === "data-turn-key" ? key : "";
+    },
+    matches() { return false; },
+    querySelectorAll(selector) {
+      if (selector === '[data-conversation-role="assistant"]') {
+        return role === "assistant" && !markerOnly ? [assistantNode] : [];
+      }
+      if (selector === "[data-chatgpt-agent-turn-start]") {
+        return role === "assistant" && markerOnly ? [startMarker] : [];
+      }
+      if (selector === ".markdown") return [userBody, assistantBody];
+      return [];
+    }
+  };
+  return { group, assistantNode, startMarker, assistantBody, userBody };
+}
+
+function groupedHarness(fixture, pathname = "/c/grouped") {
+  const doc = {
+    querySelectorAll(selector) {
+      if (selector.includes(",")) return [fixture.group];
+      if (selector === '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])') {
+        return fixture.group.querySelectorAll('[data-conversation-role="assistant"]').length
+          || fixture.group.querySelectorAll('[data-chatgpt-agent-turn-start]').length
+          ? [fixture.group] : [];
+      }
+      if (selector === '[data-conversation-role="assistant"]') {
+        return fixture.group.querySelectorAll(selector);
+      }
+      if (selector === "[data-chatgpt-agent-turn-start]") {
+        return fixture.group.querySelectorAll(selector);
+      }
+      return [];
+    }
+  };
+  return { tracker: new AssistantTurnTracker({
+    documentRef: doc,
+    locationRef: { pathname },
+    selectors: require("../content/selectors.js")
+  }), doc };
+}
+
+test("new grouped ChatGPT renderer tracks assistant content but never includes user text", () => {
+  const fixture = groupedFixture("stable-user-group", { userText: "SECRET PROMPT", answer: "DONE" });
+  const { tracker } = groupedHarness(fixture);
+  const first = tracker.getSnapshot();
+  assert.equal(first.ok, true);
+  assert.equal(first.mountedTurnCount, 1);
+  assert.equal(first.latestText, "DONE");
+  assert.equal(first.latestText.includes("SECRET PROMPT"), false);
+  assert.equal(first.latestIdentitySource, "dom-attribute");
+  fixture.assistantBody.innerText = "DONE UPDATED";
+  fixture.assistantBody.textContent = "DONE UPDATED";
+  const next = tracker.getSnapshot();
+  assert.equal(next.latestTurnId, first.latestTurnId);
+  assert.equal(next.latestText, "DONE UPDATED");
+  assert.equal(next.textChanged, true);
+});
+
+test("group marker alone creates identity but does not leak user prompt as assistant text", () => {
+  const fixture = groupedFixture("user-group-marker", { userText: "DO NOT PUBLISH", answer: "", markerOnly: true });
+  const { tracker } = groupedHarness(fixture);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.ok, true);
+  assert.ok(snapshot.latestTurnId);
+  assert.equal(snapshot.latestText, "");
+});
+
+test("group without assistant markers is not treated as a response", () => {
+  const fixture = groupedFixture("user-only", { role: "user", userText: "User question" });
+  const { tracker } = groupedHarness(fixture);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.mountedTurnCount, 0);
+  assert.equal(snapshot.latestTurnId, "");
+});
+
 test("turn IDs never contain assistant response text", () => {
   const turn = createTurn({ key: "privacy", text: "super secret response contents", order: 1 });
   const { tracker } = trackerHarness([turn]);
