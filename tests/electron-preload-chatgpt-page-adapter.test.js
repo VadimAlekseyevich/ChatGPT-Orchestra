@@ -42,6 +42,81 @@ test("preload page adapter sends only allowlisted structured commands with share
   adapter.close();
 });
 
+test("status polling recovers a visible ChatGPT composer when preload reports unavailable", async () => {
+  const ipcMain = new FakeIpcMain();
+  const observedWorlds = [];
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(101, (message) => {
+    queueMicrotask(() => respond(ipcMain, 101, message.requestId, {
+      ok: true, availability: "unavailable", url: "https://chatgpt.com/"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  contents.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+    observedWorlds.push(world);
+    assert.equal(scripts.length, 1);
+    return { ok: true, availability: "ready", generating: false, composerOccupied: false, url: "https://chatgpt.com/" };
+  };
+  const result = await adapter.ping(contents);
+  assert.equal(result.availability, "ready");
+  assert.deepEqual(observedWorlds, [1002]);
+  adapter.close();
+});
+
+test("status recovery is fail-closed on identity-provider pages", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(102, (message) => {
+    queueMicrotask(() => respond(ipcMain, 102, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://auth.openai.com/authorize";
+  contents.executeJavaScriptInIsolatedWorld = async () => {
+    throw new Error("must not inspect external auth DOM");
+  };
+  const result = await adapter.ping(contents);
+  assert.equal(result.availability, "unavailable");
+  adapter.close();
+});
+
+test("status recovery does not promote pages without a composer", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(103, (message) => {
+    queueMicrotask(() => respond(ipcMain, 103, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  contents.executeJavaScriptInIsolatedWorld = async () => ({ ok: true, availability: "unavailable", generating: false });
+  assert.equal((await adapter.ping(contents)).availability, "unavailable");
+  adapter.close();
+});
+
+test("assistant snapshots reuse recovered page status rather than reporting a false login failure", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000, maxAssistantBytes: 4096 });
+  const contents = webContents(104, (message) => {
+    queueMicrotask(() => respond(ipcMain, 104, message.requestId, {
+      ok: true, availability: "unavailable", url: "https://chatgpt.com/c/test"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/c/test";
+  contents.executeJavaScriptInIsolatedWorld = async (world) => world === 1002
+    ? { ok: true, availability: "ready", generating: false, url: "https://chatgpt.com/c/test" }
+    : {
+      ok: true, text: "reply", messageCount: 1, observedTurnCount: 1,
+      turnId: "turn-test-1", identitySource: "dom-attribute",
+      conversationKey: "/c/test", pathname: "/c/test"
+    };
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.availability, "ready");
+  assert.equal(snapshot.turnId, "turn-test-1");
+  adapter.close();
+});
+
 test("page adapter rejects a response from the wrong BrowserWindow sender", async () => {
   const ipcMain = new FakeIpcMain();
   const warnings = [];
