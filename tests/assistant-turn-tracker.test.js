@@ -453,6 +453,20 @@ test("new grouped ChatGPT renderer tracks assistant content but never includes u
   assert.equal(next.textChanged, true);
 });
 
+test("grouped assistant role marker can precede sibling markdown without including user markdown", () => {
+  const fixture = groupedFixture("sibling-markdown", { userText: "PRIVATE USER MARKDOWN", answer: "ANSWER" });
+  fixture.assistantNode.innerText = "";
+  fixture.assistantNode.textContent = "";
+  fixture.assistantNode.querySelectorAll = () => [];
+  fixture.assistantNode.compareDocumentPosition = (other) =>
+    other === fixture.assistantBody ? 4 : other === fixture.userBody ? 2 : 0;
+  const { tracker } = groupedHarness(fixture);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.latestText, "ANSWER");
+  assert.equal(snapshot.latestText.includes("PRIVATE USER MARKDOWN"), false);
+});
+
 test("group marker alone creates identity but does not leak user prompt as assistant text", () => {
   const fixture = groupedFixture("user-group-marker", { userText: "DO NOT PUBLISH", answer: "", markerOnly: true });
   const { tracker } = groupedHarness(fixture);
