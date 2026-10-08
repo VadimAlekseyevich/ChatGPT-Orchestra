@@ -203,6 +203,8 @@ class ManagedBrowserCompletionMonitor {
     let snapshotErrors = 0;
     let snapshotErrorElapsedMs = 0;
     let lastSnapshot = baseline;
+    let loggedConversationTransition = "";
+    let warnedMissingAssistantTurn = false;
 
     const elapsedMs = () => Math.max(0, this.clock() - monitorStartedAt);
     const lastStage = () => (
@@ -297,14 +299,32 @@ class ManagedBrowserCompletionMonitor {
       const unexpectedConversationChange = conversationChanged && !sawGenerating && Boolean(baseline.turnId);
 
       if (conversationChanged) {
-        this.logger?.debug?.("managed_browser_conversation_changed", traceDetails(trace, {
-          pollIndex: poll,
-          elapsedMs: elapsedMs(),
-          fromConversationKey: baseline.conversationKey,
-          toConversationKey: snapshot.conversationKey,
-          sawGenerating,
-          turnId: snapshot.turnId
-        }));
+        // A new chat is the expected result of submitting from "/". The
+        // baseline must stay unchanged until a genuine assistant turn arrives,
+        // but logging the same route change every 400ms obscures diagnostics.
+        const transition = `${baseline.conversationKey}=>${snapshot.conversationKey}`;
+        if (loggedConversationTransition !== transition) {
+          loggedConversationTransition = transition;
+          this.logger?.debug?.("managed_browser_conversation_changed", traceDetails(trace, {
+            pollIndex: poll,
+            elapsedMs: elapsedMs(),
+            fromConversationKey: baseline.conversationKey,
+            toConversationKey: snapshot.conversationKey,
+            sawGenerating,
+            turnId: snapshot.turnId
+          }));
+        }
+        if (!warnedMissingAssistantTurn && !snapshot.turnId && !sawGenerating
+          && elapsedMs() >= 15_000 && snapshot.availability === "ready") {
+          warnedMissingAssistantTurn = true;
+          this.logger?.warn?.("managed_browser_assistant_turn_not_detected", traceDetails(trace, {
+            elapsedMs: elapsedMs(),
+            conversationKey: snapshot.conversationKey,
+            messageCount: snapshot.messageCount,
+            observedTurnCount: snapshot.observedTurnCount,
+            availability: snapshot.availability
+          }));
+        }
       }
 
       const legacyChange = !turnAware && (fingerprintChanged || messageAdvanced);
