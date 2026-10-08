@@ -457,7 +457,7 @@ class ElectronPreloadChatGPTPageAdapter {
 
   async readAssistantSnapshot(webContents) {
     const [status, observed] = await Promise.all([
-      this.request(webContents, "status"),
+      this.ping(webContents),
       this.observeAssistantSnapshot(webContents)
     ]);
     if (!status?.ok) return status || { ok: false, reason: "assistant_status_failed" };
