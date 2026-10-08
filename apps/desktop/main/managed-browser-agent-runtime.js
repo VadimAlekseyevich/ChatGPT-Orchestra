@@ -83,6 +83,7 @@ class ManagedBrowserAgentRuntime {
     this.started = false;
     this.nextAgent = 1;
     this.agents = new Map();
+    this.pendingPromptSends = new Set();
     this.unsubscribeDriver = null;
     this.hostHandlers = null;
     this.agentEventListeners = new Set();
@@ -497,7 +498,15 @@ class ManagedBrowserAgentRuntime {
     if (!agent) return null;
     const mutable = this.agents.get(agent.agentId);
     const availability = String(payload.availability || "unknown");
-    const normalized = Lifecycle.normalizeHeartbeat(payload, { hasBinding: Boolean(this.sessionIdForAgent(mutable)) });
+    // A draft in the composer is normally unavailable, but while our own
+    // sendPrompt is pending it is an expected intermediate state. In
+    // particular, a large prompt can still be staged during trusted-enter
+    // fallback, and ping must not demote that active dispatch to ERROR.
+    const sending = this.pendingPromptSends.has(mutable.agentId)
+      && availability === "ready";
+    const normalized = sending
+      ? { state: Lifecycle.STATES.BUSY, reason: "prompt_active", legacyStatus: "BUSY" }
+      : Lifecycle.normalizeHeartbeat(payload, { hasBinding: Boolean(this.sessionIdForAgent(mutable)) });
     mutable.lastSeenAt = this.clock();
     mutable.updatedAt = mutable.lastSeenAt;
     mutable.lastError = normalized.state === Lifecycle.STATES.UNAVAILABLE || normalized.state === Lifecycle.STATES.FAILED
@@ -667,6 +676,7 @@ class ManagedBrowserAgentRuntime {
     this.logger?.info?.("managed_browser_prompt_send_started", traceDetails(trace, {
       promptBytes
     }));
+    this.pendingPromptSends.add(agent.agentId);
     try {
       const result = await this.driver.sendPrompt(sessionId, String(prompt || ""), { trace });
       if (result?.ok) {
@@ -709,6 +719,8 @@ class ManagedBrowserAgentRuntime {
         agentId: agent.agentId,
         trace
       };
+    } finally {
+      this.pendingPromptSends.delete(agent.agentId);
     }
   }
 
@@ -793,6 +805,7 @@ class ManagedBrowserAgentRuntime {
       this.logger?.warn?.("managed_browser_unsubscribe_failed", { error });
     }
     this.unsubscribeDriver = null;
+    this.pendingPromptSends.clear();
     this.unbindHostHandlers();
     if (this.started) await this.driver.close();
     this.started = false;
