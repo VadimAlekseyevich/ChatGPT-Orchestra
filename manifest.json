@@ -21,6 +21,7 @@
     "js": [
       "content/selectors.js",
       "content/utils.js",
+      "content/assistant-turn-tracker.js",
       "content/logger.js",
       "content/message-types.js",
       "protocol/orchestra-protocol.js",

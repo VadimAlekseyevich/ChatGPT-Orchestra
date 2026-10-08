@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "test:contracts": "node --test tests/contract-conformance.test.js tests/platform-contracts.test.js tests/orchestrator-api.test.js",
-    "test:browser-fixtures": "node --test tests/browser-fixtures.test.js tests/composer-adapter.test.js tests/generation-detector.test.js tests/assistant-message-reader.test.js",
+    "test:browser-fixtures": "node --test tests/browser-fixtures.test.js tests/composer-adapter.test.js tests/generation-detector.test.js tests/assistant-turn-tracker.test.js tests/assistant-message-reader.test.js",
     "test:release": "node scripts/validate-release.js",
     "test:phase1": "node --test tests/protocol-parser.test.js tests/generation-state.test.js tests/composer-adapter.test.js",
     "test:phase2": "node --test tests/tab-registry.test.js tests/orchestrator.test.js",
@@ -44,7 +44,8 @@
     "desktop:dist:win": "node scripts/build-windows-alpha.js",
     "extension:stage-alpha": "node scripts/stage-alpha-extension.js",
     "companion:register-host": "node scripts/register-native-host.js register",
-    "companion:unregister-host": "node scripts/register-native-host.js unregister"
+    "companion:unregister-host": "node scripts/register-native-host.js unregister",
+    "test:issue73": "node --test tests/assistant-turn-tracker.test.js tests/assistant-message-reader.test.js tests/generation-detector.test.js tests/browser-fixtures.test.js tests/electron-managed-browser-driver.test.js tests/electron-preload-chatgpt-page-adapter.test.js tests/managed-browser-completion-monitor.test.js"
   },
   "devDependencies": {
     "electron": "44.3.0",
@@ -53,11 +54,47 @@
   "build": {
     "appId": "com.chatgptorchestra.desktop",
     "productName": "ChatGPT Orchestra",
-    "directories": {"output":"dist/desktop"},
-    "files": ["apps/desktop/**/*","apps/companion/**/*","background/**/*","content/message-types.js","content/protocol-parser.js","content/planning-artifact-parser.js","content/worker-artifact-parser.js","content/utils.js","content/selectors.js","context/**/*","dashboard/**/*","persistence/**/*","platform/**/*","prompts/**/*","protocol/**/*","popup.css","package.json","LICENSE"],
-    "extraResources": [{"from":"dist/alpha-extension","to":"alpha-extension"}],
-    "win": {"target":["nsis"]},
-    "nsis": {"oneClick":false,"allowToChangeInstallationDirectory":true}
+    "directories": {
+      "output": "dist/desktop"
+    },
+    "files": [
+      "apps/desktop/**/*",
+      "apps/companion/**/*",
+      "background/**/*",
+      "content/message-types.js",
+      "content/protocol-parser.js",
+      "content/planning-artifact-parser.js",
+      "content/worker-artifact-parser.js",
+      "content/utils.js",
+      "content/selectors.js",
+      "content/assistant-turn-tracker.js",
+      "context/**/*",
+      "dashboard/**/*",
+      "persistence/**/*",
+      "platform/**/*",
+      "prompts/**/*",
+      "protocol/**/*",
+      "popup.css",
+      "package.json",
+      "LICENSE"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/alpha-extension",
+        "to": "alpha-extension"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
-  "engines": {"node": ">=18"}
+  "engines": {
+    "node": ">=18"
+  }
 }

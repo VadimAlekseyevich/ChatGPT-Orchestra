@@ -9,7 +9,23 @@
       '[role="button"][data-testid="stop-button"]',
       'button[aria-label="Stop streaming"]',
       'button[aria-label="Stop generating"]',
-      'button[aria-label*="Stop" i][data-testid]'
+      'button[aria-label*="Stop" i][data-testid]',
+      'form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]'
+    ]),
+    turnRoots: Object.freeze([
+      '[data-testid^="conversation-turn-"]',
+      'article[data-turn]',
+      'section[data-turn]',
+      'article[data-message-author-role]',
+      '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])'
+    ]),
+    assistantRoleMarkers: Object.freeze([
+      '[data-message-author-role="assistant"]',
+      '[data-role="assistant"]',
+      '[data-message-author="assistant"]',
+      '[data-turn="assistant"]',
+      '[data-conversation-role="assistant"]',
+      '[data-chatgpt-agent-turn-start]'
     ]),
     assistantMessages: Object.freeze([
       '[data-message-author-role="assistant"]',
@@ -20,7 +36,8 @@
       '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"])',
       'article[data-turn="assistant"]',
       'section[data-turn="assistant"]',
-      'article[data-message-author-role="assistant"]'
+      'article[data-message-author-role="assistant"]',
+      '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])'
     ]),
     assistantBodies: Object.freeze([
       '.markdown',
@@ -31,7 +48,10 @@
     composers: Object.freeze([
       '#prompt-textarea',
       'textarea[name="prompt-textarea"]',
-      'textarea#prompt-textarea'
+      'textarea#prompt-textarea',
+      'form [contenteditable="true"][role="textbox"]',
+      '[data-testid="composer-input"][contenteditable="true"]',
+      'div[contenteditable="true"][data-lexical-editor="true"]'
     ]),
     sendButtons: Object.freeze([
       '#composer-submit-button',

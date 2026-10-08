@@ -458,6 +458,7 @@ test("protocol and EventBus failures end with deterministic terminal trace reaso
       }
     };
     const adapter = new ManagedBrowserProtocolAdapter({ logger });
+    let monotonicMs = 0;
     const monitor = new ManagedBrowserCompletionMonitor({
       driver: {
         async readAssistantSnapshot() {
@@ -477,7 +478,9 @@ test("protocol and EventBus failures end with deterministic terminal trace reaso
       pollMs: 100,
       quietMs: 100,
       timeoutMs: 1000,
-      sleep: async () => {},
+      protocolGraceMs: 200,
+      clock: () => monotonicMs,
+      sleep: async (ms) => { monotonicMs += ms; },
       logger
     });
     const traceValue = {

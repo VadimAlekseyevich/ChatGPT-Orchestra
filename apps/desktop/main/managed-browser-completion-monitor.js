@@ -1,5 +1,7 @@
 "use strict";
 
+const ProtocolParser = require("../../../content/protocol-parser.js");
+
 const RETRYABLE_PREPARE_REASONS = new Set(["agent_preload_timeout", "agent_preload_send_failed"]);
 const {
   normalizeTraceContext,
@@ -20,6 +22,7 @@ class ManagedBrowserCompletionMonitor {
     snapshotErrorGraceMs = 30_000,
     prepareAttempts = 2,
     prepareRetryMs = 250,
+    protocolGraceMs = 30_000,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     clock = () => Date.now(),
     logger = console
@@ -37,6 +40,8 @@ class ManagedBrowserCompletionMonitor {
     this.snapshotErrorGraceMs = Math.max(this.pollMs, Math.min(120_000, Number(snapshotErrorGraceMs) || 30_000));
     this.prepareAttempts = Math.max(1, Math.min(4, Number(prepareAttempts) || 2));
     this.prepareRetryMs = Math.max(0, Math.min(2000, Number(prepareRetryMs) || 250));
+    this.protocolGraceMs = Math.max(this.quietMs, Math.min(120_000, Number(protocolGraceMs) || 30_000));
+    this.protocolParser = protocolAdapter.parser || new ProtocolParser();
     this.sleep = sleep;
     this.clock = clock;
     this.logger = logger;
@@ -129,7 +134,14 @@ class ManagedBrowserCompletionMonitor {
       text: String(snapshot.text || ""),
       fingerprint: String(snapshot.fingerprint || ""),
       messageCount: Math.max(0, Number(snapshot.messageCount) || 0),
-      pathname: String(snapshot.pathname || ""),
+      observedTurnCount: Math.max(0, Number(snapshot.observedTurnCount) || 0),
+      conversationKey: String(snapshot.conversationKey || snapshot.pathname || ""),
+      turnId: String(snapshot.latestTurnId || snapshot.turnId || ""),
+      latestTurnId: String(snapshot.latestTurnId || snapshot.turnId || ""),
+      textFingerprint: String(snapshot.latestTextFingerprint || snapshot.textFingerprint || ""),
+      latestTextFingerprint: String(snapshot.latestTextFingerprint || snapshot.textFingerprint || ""),
+      identitySource: String(snapshot.identitySource || ""),
+      pathname: String(snapshot.pathname || snapshot.conversationKey || ""),
       url: String(snapshot.url || ""),
       availability: String(snapshot.availability || "unavailable"),
       generating: Boolean(snapshot.generating)
@@ -185,9 +197,10 @@ class ManagedBrowserCompletionMonitor {
     const requiredStablePolls = 1 + Math.ceil(this.quietMs / this.pollMs);
     const maxPolls = 1 + Math.ceil(this.timeoutMs / this.pollMs);
     const monitorStartedAt = this.clock();
-    let stableFingerprint = "";
+    let stableCandidateKey = "";
     let stablePolls = 0;
-    let candidateFingerprint = "";
+    let candidateKey = "";
+    let activeTurnId = "";
     let sawGenerating = false;
     let generationStoppedLogged = false;
     let sawChange = false;
@@ -195,6 +208,10 @@ class ManagedBrowserCompletionMonitor {
     let snapshotErrors = 0;
     let snapshotErrorElapsedMs = 0;
     let lastSnapshot = baseline;
+    let loggedConversationTransition = "";
+    let warnedMissingAssistantTurn = false;
+    let pendingProtocolCandidateKey = "";
+    let pendingProtocolSince = 0;
 
     const elapsedMs = () => Math.max(0, this.clock() - monitorStartedAt);
     const lastStage = () => (
@@ -277,62 +294,145 @@ class ManagedBrowserCompletionMonitor {
         }));
       }
 
+      const turnAware = Boolean(baseline.turnId || snapshot.turnId);
+      const conversationChanged = Boolean(
+        baseline.conversationKey
+        && snapshot.conversationKey
+        && snapshot.conversationKey !== baseline.conversationKey
+      );
       const fingerprintChanged = Boolean(snapshot.fingerprint && snapshot.fingerprint !== baseline.fingerprint);
       const messageAdvanced = snapshot.messageCount > baseline.messageCount;
-      if (fingerprintChanged || messageAdvanced) {
+      const turnAdvanced = Boolean(snapshot.turnId && snapshot.turnId !== baseline.turnId);
+      const unexpectedConversationChange = conversationChanged && !sawGenerating && Boolean(baseline.turnId);
+
+      if (conversationChanged) {
+        // A new chat is the expected result of submitting from "/". The
+        // baseline must stay unchanged until a genuine assistant turn arrives,
+        // but logging the same route change every 400ms obscures diagnostics.
+        const transition = `${baseline.conversationKey}=>${snapshot.conversationKey}`;
+        if (loggedConversationTransition !== transition) {
+          loggedConversationTransition = transition;
+          this.logger?.debug?.("managed_browser_conversation_changed", traceDetails(trace, {
+            pollIndex: poll,
+            elapsedMs: elapsedMs(),
+            fromConversationKey: baseline.conversationKey,
+            toConversationKey: snapshot.conversationKey,
+            sawGenerating,
+            turnId: snapshot.turnId
+          }));
+        }
+        if (!warnedMissingAssistantTurn && !snapshot.turnId && !sawGenerating
+          && elapsedMs() >= 15_000 && snapshot.availability === "ready") {
+          warnedMissingAssistantTurn = true;
+          this.logger?.warn?.("managed_browser_assistant_turn_not_detected", traceDetails(trace, {
+            elapsedMs: elapsedMs(),
+            conversationKey: snapshot.conversationKey,
+            messageCount: snapshot.messageCount,
+            observedTurnCount: snapshot.observedTurnCount,
+            availability: snapshot.availability
+          }));
+        }
+      }
+
+      const legacyChange = !turnAware && (fingerprintChanged || messageAdvanced);
+      const newTurnCandidate = turnAware && turnAdvanced && !unexpectedConversationChange;
+      if (newTurnCandidate || legacyChange) {
         sawChange = true;
+        if (newTurnCandidate) activeTurnId = snapshot.turnId;
         if (!changeLogged) {
           changeLogged = true;
           this.logger?.info?.("managed_browser_assistant_change_detected", traceDetails(trace, {
             pollIndex: poll,
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
+            baselineTextFingerprint: baseline.textFingerprint,
+            currentTextFingerprint: snapshot.textFingerprint,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             messageAdvanced,
             availability: snapshot.availability,
-            generating: snapshot.generating,
-            responseFingerprint: snapshot.fingerprint || ""
+            generating: snapshot.generating
           }));
         }
       }
 
-      const candidate = sawChange
+      const activeTurnMatches = turnAware
+        ? Boolean(activeTurnId && snapshot.turnId === activeTurnId && activeTurnId !== baseline.turnId)
+        : sawChange;
+      const stabilityFingerprint = String(snapshot.textFingerprint || snapshot.fingerprint || "");
+      const currentCandidateKey = turnAware
+        ? `${snapshot.turnId}:${stabilityFingerprint}`
+        : snapshot.fingerprint;
+      const candidate = activeTurnMatches
         && !snapshot.generating
         && snapshot.availability === "ready"
         && Boolean(snapshot.text.trim())
-        && Boolean(snapshot.fingerprint);
+        && Boolean(stabilityFingerprint);
 
       if (candidate) {
-        if (stableFingerprint === snapshot.fingerprint) stablePolls += 1;
+        if (stableCandidateKey === currentCandidateKey) stablePolls += 1;
         else {
-          stableFingerprint = snapshot.fingerprint;
+          stableCandidateKey = currentCandidateKey;
           stablePolls = 1;
         }
-        if (candidateFingerprint !== snapshot.fingerprint) {
-          candidateFingerprint = snapshot.fingerprint;
+        if (candidateKey !== currentCandidateKey) {
+          candidateKey = currentCandidateKey;
           this.logger?.info?.("managed_browser_completion_candidate", traceDetails(trace, {
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             stablePollCount: stablePolls,
             requiredStablePolls,
             responseBytes: byteLength(snapshot.text),
             responseFingerprint: snapshot.fingerprint,
+            textFingerprint: snapshot.textFingerprint,
             availability: snapshot.availability,
             generating: snapshot.generating
           }));
         }
         if (stablePolls >= requiredStablePolls) {
+          // The stop button is not reliably exposed by every ChatGPT layout.
+          // Stable prose is not completion evidence for an Orchestra task:
+          // the terminal @@ORCH event may be rendered in a later DOM chunk.
+          if (trace.taskId) {
+            const parsedKind = this.protocolParser.parse(snapshot.text).kind;
+            if (parsedKind !== "orchestra_event") {
+              if (pendingProtocolCandidateKey !== currentCandidateKey) {
+                pendingProtocolCandidateKey = currentCandidateKey;
+                pendingProtocolSince = this.clock();
+                this.logger?.warn?.("managed_browser_completion_awaiting_protocol", traceDetails(trace, {
+                  elapsedMs: elapsedMs(),
+                  parsedKind,
+                  responseBytes: byteLength(snapshot.text),
+                  turnId: snapshot.turnId,
+                  graceMs: this.protocolGraceMs
+                }));
+              }
+              if (this.clock() - pendingProtocolSince < this.protocolGraceMs) {
+                if (poll + 1 < maxPolls) await this.sleep(this.pollMs);
+                continue;
+              }
+            }
+          }
           this.logger?.info?.("managed_browser_completion_stable", traceDetails(trace, {
             elapsedMs: elapsedMs(),
+            baselineTurnId: baseline.turnId,
+            currentTurnId: snapshot.turnId,
             baselineMessageCount: baseline.messageCount,
             currentMessageCount: snapshot.messageCount,
+            turnAdvanced,
             fingerprintChanged,
             stablePollCount: stablePolls,
             responseBytes: byteLength(snapshot.text),
             responseFingerprint: snapshot.fingerprint,
+            textFingerprint: snapshot.textFingerprint,
             availability: snapshot.availability,
             generating: snapshot.generating
           }));
@@ -379,9 +479,11 @@ class ManagedBrowserCompletionMonitor {
           };
         }
       } else {
-        stableFingerprint = "";
+        stableCandidateKey = "";
         stablePolls = 0;
-        candidateFingerprint = "";
+        candidateKey = "";
+        pendingProtocolCandidateKey = "";
+        pendingProtocolSince = 0;
       }
 
       if (poll + 1 < maxPolls) await this.sleep(this.pollMs);

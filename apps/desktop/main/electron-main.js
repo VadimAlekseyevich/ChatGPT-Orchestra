@@ -88,6 +88,7 @@ if (registrationRequest) {
   const { revealDesktopMainWindow } = require("./desktop-window-policy.js");
   const { resolveCompanionExtensionDirectory, prepareCompanionFallback } = require("./companion-fallback.js");
 
+
   let host = null;
   let unregisterIpc = null;
   let mainWindow = null;

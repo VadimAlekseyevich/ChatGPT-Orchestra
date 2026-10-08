@@ -1,0 +1,84 @@
+{
+  "oneAssistantTurn": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">ONE</div></article></main>"
+  },
+  "multipleAssistantTurns": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">ONE</div></article><article data-testid=\"conversation-turn-2\" data-turn=\"assistant\"><div class=\"markdown\">TWO</div></article></main>"
+  },
+  "mixedSelectorVariants": {
+    "html": "<main><section data-testid=\"conversation-turn-1\"><div data-message-author-role=\"assistant\"><div class=\"prose\">ONE</div></div></section><article data-turn=\"assistant\"><div data-message-content>TWO</div></article></main>"
+  },
+  "newestPrimaryFirst": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">OLD</div></article><article data-testid=\"conversation-turn-2\"><div data-message-author-role=\"assistant\"><div class=\"markdown\">NEW</div></div></article></main>"
+  },
+  "oldestFallbackFirst": {
+    "html": "<main><section data-turn=\"assistant\"><div class=\"markdown\">OLD</div></section><article data-testid=\"conversation-turn-2\" data-turn=\"assistant\"><div class=\"markdown\">NEW</div></article></main>"
+  },
+  "duplicateSelectorMatches": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\" data-message-author-role=\"assistant\"><div data-message-author-role=\"assistant\"><div class=\"markdown\">ONE</div></div></article></main>"
+  },
+  "nestedRoleMarker": {
+    "html": "<main><article data-testid=\"conversation-turn-1\"><div><div data-message-author-role=\"assistant\"><div class=\"markdown\">ONE</div></div></div></article></main>"
+  },
+  "identicalConsecutiveText": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">DONE</div></article><article data-testid=\"conversation-turn-2\" data-turn=\"assistant\"><div class=\"markdown\">DONE</div></article></main>"
+  },
+  "streamingTurn": {
+    "sequence": [
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PL</div></article></main>",
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PLAN</div></article></main>",
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PLAN_V1</div></article></main>"
+    ]
+  },
+  "rerenderReplacement": {
+    "sequence": [
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PLAN</div></article></main>",
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PLAN updated</div></article></main>"
+    ]
+  },
+  "virtualizedLatestRemains": {
+    "sequence": [
+      "<main><article data-testid=\"conversation-turn-A\" data-turn=\"assistant\">A</article><article data-testid=\"conversation-turn-B\" data-turn=\"assistant\">B</article><article data-testid=\"conversation-turn-C\" data-turn=\"assistant\">C</article><article data-testid=\"conversation-turn-D\" data-turn=\"assistant\">D</article><article data-testid=\"conversation-turn-E\" data-turn=\"assistant\">E</article></main>",
+      "<main><article data-testid=\"conversation-turn-D\" data-turn=\"assistant\">D</article><article data-testid=\"conversation-turn-E\" data-turn=\"assistant\">E</article></main>"
+    ]
+  },
+  "virtualizedNewLatest": {
+    "sequence": [
+      "<main><article data-testid=\"conversation-turn-A\" data-turn=\"assistant\">A</article><article data-testid=\"conversation-turn-B\" data-turn=\"assistant\">B</article><article data-testid=\"conversation-turn-C\" data-turn=\"assistant\">C</article><article data-testid=\"conversation-turn-D\" data-turn=\"assistant\">D</article><article data-testid=\"conversation-turn-E\" data-turn=\"assistant\">E</article></main>",
+      "<main><article data-testid=\"conversation-turn-D\" data-turn=\"assistant\">D</article><article data-testid=\"conversation-turn-E\" data-turn=\"assistant\">E</article><article data-testid=\"conversation-turn-F\" data-turn=\"assistant\">F</article></main>"
+    ]
+  },
+  "temporaryDuplicateActive": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PART</div></article><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">PARTIAL RESPONSE</div></article></main>"
+  },
+  "conversationPathChanged": {
+    "sequence": [
+      {
+        "path": "/c/one",
+        "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\">OLD</article></main>"
+      },
+      {
+        "path": "/c/two",
+        "html": "<main><article data-testid=\"conversation-turn-2\" data-turn=\"assistant\">EXISTING</article></main>"
+      }
+    ]
+  },
+  "initialHydrationHistory": {
+    "sequence": [
+      "<main></main>",
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\">A</article><article data-testid=\"conversation-turn-2\" data-turn=\"assistant\">B</article><article data-testid=\"conversation-turn-3\" data-turn=\"assistant\">C</article></main>"
+    ]
+  },
+  "emptyAssistantShell": {
+    "sequence": [
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\"></div></article></main>",
+      "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\">TEXT</div></article></main>"
+    ]
+  },
+  "markdownCodeDescendants": {
+    "html": "<main><article data-testid=\"conversation-turn-1\" data-turn=\"assistant\"><div class=\"markdown\"><p>Answer</p><pre><code>const x = 1;</code></pre></div></article></main>"
+  },
+  "ambiguousMalformed": {
+    "html": "<main><div data-message-author-role=\"assistant\">A</div><aside><div data-message-author-role=\"assistant\">B</div></aside></main>"
+  }
+}

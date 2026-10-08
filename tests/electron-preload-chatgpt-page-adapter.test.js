@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const vm = require("node:vm");
+const { runInNewContext } = require("node:vm");
 
 const {
   ElectronPreloadChatGPTPageAdapter,
@@ -39,6 +41,112 @@ test("preload page adapter sends only allowlisted structured commands with share
   assert.equal(seen[0].name, "status");
   assert.ok(Array.isArray(seen[0].selectors.composers));
   assert.ok(Array.isArray(seen[0].selectors.assistantMessages));
+  adapter.close();
+});
+
+test("status polling recovers a visible ChatGPT composer when preload reports unavailable", async () => {
+  const ipcMain = new FakeIpcMain();
+  const observedWorlds = [];
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(101, (message) => {
+    queueMicrotask(() => respond(ipcMain, 101, message.requestId, {
+      ok: true, availability: "unavailable", url: "https://chatgpt.com/"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  contents.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+    observedWorlds.push(world);
+    assert.equal(scripts.length, 1);
+    return { ok: true, availability: "ready", generating: false, composerOccupied: false, url: "https://chatgpt.com/" };
+  };
+  const result = await adapter.ping(contents);
+  assert.equal(result.availability, "ready");
+  assert.deepEqual(observedWorlds, [1002]);
+  adapter.close();
+});
+
+test("isolated-world status script recognizes visible contenteditable composer", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(105, (message) => {
+    queueMicrotask(() => respond(ipcMain, 105, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  const composer = {
+    innerText: "",
+    getBoundingClientRect: () => ({ width: 400, height: 50 })
+  };
+  contents.executeJavaScriptInIsolatedWorld = async (_world, scripts) => runInNewContext(
+    scripts[0].code,
+    {
+      location: { origin: "https://chatgpt.com", pathname: "/", href: "https://chatgpt.com/" },
+      document: {
+        querySelectorAll: (selector) => selector === 'form [contenteditable="true"][role="textbox"]' ? [composer] : [],
+        querySelector: () => null
+      },
+      getComputedStyle: () => ({ display: "block", visibility: "visible" })
+    }
+  );
+  const result = await adapter.ping(contents);
+  assert.equal(result.ok, true);
+  assert.equal(result.availability, "ready");
+  assert.equal(result.composerOccupied, false);
+  adapter.close();
+});
+
+test("status recovery is fail-closed on identity-provider pages", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(102, (message) => {
+    queueMicrotask(() => respond(ipcMain, 102, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://auth.openai.com/authorize";
+  contents.executeJavaScriptInIsolatedWorld = async () => {
+    throw new Error("must not inspect external auth DOM");
+  };
+  const result = await adapter.ping(contents);
+  assert.equal(result.availability, "unavailable");
+  adapter.close();
+});
+
+test("status recovery does not promote pages without a composer", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(103, (message) => {
+    queueMicrotask(() => respond(ipcMain, 103, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  contents.executeJavaScriptInIsolatedWorld = async () => ({ ok: true, availability: "unavailable", generating: false });
+  assert.equal((await adapter.ping(contents)).availability, "unavailable");
+  adapter.close();
+});
+
+test("assistant snapshots reuse recovered page status rather than reporting a false login failure", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000, maxAssistantBytes: 4096 });
+  const contents = webContents(104, (message) => {
+    queueMicrotask(() => respond(ipcMain, 104, message.requestId, {
+      ok: true, availability: "unavailable", url: "https://chatgpt.com/c/test"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/c/test";
+  contents.executeJavaScriptInIsolatedWorld = async (world) => world === 1002
+    ? { ok: true, availability: "ready", generating: false, url: "https://chatgpt.com/c/test" }
+    : {
+      ok: true, text: "reply", messageCount: 1, observedTurnCount: 1,
+      turnId: "turn-test-1", identitySource: "dom-attribute",
+      conversationKey: "/c/test", pathname: "/c/test"
+    };
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.availability, "ready");
+  assert.equal(snapshot.turnId, "turn-test-1");
   adapter.close();
 });
 
@@ -214,6 +322,12 @@ test("assistant snapshot is normalized, bounded and fingerprinted in the main pr
       ok: true,
       text: "answer\u200b\n",
       messageCount: 3,
+      observedTurnCount: 7,
+      turnId: "turn-abc-7",
+      textFingerprint: "renderer-fingerprint",
+      identitySource: "dom-attribute",
+      conversationKey: "/c/abc",
+      assistantTurnStatus: "ok",
       pathname: "/c/abc",
       url: "https://chatgpt.com/c/abc",
       availability: "ready",
@@ -224,7 +338,105 @@ test("assistant snapshot is normalized, bounded and fingerprinted in the main pr
   assert.equal(snapshot.ok, true);
   assert.equal(snapshot.text, "answer");
   assert.equal(snapshot.messageCount, 3);
+  assert.equal(snapshot.observedTurnCount, 7);
+  assert.equal(snapshot.turnId, "turn-abc-7");
+  assert.equal(snapshot.latestTurnId, "turn-abc-7");
+  assert.equal(snapshot.identitySource, "dom-attribute");
+  assert.equal(snapshot.conversationKey, "/c/abc");
+  assert.match(snapshot.textFingerprint, /^[0-9a-f]+$/);
   assert.match(snapshot.fingerprint, /^[0-9a-f]+$/);
+  adapter.close();
+});
+
+test("assistant snapshots use lazy isolated-world tracking when Electron supports it", async () => {
+  const ipcMain = new FakeIpcMain();
+  const isolatedCalls = [];
+  const sent = [];
+  const adapter = new ElectronPreloadChatGPTPageAdapter({
+    ipcMain,
+    requestTimeoutMs: 1000,
+    maxAssistantBytes: 4096,
+    turnTrackerSource: "/* tracker fixture */"
+  });
+  const contents = webContents(81, (message) => {
+    sent.push(message.name);
+    queueMicrotask(() => respond(ipcMain, 81, message.requestId, {
+      ok: true,
+      availability: "ready",
+      generating: false,
+      composerOccupied: false,
+      url: "https://chatgpt.com/c/lazy"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async (worldId, scripts) => {
+    isolatedCalls.push({ worldId, scripts });
+    return {
+      ok: true,
+      text: "lazy answer",
+      messageCount: 2,
+      observedTurnCount: 2,
+      turnId: "turn-lazy-2",
+      identitySource: "dom-attribute",
+      conversationKey: "/c/lazy",
+      pathname: "/c/lazy",
+      assistantTurnStatus: "ok"
+    };
+  };
+
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.turnId, "turn-lazy-2");
+  assert.deepEqual(sent, ["status"]);
+  assert.equal(isolatedCalls.length, 1);
+  assert.equal(isolatedCalls[0].worldId, 1001);
+  assert.equal(isolatedCalls[0].scripts.length, 1);
+  adapter.close();
+});
+
+test("actual turn tracker evaluates to a snapshot when Electron executes only the first WebSource", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const context = vm.createContext({
+    document: { querySelectorAll() { return []; } },
+    location: { pathname: "/c/real-tracker", href: "https://chatgpt.com/c/real-tracker" }
+  });
+  let scriptsSeen = 0;
+  const contents = webContents(116, (message) => {
+    queueMicrotask(() => respond(ipcMain, 116, message.requestId, {
+      ok: true, availability: "ready", generating: false,
+      url: "https://chatgpt.com/c/real-tracker"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+    assert.equal(world, 1001);
+    scriptsSeen = scripts.length;
+    // Reproduce the failure: only the first script value is returned.
+    return vm.runInContext(scripts[0].code, context);
+  };
+  const first = await adapter.readAssistantSnapshot(contents);
+  assert.equal(first.ok, true);
+  assert.equal(first.conversationKey, "/c/real-tracker");
+  assert.equal(first.messageCount, 0);
+  assert.equal(first.turnId, "");
+  assert.equal(scriptsSeen, 1);
+  const second = await adapter.readAssistantSnapshot(contents);
+  assert.equal(second.ok, true, "tracker state is reusable within the same isolated world");
+  assert.equal(second.conversationKey, "/c/real-tracker");
+  adapter.close();
+});
+
+test("undefined isolated-world return is reported explicitly and fails closed", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(117, (message) => {
+    queueMicrotask(() => respond(ipcMain, 117, message.requestId, {
+      ok: true, availability: "ready", url: "https://chatgpt.com/"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async () => undefined;
+  const result = await adapter.readAssistantSnapshot(contents);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "assistant_turn_tracker_invalid_result");
   adapter.close();
 });
 
@@ -256,5 +468,51 @@ test("send prompt has an explicit outer IPC budget longer than the base status t
   const result = await adapter.sendPrompt(contents, "next planning stage");
   assert.equal(result.ok, true);
   assert.equal(result.confirmed, true);
+  adapter.close();
+});
+
+
+test("page adapter keeps identical text distinct when preload supplies different turn IDs", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000, maxAssistantBytes: 4096 });
+  let turn = 1;
+  const contents = webContents(78, (message) => {
+    queueMicrotask(() => respond(ipcMain, 78, message.requestId, {
+      ok: true,
+      text: "DONE",
+      messageCount: 1,
+      observedTurnCount: turn,
+      turnId: `turn-same-${turn}`,
+      conversationKey: "/c/same",
+      pathname: "/c/same",
+      assistantTurnStatus: "ok",
+      availability: "ready",
+      generating: false
+    }));
+  });
+
+  const first = await adapter.readAssistantSnapshot(contents);
+  turn = 2;
+  const second = await adapter.readAssistantSnapshot(contents);
+
+  assert.equal(first.textFingerprint, second.textFingerprint);
+  assert.notEqual(first.turnId, second.turnId);
+  assert.notEqual(first.fingerprint, second.fingerprint);
+  adapter.close();
+});
+
+test("page adapter propagates ambiguous tracker snapshot without manufacturing identity", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(79, (message) => {
+    queueMicrotask(() => respond(ipcMain, 79, message.requestId, {
+      ok: false,
+      reason: "assistant_turn_identity_ambiguous",
+      conversationKey: "/c/ambiguous"
+    }));
+  });
+  const snapshot = await adapter.readAssistantSnapshot(contents);
+  assert.equal(snapshot.ok, false);
+  assert.equal(snapshot.reason, "assistant_turn_identity_ambiguous");
   adapter.close();
 });

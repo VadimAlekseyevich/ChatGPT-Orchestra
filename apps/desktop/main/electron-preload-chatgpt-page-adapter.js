@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const SELECTORS = require("../../../content/selectors.js");
 const Utils = require("../../../content/utils.js");
 const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-trace.js");
@@ -7,6 +9,8 @@ const { normalizeTraceContext, traceDetails, byteLength } = require("./runtime-t
 const COMMAND_CHANNEL = "orchestra:agent:command";
 const RESPONSE_CHANNEL = "orchestra:agent:response";
 const DEFAULT_MAX_ASSISTANT_BYTES = 384 * 1024;
+const ASSISTANT_TRACKER_WORLD_ID = 1001;
+const DEFAULT_TURN_TRACKER_PATH = path.join(__dirname, "..", "..", "..", "content", "assistant-turn-tracker.js");
 
 function currentUrl(webContents) {
   try { return String(webContents?.getURL?.() || ""); } catch (_) { return ""; }
@@ -18,12 +22,18 @@ class ElectronPreloadChatGPTPageAdapter {
     selectors = SELECTORS,
     requestTimeoutMs = 7000,
     maxAssistantBytes = DEFAULT_MAX_ASSISTANT_BYTES,
+    turnTrackerPath = DEFAULT_TURN_TRACKER_PATH,
+    turnTrackerSource = null,
     logger = console
   } = {}) {
     this.ipcMain = ipcMain;
     this.selectors = selectors;
     this.requestTimeoutMs = Math.max(500, Math.min(30000, Number(requestTimeoutMs) || 7000));
     this.maxAssistantBytes = Math.max(4096, Number(maxAssistantBytes) || DEFAULT_MAX_ASSISTANT_BYTES);
+    this.turnTrackerPath = path.resolve(String(turnTrackerPath || DEFAULT_TURN_TRACKER_PATH));
+    this.turnTrackerSource = turnTrackerSource === null
+      ? fs.readFileSync(this.turnTrackerPath, "utf8")
+      : String(turnTrackerSource || "");
     this.logger = logger;
     this.pending = new Map();
     this.nextRequest = 1;
@@ -95,8 +105,83 @@ class ElectronPreloadChatGPTPageAdapter {
     });
   }
 
+  async readPageStatusDirect(webContents) {
+    const url = currentUrl(webContents);
+    let origin;
+    try { origin = new URL(url).origin; } catch (_) { return { ok: false, reason: "page_url_invalid" }; }
+    if (origin !== "https://chatgpt.com") {
+      return { ok: false, reason: "page_origin_not_chatgpt" };
+    }
+    if (typeof webContents?.executeJavaScriptInIsolatedWorld !== "function") {
+      return { ok: false, reason: "direct_page_status_unavailable" };
+    }
+    // Only inspect public composer state. Never read prompts, cookies or account data.
+    const source = `(() => {
+      if (location.origin !== "https://chatgpt.com") {
+        return { ok: false, reason: "page_origin_not_chatgpt" };
+      }
+      const candidates = [
+        "#prompt-textarea",
+        'textarea[name="prompt-textarea"]',
+        'textarea#prompt-textarea',
+        'form [contenteditable="true"][role="textbox"]',
+        '[data-testid="composer-input"][contenteditable="true"]',
+        'div[contenteditable="true"][data-lexical-editor="true"]'
+      ];
+      let composer = null;
+      for (const selector of candidates) {
+        const matches = document.querySelectorAll(selector);
+        composer = Array.from(matches).find((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 &&
+            style.display !== "none" && style.visibility !== "hidden";
+        });
+        if (composer) break;
+      }
+      const generating = Boolean(document.querySelector(
+        'button[data-testid="stop-button"], [role="button"][data-testid="stop-button"]'
+      ));
+      const occupied = composer
+        ? Boolean(String(composer.value ?? composer.innerText ?? composer.textContent ?? "").trim())
+        : null;
+      return {
+        ok: true,
+        availability: generating ? "generating" : composer ? "ready" : "unavailable",
+        generating,
+        composerOccupied: occupied,
+        pathname: String(location.pathname || ""),
+        url: String(location.href || "")
+      };
+    })()`;
+    try {
+      const result = await webContents.executeJavaScriptInIsolatedWorld(1002, [{ code: source }]);
+      return result && typeof result === "object"
+        ? result
+        : { ok: false, reason: "direct_page_status_invalid" };
+    } catch (error) {
+      return { ok: false, reason: "direct_page_status_failed", message: String(error?.message || error) };
+    }
+  }
+
   async ping(webContents) {
-    return this.request(webContents, "status");
+    const preload = await this.request(webContents, "status", {}, {
+      timeoutMs: Math.min(this.requestTimeoutMs, 1500)
+    });
+    if (preload?.ok && ["ready", "generating"].includes(String(preload.availability || ""))) {
+      return preload;
+    }
+    const direct = await this.readPageStatusDirect(webContents);
+    if (direct?.ok && ["ready", "generating"].includes(String(direct.availability || ""))) {
+      this.logger?.warn?.("managed_browser_status_direct_recovery", {
+        preloadReason: String(preload?.reason || "none"),
+        preloadAvailability: String(preload?.availability || "unavailable"),
+        directAvailability: direct.availability
+      });
+      return direct;
+    }
+    // A page with no working composer must never be advertised as ready.
+    return preload?.ok ? preload : direct?.ok ? direct : preload;
   }
 
   navigationSignal(webContents, initialUrl) {
@@ -320,24 +405,121 @@ class ElectronPreloadChatGPTPageAdapter {
     return this.request(webContents, "stop-generation");
   }
 
+  async observeAssistantSnapshot(webContents) {
+    if (typeof webContents?.executeJavaScriptInIsolatedWorld !== "function") {
+      return this.request(webContents, "read-assistant");
+    }
+    const selectors = JSON.stringify(this.selectors || {});
+    const bootstrap = `if (!globalThis.ChatGPTOrchestra?.AssistantTurnTracker) {\n${this.turnTrackerSource}\n}`;
+    const observe = `(() => {
+      const Tracker = globalThis.ChatGPTOrchestra?.AssistantTurnTracker;
+      if (typeof Tracker !== "function") return { ok: false, reason: "assistant_turn_tracker_unavailable" };
+      const selectors = ${selectors};
+      let tracker = globalThis.__orchestraAssistantTurnTracker;
+      if (!tracker) {
+        tracker = new Tracker({ documentRef: document, locationRef: location, selectors });
+        globalThis.__orchestraAssistantTurnTracker = tracker;
+      } else {
+        tracker.setSelectors(selectors);
+      }
+      const snapshot = tracker.getSnapshot();
+      return {
+        ok: snapshot?.ok !== false,
+        reason: snapshot?.ok === false ? String(snapshot.reason || "assistant_turn_snapshot_failed") : null,
+        conversationKey: String(snapshot?.conversationKey || location.pathname || ""),
+        pathname: String(snapshot?.conversationKey || location.pathname || ""),
+        messageCount: Math.max(0, Number(snapshot?.mountedTurnCount) || 0),
+        observedTurnCount: Math.max(0, Number(snapshot?.assistantTurnCountObserved) || 0),
+        turnId: String(snapshot?.latestTurnId || ""),
+        latestTurnId: String(snapshot?.latestTurnId || ""),
+        identitySource: String(snapshot?.latestIdentitySource || ""),
+        text: String(snapshot?.latestText || ""),
+        turnChanged: Boolean(snapshot?.turnChanged),
+        textChanged: Boolean(snapshot?.textChanged),
+        conversationChanged: Boolean(snapshot?.conversationChanged),
+        hydrationCandidate: Boolean(snapshot?.hydrationCandidate),
+        assistantTurnStatus: snapshot?.ok === false ? "ambiguous" : "ok"
+      };
+    })()`;
+    try {
+      // A single evaluation is essential: Electron's isolated-world API does
+      // not guarantee that the return value comes from the final WebSource
+      // when multiple scripts are supplied. The earlier two-script form could
+      // return undefined even after tracker initialization had succeeded.
+      const result = await webContents.executeJavaScriptInIsolatedWorld(
+        ASSISTANT_TRACKER_WORLD_ID,
+        [{ code: `${bootstrap}\n${observe}` }]
+      );
+      if (!result || typeof result !== "object" || typeof result.ok !== "boolean") {
+        return { ok: false, reason: "assistant_turn_tracker_invalid_result" };
+      }
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "assistant_turn_tracker_execution_failed",
+        message: String(error?.message || error)
+      };
+    }
+  }
+
   async readAssistantSnapshot(webContents) {
-    const result = await this.request(webContents, "read-assistant");
+    const [status, observed] = await Promise.all([
+      this.ping(webContents),
+      this.observeAssistantSnapshot(webContents)
+    ]);
+    if (!status?.ok) return status || { ok: false, reason: "assistant_status_failed" };
+    if (!observed?.ok) return observed || { ok: false, reason: "assistant_snapshot_failed" };
+    const result = { ...status, ...observed, url: String(status.url || currentUrl(webContents) || "") };
     if (!result?.ok) return result || { ok: false, reason: "assistant_snapshot_failed" };
     const text = Utils.normalizeText(result.text || "");
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > this.maxAssistantBytes) return { ok: false, reason: "assistant_response_too_large", bytes, maxBytes: this.maxAssistantBytes };
-    const pathname = String(result.pathname || "");
+
+    const conversationKey = String(result.conversationKey || result.pathname || "");
+    const pathname = String(result.pathname || conversationKey);
     const messageCount = Math.max(0, Number(result.messageCount) || 0);
+    const observedTurnCount = Math.max(0, Number(result.observedTurnCount) || 0);
+    const turnId = String(result.turnId || result.latestTurnId || "");
+    const textFingerprint = text ? Utils.hashString(text) : "";
+    const fingerprint = text
+      ? Utils.hashString(turnId
+        ? `${conversationKey}:${turnId}:${text}`
+        : `${conversationKey}:${messageCount}:${text}`)
+      : "";
+
+    if (text && !turnId && String(result.assistantTurnStatus || "") === "ok") {
+      return {
+        ok: false,
+        reason: "assistant_turn_identity_missing",
+        conversationKey,
+        pathname,
+        messageCount,
+        observedTurnCount
+      };
+    }
+
     return {
       ok: true,
       text,
       bytes,
       messageCount,
+      observedTurnCount,
+      conversationKey,
       pathname,
       url: String(result.url || ""),
       availability: String(result.availability || "unavailable"),
       generating: Boolean(result.generating),
-      fingerprint: text ? Utils.hashString(`${pathname}:${messageCount}:${text}`) : ""
+      turnId,
+      latestTurnId: turnId,
+      identitySource: String(result.identitySource || ""),
+      textFingerprint,
+      latestTextFingerprint: textFingerprint,
+      turnChanged: Boolean(result.turnChanged),
+      textChanged: Boolean(result.textChanged),
+      conversationChanged: Boolean(result.conversationChanged),
+      hydrationCandidate: Boolean(result.hydrationCandidate),
+      fingerprint
     };
   }
 
@@ -356,5 +538,7 @@ module.exports = {
   ElectronPreloadChatGPTPageAdapter,
   COMMAND_CHANNEL,
   RESPONSE_CHANNEL,
-  DEFAULT_MAX_ASSISTANT_BYTES
+  DEFAULT_MAX_ASSISTANT_BYTES,
+  ASSISTANT_TRACKER_WORLD_ID,
+  DEFAULT_TURN_TRACKER_PATH
 };

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fixtures = require("./fixtures/chatgpt-states.json");
+const assistantTurnFixtures = require("./fixtures/assistant-turn-states.json");
 const ComposerAdapter = require("../content/composer-adapter.js");
 
 function element({ value = "", disabled = false } = {}) {
@@ -61,4 +62,32 @@ test("fixture corpus includes assistant completion and navigation baseline evide
   assert.match(fixtures.completed.html, /data-turn=["']assistant["']/);
   assert.match(fixtures.completed.html, /DONE/);
   assert.match(fixtures.navigationChanged.html, /data-conversation-path=["']\/c\/new-chat["']/);
+});
+
+
+test("assistant turn fixture corpus covers identity, rerender, virtualization, hydration and ambiguity", () => {
+  assert.deepEqual(Object.keys(assistantTurnFixtures).sort(), [
+    "ambiguousMalformed",
+    "conversationPathChanged",
+    "duplicateSelectorMatches",
+    "emptyAssistantShell",
+    "identicalConsecutiveText",
+    "initialHydrationHistory",
+    "markdownCodeDescendants",
+    "mixedSelectorVariants",
+    "multipleAssistantTurns",
+    "nestedRoleMarker",
+    "newestPrimaryFirst",
+    "oldestFallbackFirst",
+    "oneAssistantTurn",
+    "rerenderReplacement",
+    "streamingTurn",
+    "temporaryDuplicateActive",
+    "virtualizedLatestRemains",
+    "virtualizedNewLatest"
+  ]);
+  const serialized = JSON.stringify(assistantTurnFixtures);
+  assert.match(serialized, /conversation-turn-/);
+  assert.match(serialized, /data-message-author-role/);
+  assert.doesNotMatch(serialized, /chatgpt\.com\/c\/[A-Za-z0-9_-]{20,}/);
 });

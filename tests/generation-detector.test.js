@@ -14,6 +14,8 @@ function createDetectorHarness({ hydrationGraceMs = 2000, quietMs = 500 } = {}) 
   let snapshot = {
     pathname: "/c/first",
     fingerprint: "first-old",
+    latestTurnId: "turn-a",
+    latestTextFingerprint: "text-a",
     messageCount: 3,
     text: "DONE"
   };
@@ -123,4 +125,52 @@ test("explicit busy signal works immediately even inside hydration grace", () =>
   harness.setNow(501);
   harness.detector.inspect("settled");
   assert.equal(harness.events.includes("generation_completed"), true);
+});
+
+
+test("detector distinguishes a new assistant turn from text changes within the same turn", () => {
+  const harness = createDetectorHarness({ hydrationGraceMs: 0, quietMs: 500 });
+  harness.detector.inspect("startup");
+
+  harness.setNow(100);
+  harness.setSnapshot({
+    pathname: "/c/first",
+    fingerprint: "turn-a-streaming",
+    latestTurnId: "turn-a",
+    latestTextFingerprint: "text-a-v2",
+    messageCount: 3,
+    text: "DONE more"
+  });
+  harness.detector.inspect("stream");
+  assert.equal(harness.events.includes("assistant_turn_changed"), true);
+  assert.equal(harness.events.includes("assistant_turn_started"), false);
+
+  harness.setNow(200);
+  harness.setSnapshot({
+    pathname: "/c/first",
+    fingerprint: "turn-b",
+    latestTurnId: "turn-b",
+    latestTextFingerprint: "text-a-v2",
+    messageCount: 2,
+    text: "DONE more"
+  });
+  harness.detector.inspect("new-turn");
+  assert.equal(harness.events.includes("assistant_turn_started"), true);
+});
+
+test("detector fails closed on ambiguous turn lineage", () => {
+  const harness = createDetectorHarness({ hydrationGraceMs: 0 });
+  harness.detector.inspect("startup");
+
+  harness.setNow(100);
+  harness.setSnapshot({
+    ok: false,
+    reason: "assistant_turn_identity_ambiguous",
+    pathname: "/c/first",
+    observedTurnCount: 4
+  });
+  harness.detector.inspect("mutation");
+
+  assert.equal(harness.events.includes("assistant_turn_ambiguous"), true);
+  assert.equal(harness.events.includes("generation_completed"), false);
 });

@@ -17,6 +17,12 @@ test("Electron entrypoint selects the managed browser host only through explicit
   assert.match(main, /createDesktopHost/);
 });
 
+test("Electron keeps Chromium network defaults for ChatGPT authentication", () => {
+  const main = source("apps/desktop/main/electron-main.js");
+  assert.doesNotMatch(main, /appendSwitch\(["']disable-quic["']\)/);
+  assert.doesNotMatch(main, /appendSwitch\(["']disable-http2["']\)/);
+});
+
 test("package exposes an explicit managed-browser development command and packages all desktop runtime files", () => {
   const pkg = JSON.parse(source("package.json"));
   assert.equal(pkg.scripts["desktop:managed-browser"], "electron . --managed-browser");
