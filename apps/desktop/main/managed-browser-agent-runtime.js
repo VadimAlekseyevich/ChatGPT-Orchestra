@@ -503,7 +503,11 @@ class ManagedBrowserAgentRuntime {
     // particular, a large prompt can still be staged during trusted-enter
     // fallback, and ping must not demote that active dispatch to ERROR.
     const sending = this.pendingPromptSends.has(mutable.agentId)
-      && availability === "ready";
+      && availability === "ready"
+      && payload.composerOccupied === true
+      && payload.terminal !== true
+      && !payload.reason
+      && !payload.error;
     const normalized = sending
       ? { state: Lifecycle.STATES.BUSY, reason: "prompt_active", legacyStatus: "BUSY" }
       : Lifecycle.normalizeHeartbeat(payload, { hasBinding: Boolean(this.sessionIdForAgent(mutable)) });
