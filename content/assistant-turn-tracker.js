@@ -7,13 +7,16 @@
     '[data-testid^="conversation-turn-"]',
     'article[data-turn]',
     'section[data-turn]',
-    'article[data-message-author-role]'
+    'article[data-message-author-role]',
+    '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])'
   ]);
   const DEFAULT_ASSISTANT_ROLE_MARKERS = Object.freeze([
     '[data-message-author-role="assistant"]',
     '[data-role="assistant"]',
     '[data-message-author="assistant"]',
-    '[data-turn="assistant"]'
+    '[data-turn="assistant"]',
+    '[data-conversation-role="assistant"]',
+    '[data-chatgpt-agent-turn-start]'
   ]);
   const DEFAULT_ASSISTANT_BODIES = Object.freeze([
     '.markdown',
@@ -169,6 +172,12 @@
 
     isAssistantTurn(element, assistantHint = false) {
       if (!element) return false;
+      // Recent ChatGPT threads group the user prompt and assistant response
+      // under one stable data-turn-key. Only assistant-specific markers prove
+      // that the group contains an assistant turn.
+      if (readAttribute(element, "data-turn-key")) {
+        return this.roleMarkersWithin(element).length > 0;
+      }
       const explicitRole = [
         readAttribute(element, "data-message-author-role"),
         readAttribute(element, "data-role"),
@@ -182,6 +191,14 @@
     }
 
     stableIdentityKey(element) {
+      const groupKey = readAttribute(element, "data-turn-key").trim();
+      if (groupKey && groupKey.length <= 160 && /^[A-Za-z0-9._:-]+$/.test(groupKey)) {
+        return `group:${groupKey}`;
+      }
+      const turnId = readAttribute(element, "data-turn-id").trim();
+      if (turnId && turnId.length <= 160 && /^[A-Za-z0-9._:-]+$/.test(turnId)) {
+        return `turnid:${turnId}`;
+      }
       const testId = readAttribute(element, "data-testid").trim();
       if (testId && testId.length <= 160 && /^conversation-turn-[A-Za-z0-9._:-]+$/.test(testId)) {
         return `testid:${testId}`;
@@ -191,11 +208,28 @@
 
     extractText(element) {
       if (!element) return "";
+      const isGroupedTurn = Boolean(readAttribute(element, "data-turn-key"));
+      const assistantSections = isGroupedTurn
+        ? safeQueryAll(element, '[data-conversation-role="assistant"]')
+        : [];
+      // A grouped container also includes the user's prompt. Read text from
+      // the assistant section only; never fall back to its entire innerText.
+      if (assistantSections.length > 1) return "";
+      if (assistantSections.length === 1) {
+        const section = assistantSections[0];
+        const sectionBodies = this.bodySelectors.flatMap((selector) => safeQueryAll(section, selector));
+        const source = sectionBodies.sort((a, b) => normalizeText(b.innerText || b.textContent || "").length -
+          normalizeText(a.innerText || a.textContent || "").length)[0] || section;
+        return normalizeText(source.innerText || source.textContent || "");
+      }
+      const marker = isGroupedTurn ? safeQueryAll(element, '[data-chatgpt-agent-turn-start]')[0] : null;
+      if (isGroupedTurn && !marker) return "";
       const candidates = [];
       const seen = new Set();
       for (const selector of this.bodySelectors) {
         for (const candidate of safeQueryAll(element, selector)) {
           if (!candidate || seen.has(candidate)) continue;
+          if (isGroupedTurn && compareDom(marker, candidate) !== -1) continue;
           seen.add(candidate);
           candidates.push(candidate);
         }
@@ -207,7 +241,7 @@
           if (leftText.length !== rightText.length) return rightText.length - leftText.length;
           return compareDom(left, right) ?? 0;
         })[0]
-        : element;
+        : isGroupedTurn ? null : element;
       return normalizeText(source?.innerText || source?.textContent || "");
     }
 
