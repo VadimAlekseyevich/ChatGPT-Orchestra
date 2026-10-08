@@ -239,33 +239,18 @@
       if (assistantSections.length > 1) return "";
       if (assistantSections.length === 1) {
         const section = assistantSections[0];
-        const sectionBodies = this.bodySelectors.flatMap((selector) => safeQueryAll(section, selector));
-        const source = sectionBodies.sort((a, b) => normalizeText(b.innerText || b.textContent || "").length -
-          normalizeText(a.innerText || a.textContent || "").length)[0] || section;
-        const content = normalizeText(source.innerText || source.textContent || "");
+        const content = this.readBodySegments(section);
         if (content) return content;
       }
       const marker = isGroupedTurn ? (safeQueryAll(element, '[data-chatgpt-agent-turn-start]')[0] || assistantSections[0]) : null;
       if (isGroupedTurn && !marker) return "";
-      const candidates = [];
-      const seen = new Set();
-      for (const selector of this.bodySelectors) {
-        for (const candidate of safeQueryAll(element, selector)) {
-          if (!candidate || seen.has(candidate)) continue;
-          if (isGroupedTurn && compareDom(marker, candidate) !== -1) continue;
-          seen.add(candidate);
-          candidates.push(candidate);
-        }
+      const content = this.readBodySegments(element, marker);
+      if (content) return content;
+      if (isGroupedTurn) {
+        const section = assistantSections[0];
+        return section ? normalizeText(section.innerText || section.textContent || "") : "";
       }
-      const source = candidates.length
-        ? candidates.sort((left, right) => {
-          const leftText = normalizeText(left.innerText || left.textContent || "");
-          const rightText = normalizeText(right.innerText || right.textContent || "");
-          if (leftText.length !== rightText.length) return rightText.length - leftText.length;
-          return compareDom(left, right) ?? 0;
-        })[0]
-        : isGroupedTurn ? null : element;
-      return normalizeText(source?.innerText || source?.textContent || "");
+      return normalizeText(element.innerText || element.textContent || "");
     }
 
     discoverCandidates() {
