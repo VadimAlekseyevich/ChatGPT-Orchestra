@@ -492,3 +492,48 @@ test("turn IDs never contain assistant response text", () => {
   assert.ok(snapshot.latestTurnId);
   assert.equal(snapshot.latestTurnId.includes("super secret"), false);
 });
+
+
+test("multi-block grouped assistant reply keeps a trailing protocol line", () => {
+  const fixture = groupedFixture("multi-part", { answer: "initial" });
+  const first = {
+    innerText: "A longer explanation for this stage of the work",
+    textContent: "A longer explanation for this stage of the work",
+    contains(other) { return other === this; },
+    compareDocumentPosition(other) { return other === second ? 4 : 0; }
+  };
+  const second = {
+    innerText: '@@ORCH {"v":1,"event":"DONE"}',
+    textContent: '@@ORCH {"v":1,"event":"DONE"}',
+    contains(other) { return other === this; },
+    compareDocumentPosition(other) { return other === first ? 2 : 0; }
+  };
+  fixture.assistantNode.querySelectorAll = (selector) =>
+    selector === ".markdown" ? [second, first] : [];
+  const { tracker } = groupedHarness(fixture);
+  const snapshot = tracker.getSnapshot();
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.latestText,
+    'A longer explanation for this stage of the work\\n\\n@@ORCH {"v":1,"event":"DONE"}'.replace(/\\n/g, "\n"));
+});
+
+test("multi-block standard assistant reply joins chunks in document order", () => {
+  const turn = createTurn({ key: "multi", text: "ignored", order: 1 });
+  const first = {
+    innerText: "Opening explanation",
+    textContent: "Opening explanation",
+    contains(other) { return other === this; },
+    compareDocumentPosition(other) { return other === second ? 4 : 0; }
+  };
+  const second = {
+    innerText: "@@ORCH|event=DONE",
+    textContent: "@@ORCH|event=DONE",
+    contains(other) { return other === this; },
+    compareDocumentPosition(other) { return other === first ? 2 : 0; }
+  };
+  turn.querySelectorAll = (selector) =>
+    selector === '[data-message-author-role="assistant"]' ? [turn.roleMarker]
+      : selector === ".markdown" ? [second, first] : [];
+  const { tracker } = trackerHarness([turn]);
+  assert.equal(tracker.getSnapshot().latestText, "Opening explanation\n\n@@ORCH|event=DONE");
+});
