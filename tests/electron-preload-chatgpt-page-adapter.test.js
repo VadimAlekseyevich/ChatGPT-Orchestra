@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { runInNewContext } = require("node:vm");
 
 const {
   ElectronPreloadChatGPTPageAdapter,
@@ -60,6 +61,37 @@ test("status polling recovers a visible ChatGPT composer when preload reports un
   const result = await adapter.ping(contents);
   assert.equal(result.availability, "ready");
   assert.deepEqual(observedWorlds, [1002]);
+  adapter.close();
+});
+
+test("isolated-world status script recognizes visible contenteditable composer", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(105, (message) => {
+    queueMicrotask(() => respond(ipcMain, 105, message.requestId, {
+      ok: true, availability: "unavailable"
+    }));
+  });
+  contents.getURL = () => "https://chatgpt.com/";
+  const composer = {
+    innerText: "",
+    getBoundingClientRect: () => ({ width: 400, height: 50 })
+  };
+  contents.executeJavaScriptInIsolatedWorld = async (_world, scripts) => runInNewContext(
+    scripts[0].code,
+    {
+      location: { origin: "https://chatgpt.com", pathname: "/", href: "https://chatgpt.com/" },
+      document: {
+        querySelectorAll: (selector) => selector === 'form [contenteditable="true"][role="textbox"]' ? [composer] : [],
+        querySelector: () => null
+      },
+      getComputedStyle: () => ({ display: "block", visibility: "visible" })
+    }
+  );
+  const result = await adapter.ping(contents);
+  assert.equal(result.ok, true);
+  assert.equal(result.availability, "ready");
+  assert.equal(result.composerOccupied, false);
   adapter.close();
 });
 
