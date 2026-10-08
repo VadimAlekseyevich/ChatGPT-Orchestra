@@ -1,5 +1,7 @@
 "use strict";
 
+const ProtocolParser = require("../../../content/protocol-parser.js");
+
 const RETRYABLE_PREPARE_REASONS = new Set(["agent_preload_timeout", "agent_preload_send_failed"]);
 const {
   normalizeTraceContext,
@@ -20,6 +22,7 @@ class ManagedBrowserCompletionMonitor {
     snapshotErrorGraceMs = 30_000,
     prepareAttempts = 2,
     prepareRetryMs = 250,
+    protocolGraceMs = 30_000,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     clock = () => Date.now(),
     logger = console
@@ -37,6 +40,8 @@ class ManagedBrowserCompletionMonitor {
     this.snapshotErrorGraceMs = Math.max(this.pollMs, Math.min(120_000, Number(snapshotErrorGraceMs) || 30_000));
     this.prepareAttempts = Math.max(1, Math.min(4, Number(prepareAttempts) || 2));
     this.prepareRetryMs = Math.max(0, Math.min(2000, Number(prepareRetryMs) || 250));
+    this.protocolGraceMs = Math.max(this.quietMs, Math.min(120_000, Number(protocolGraceMs) || 30_000));
+    this.protocolParser = protocolAdapter.parser || new ProtocolParser();
     this.sleep = sleep;
     this.clock = clock;
     this.logger = logger;
@@ -205,6 +210,8 @@ class ManagedBrowserCompletionMonitor {
     let lastSnapshot = baseline;
     let loggedConversationTransition = "";
     let warnedMissingAssistantTurn = false;
+    let pendingProtocolCandidateKey = "";
+    let pendingProtocolSince = 0;
 
     const elapsedMs = () => Math.max(0, this.clock() - monitorStartedAt);
     const lastStage = () => (
