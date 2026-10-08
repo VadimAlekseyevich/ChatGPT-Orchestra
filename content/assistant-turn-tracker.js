@@ -220,9 +220,10 @@
         const sectionBodies = this.bodySelectors.flatMap((selector) => safeQueryAll(section, selector));
         const source = sectionBodies.sort((a, b) => normalizeText(b.innerText || b.textContent || "").length -
           normalizeText(a.innerText || a.textContent || "").length)[0] || section;
-        return normalizeText(source.innerText || source.textContent || "");
+        const content = normalizeText(source.innerText || source.textContent || "");
+        if (content) return content;
       }
-      const marker = isGroupedTurn ? safeQueryAll(element, '[data-chatgpt-agent-turn-start]')[0] : null;
+      const marker = isGroupedTurn ? (safeQueryAll(element, '[data-chatgpt-agent-turn-start]')[0] || assistantSections[0]) : null;
       if (isGroupedTurn && !marker) return "";
       const candidates = [];
       const seen = new Set();
