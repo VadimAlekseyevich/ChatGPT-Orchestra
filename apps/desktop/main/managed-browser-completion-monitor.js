@@ -398,6 +398,29 @@ class ManagedBrowserCompletionMonitor {
           }));
         }
         if (stablePolls >= requiredStablePolls) {
+          // The stop button is not reliably exposed by every ChatGPT layout.
+          // Stable prose is not completion evidence for an Orchestra task:
+          // the terminal @@ORCH event may be rendered in a later DOM chunk.
+          if (trace.taskId) {
+            const parsedKind = this.protocolParser.parse(snapshot.text).kind;
+            if (parsedKind !== "orchestra_event") {
+              if (pendingProtocolCandidateKey !== currentCandidateKey) {
+                pendingProtocolCandidateKey = currentCandidateKey;
+                pendingProtocolSince = this.clock();
+                this.logger?.warn?.("managed_browser_completion_awaiting_protocol", traceDetails(trace, {
+                  elapsedMs: elapsedMs(),
+                  parsedKind,
+                  responseBytes: byteLength(snapshot.text),
+                  turnId: snapshot.turnId,
+                  graceMs: this.protocolGraceMs
+                }));
+              }
+              if (this.clock() - pendingProtocolSince < this.protocolGraceMs) {
+                if (poll + 1 < maxPolls) await this.sleep(this.pollMs);
+                continue;
+              }
+            }
+          }
           this.logger?.info?.("managed_browser_completion_stable", traceDetails(trace, {
             elapsedMs: elapsedMs(),
             baselineTurnId: baseline.turnId,
@@ -459,6 +482,8 @@ class ManagedBrowserCompletionMonitor {
         stableCandidateKey = "";
         stablePolls = 0;
         candidateKey = "";
+        pendingProtocolCandidateKey = "";
+        pendingProtocolSince = 0;
       }
 
       if (poll + 1 < maxPolls) await this.sleep(this.pollMs);
