@@ -43,7 +43,10 @@
     composers: Object.freeze([
       '#prompt-textarea',
       'textarea[name="prompt-textarea"]',
-      'textarea#prompt-textarea'
+      'textarea#prompt-textarea',
+      'form [contenteditable="true"][role="textbox"]',
+      '[data-testid="composer-input"][contenteditable="true"]',
+      'div[contenteditable="true"][data-lexical-editor="true"]'
     ]),
     sendButtons: Object.freeze([
       '#composer-submit-button',
