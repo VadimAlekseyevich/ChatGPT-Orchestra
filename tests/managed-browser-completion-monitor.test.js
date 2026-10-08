@@ -449,3 +449,77 @@ test("new-chat navigation is logged once while waiting for an assistant turn", a
   assert.equal(completions[0].turnId, "turn-1");
   assert.equal(logs.filter((event) => event === "managed_browser_conversation_changed").length, 1);
 });
+
+
+test("protocol-aware monitor waits for the terminal event after stable transient prose", async () => {
+  const { runtime } = runtimeHarness();
+  const eventLine = "@@ORCH " + JSON.stringify({
+    v: 1, event: "BLOCKED", projectId: "P1", taskId: "planning:critique",
+    runId: "R1", agentId: "A1", eventId: "event-1", sequence: 1, payload: {}
+  });
+  const interim = snapshot({
+    turnId: "new-turn", latestTurnId: "new-turn", text: "Thinking...",
+    textFingerprint: "thinking", fingerprint: "p1", messageCount: 1
+  });
+  const finalAnswer = snapshot({
+    turnId: "new-turn", latestTurnId: "new-turn",
+    text: "Finished\n" + eventLine, textFingerprint: "terminal", fingerprint: "f2", messageCount: 1
+  });
+  const sequence = [snapshot(), interim, interim, interim, finalAnswer, finalAnswer, finalAnswer];
+  const completions = [];
+  const warnings = [];
+  let time = 0;
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: { async readAssistantSnapshot() { return sequence.shift() || finalAnswer; } },
+    protocolAdapter: {
+      async publishCompletion(_runtime, _agentId, value) {
+        completions.push(value);
+        return { ok: true, parsed: { event: { event: "BLOCKED" } } };
+      },
+      async publishProtocolError() { throw new Error("unexpected protocol error"); }
+    },
+    logger: { info() {}, warn(event) { warnings.push(event); }, debug() {}, error() {} },
+    pollMs: 100, quietMs: 100, protocolGraceMs: 500, timeoutMs: 2000,
+    clock: () => time, sleep: async (ms) => { time += ms; }
+  });
+  const prepared = await monitor.prepare(runtime, "A1", { taskId: "planning:critique" });
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].text, finalAnswer.text);
+  assert.equal(warnings.filter((event) => event === "managed_browser_completion_awaiting_protocol").length, 1);
+});
+
+test("protocol-aware monitor bounds the wait for an unrecognized response", async () => {
+  const { runtime } = runtimeHarness();
+  const interim = snapshot({
+    text: "Invalid assistant reply", fingerprint: "p1", textFingerprint: "p1",
+    turnId: "turn-b", latestTurnId: "turn-b", messageCount: 1
+  });
+  const completions = [];
+  let time = 0;
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: {
+      reads: 0,
+      async readAssistantSnapshot() { return ++this.reads === 1 ? snapshot() : interim; }
+    },
+    protocolAdapter: {
+      async publishCompletion(_runtime, _agentId, value) {
+        completions.push(value);
+        return { ok: false, reason: "protocol_event_missing" };
+      },
+      async publishProtocolError() { return { ok: true }; }
+    },
+    logger: { info() {}, warn() {}, debug() {}, error() {} },
+    pollMs: 100, quietMs: 100, protocolGraceMs: 500, timeoutMs: 2000,
+    clock: () => time, sleep: async (ms) => { time += ms; }
+  });
+  const prepared = await monitor.prepare(runtime, "A1", { taskId: "planning:critique" });
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "protocol_event_missing");
+  assert.equal(completions.length, 1);
+  assert.ok(time >= 500);
+});
