@@ -236,3 +236,57 @@ test("managed browser diagnostics record lifecycle metadata without prompt or au
   assert.ok(entries.some((entry) => entry.event === "managed_browser_agent_ping_completed"));
   assert.ok(entries.some((entry) => entry.event === "managed_browser_runtime_closed"));
 });
+
+
+test("occupied composer during an in-flight managed prompt does not mark the Lead unavailable", async () => {
+  const { runtime, driver } = harness();
+  await runtime.load();
+  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
+  let completeSend;
+  driver.sendPrompt = async () => new Promise((resolve) => { completeSend = resolve; });
+
+  const pending = runtime.sendPrompt(agent.agentId, "long prompt");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof completeSend, "function");
+
+  await runtime.updateHeartbeat(session.id, {
+    availability: "ready", generating: false, composerOccupied: true
+  });
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleState, "BUSY");
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleReason, "prompt_active");
+  assert.equal(runtime.getAgent(agent.agentId).chatState.composerOccupied, true);
+
+  completeSend({ ok: true, accepted: true, confirmed: true, method: "trusted-enter" });
+  assert.equal((await pending).ok, true);
+
+  // Outside the send window a genuinely occupied composer still blocks readiness.
+  await runtime.updateHeartbeat(session.id, {
+    availability: "ready", generating: false, composerOccupied: true
+  });
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleState, "UNAVAILABLE");
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleReason, "composer_unavailable");
+  await runtime.updateHeartbeat(session.id, {
+    availability: "ready", generating: false, composerOccupied: false
+  });
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleState, "READY");
+  await runtime.close();
+});
+
+test("unavailable page health remains unavailable while a managed prompt is pending", async () => {
+  const { runtime, driver } = harness();
+  await runtime.load();
+  const session = await runtime.createSession({ url: "https://chatgpt.com/" });
+  const agent = await runtime.createAgentForSession({ role: "lead", session, status: "IDLE" });
+  let finish;
+  driver.sendPrompt = async () => new Promise((resolve) => { finish = resolve; });
+  const pending = runtime.sendPrompt(agent.agentId, "prompt");
+  await new Promise((resolve) => setImmediate(resolve));
+  await runtime.updateHeartbeat(session.id, {
+    availability: "unavailable", generating: false, composerOccupied: true
+  });
+  assert.equal(runtime.getAgent(agent.agentId).lifecycleState, "UNAVAILABLE");
+  finish({ ok: false, reason: "send_not_confirmed" });
+  assert.equal((await pending).ok, false);
+  await runtime.close();
+});
