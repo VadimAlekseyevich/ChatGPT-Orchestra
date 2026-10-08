@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const vm = require("node:vm");
 const { runInNewContext } = require("node:vm");
 
 const {
@@ -388,7 +389,54 @@ test("assistant snapshots use lazy isolated-world tracking when Electron support
   assert.deepEqual(sent, ["status"]);
   assert.equal(isolatedCalls.length, 1);
   assert.equal(isolatedCalls[0].worldId, 1001);
-  assert.equal(isolatedCalls[0].scripts.length, 2);
+  assert.equal(isolatedCalls[0].scripts.length, 1);
+  adapter.close();
+});
+
+test("actual turn tracker evaluates to a snapshot when Electron executes only the first WebSource", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const context = vm.createContext({
+    document: { querySelectorAll() { return []; } },
+    location: { pathname: "/c/real-tracker", href: "https://chatgpt.com/c/real-tracker" }
+  });
+  let scriptsSeen = 0;
+  const contents = webContents(116, (message) => {
+    queueMicrotask(() => respond(ipcMain, 116, message.requestId, {
+      ok: true, availability: "ready", generating: false,
+      url: "https://chatgpt.com/c/real-tracker"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async (world, scripts) => {
+    assert.equal(world, 1001);
+    scriptsSeen = scripts.length;
+    // Reproduce the failure: only the first script value is returned.
+    return vm.runInContext(scripts[0].code, context);
+  };
+  const first = await adapter.readAssistantSnapshot(contents);
+  assert.equal(first.ok, true);
+  assert.equal(first.conversationKey, "/c/real-tracker");
+  assert.equal(first.messageCount, 0);
+  assert.equal(first.turnId, "");
+  assert.equal(scriptsSeen, 1);
+  const second = await adapter.readAssistantSnapshot(contents);
+  assert.equal(second.ok, true, "tracker state is reusable within the same isolated world");
+  assert.equal(second.conversationKey, "/c/real-tracker");
+  adapter.close();
+});
+
+test("undefined isolated-world return is reported explicitly and fails closed", async () => {
+  const ipcMain = new FakeIpcMain();
+  const adapter = new ElectronPreloadChatGPTPageAdapter({ ipcMain, requestTimeoutMs: 1000 });
+  const contents = webContents(117, (message) => {
+    queueMicrotask(() => respond(ipcMain, 117, message.requestId, {
+      ok: true, availability: "ready", url: "https://chatgpt.com/"
+    }));
+  });
+  contents.executeJavaScriptInIsolatedWorld = async () => undefined;
+  const result = await adapter.readAssistantSnapshot(contents);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "assistant_turn_tracker_invalid_result");
   adapter.close();
 });
 
