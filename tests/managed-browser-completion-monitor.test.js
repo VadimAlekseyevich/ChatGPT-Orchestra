@@ -408,3 +408,44 @@ test("completion monitor accepts expected new-chat path transition from an empty
   assert.equal(completions[0].conversationKey, "/c/new-chat");
   assert.equal(completions[0].turnId, "turn-new-1");
 });
+
+test("new-chat navigation is logged once while waiting for an assistant turn", async () => {
+  const { runtime } = runtimeHarness();
+  const base = snapshot({
+    pathname: "/", conversationKey: "/", text: "", fingerprint: "", turnId: "",
+    latestTurnId: "", messageCount: 0
+  });
+  const pending = snapshot({
+    pathname: "/c/new-chat", conversationKey: "/c/new-chat",
+    text: "", fingerprint: "", turnId: "", latestTurnId: "", messageCount: 0
+  });
+  const answer = snapshot({
+    pathname: "/c/new-chat", conversationKey: "/c/new-chat",
+    text: "DONE", fingerprint: "response",
+    turnId: "turn-1", latestTurnId: "turn-1",
+    textFingerprint: "done-fingerprint", messageCount: 1
+  });
+  const sequence = [base, pending, pending, pending, answer, answer, answer];
+  const logs = [];
+  const completions = [];
+  const monitor = new ManagedBrowserCompletionMonitor({
+    driver: { async readAssistantSnapshot() { return sequence.shift() || answer; } },
+    protocolAdapter: {
+      async publishCompletion(_runtime, _agentId, value) { completions.push(value); return { ok: true }; },
+      async publishProtocolError() { return { ok: true }; }
+    },
+    logger: { info(event) { logs.push(event); }, debug(event) { logs.push(event); }, warn(event) { logs.push(event); } },
+    pollMs: 100,
+    quietMs: 100,
+    timeoutMs: 2000,
+    sleep: async () => {}
+  });
+  const prepared = await monitor.prepare(runtime, "A1");
+  assert.equal(prepared.ok, true);
+  monitor.start(runtime, "A1", prepared);
+  const result = await monitor.waitFor("A1");
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].turnId, "turn-1");
+  assert.equal(logs.filter((event) => event === "managed_browser_conversation_changed").length, 1);
+});
