@@ -206,6 +206,28 @@
       return "";
     }
 
+    readBodySegments(target, marker = null) {
+      for (const selector of this.bodySelectors) {
+        const nodes = safeQueryAll(target, selector).filter(
+          (node) => !marker || compareDom(marker, node) === -1
+        );
+        if (!nodes.length) continue;
+        if (!nodes.every((node) => typeof node.contains === "function")) {
+          const longest = nodes.reduce((best, node) =>
+            normalizeText(node.innerText || node.textContent || "").length >
+            normalizeText(best.innerText || best.textContent || "").length ? node : best);
+          return normalizeText(longest.innerText || longest.textContent || "");
+        }
+        const roots = nodes.filter((node) =>
+          !nodes.some((other) => other !== node && other.contains(node)));
+        roots.sort((a, b) => compareDom(a, b) ?? 0);
+        const text = roots.map((node) => normalizeText(node.innerText || node.textContent || ""))
+          .filter(Boolean).join("\n\n");
+        if (text) return text;
+      }
+      return "";
+    }
+
     extractText(element) {
       if (!element) return "";
       const isGroupedTurn = Boolean(readAttribute(element, "data-turn-key"));
