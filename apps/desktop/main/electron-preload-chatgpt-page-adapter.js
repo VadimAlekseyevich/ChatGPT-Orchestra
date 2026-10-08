@@ -442,10 +442,18 @@ class ElectronPreloadChatGPTPageAdapter {
       };
     })()`;
     try {
-      return await webContents.executeJavaScriptInIsolatedWorld(
+      // A single evaluation is essential: Electron's isolated-world API does
+      // not guarantee that the return value comes from the final WebSource
+      // when multiple scripts are supplied. The earlier two-script form could
+      // return undefined even after tracker initialization had succeeded.
+      const result = await webContents.executeJavaScriptInIsolatedWorld(
         ASSISTANT_TRACKER_WORLD_ID,
-        [{ code: bootstrap }, { code: observe }]
+        [{ code: `${bootstrap}\n${observe}` }]
       );
+      if (!result || typeof result !== "object" || typeof result.ok !== "boolean") {
+        return { ok: false, reason: "assistant_turn_tracker_invalid_result" };
+      }
+      return result;
     } catch (error) {
       return {
         ok: false,
