@@ -105,8 +105,83 @@ class ElectronPreloadChatGPTPageAdapter {
     });
   }
 
+  async readPageStatusDirect(webContents) {
+    const url = currentUrl(webContents);
+    let origin;
+    try { origin = new URL(url).origin; } catch (_) { return { ok: false, reason: "page_url_invalid" }; }
+    if (origin !== "https://chatgpt.com") {
+      return { ok: false, reason: "page_origin_not_chatgpt" };
+    }
+    if (typeof webContents?.executeJavaScriptInIsolatedWorld !== "function") {
+      return { ok: false, reason: "direct_page_status_unavailable" };
+    }
+    // Only inspect public composer state. Never read prompts, cookies or account data.
+    const source = `(() => {
+      if (location.origin !== "https://chatgpt.com") {
+        return { ok: false, reason: "page_origin_not_chatgpt" };
+      }
+      const candidates = [
+        "#prompt-textarea",
+        'textarea[name="prompt-textarea"]',
+        'textarea#prompt-textarea',
+        'form [contenteditable="true"][role="textbox"]',
+        '[data-testid="composer-input"][contenteditable="true"]',
+        'div[contenteditable="true"][data-lexical-editor="true"]'
+      ];
+      let composer = null;
+      for (const selector of candidates) {
+        const matches = document.querySelectorAll(selector);
+        composer = Array.from(matches).find((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 &&
+            style.display !== "none" && style.visibility !== "hidden";
+        });
+        if (composer) break;
+      }
+      const generating = Boolean(document.querySelector(
+        'button[data-testid="stop-button"], [role="button"][data-testid="stop-button"]'
+      ));
+      const occupied = composer
+        ? Boolean(String(composer.value ?? composer.innerText ?? composer.textContent ?? "").trim())
+        : null;
+      return {
+        ok: true,
+        availability: generating ? "generating" : composer ? "ready" : "unavailable",
+        generating,
+        composerOccupied: occupied,
+        pathname: String(location.pathname || ""),
+        url: String(location.href || "")
+      };
+    })()`;
+    try {
+      const result = await webContents.executeJavaScriptInIsolatedWorld(1002, [{ code: source }]);
+      return result && typeof result === "object"
+        ? result
+        : { ok: false, reason: "direct_page_status_invalid" };
+    } catch (error) {
+      return { ok: false, reason: "direct_page_status_failed", message: String(error?.message || error) };
+    }
+  }
+
   async ping(webContents) {
-    return this.request(webContents, "status");
+    const preload = await this.request(webContents, "status", {}, {
+      timeoutMs: Math.min(this.requestTimeoutMs, 1500)
+    });
+    if (preload?.ok && ["ready", "generating"].includes(String(preload.availability || ""))) {
+      return preload;
+    }
+    const direct = await this.readPageStatusDirect(webContents);
+    if (direct?.ok && ["ready", "generating"].includes(String(direct.availability || ""))) {
+      this.logger?.warn?.("managed_browser_status_direct_recovery", {
+        preloadReason: String(preload?.reason || "none"),
+        preloadAvailability: String(preload?.availability || "unavailable"),
+        directAvailability: direct.availability
+      });
+      return direct;
+    }
+    // A page with no working composer must never be advertised as ready.
+    return preload?.ok ? preload : direct?.ok ? direct : preload;
   }
 
   navigationSignal(webContents, initialUrl) {
